@@ -788,6 +788,14 @@ package body Ada_Quality.Checks is
         Project_Tools.Files.List_Tree (Root, "*.gpr", Skip_Names);
       Checker_A     : constant String := Project_Tools.Files.Join (Root, "tools/bin/check_all");
       Checker_B     : constant String := Project_Tools.Files.Join (Root, "bin/check_all");
+      Checker_C     : constant String := Project_Tools.Files.Join (Root, "tests/bin/check_all");
+      --  The first release checker present, in this precedence order, or empty when none exists. The tests-crate
+      --  location serves projects whose tooling lives entirely in their tests crate.
+      Release_Checker : constant String :=
+        (if Project_Tools.Files.File_Exists (Checker_A) then Checker_A
+         elsif Project_Tools.Files.File_Exists (Checker_B) then Checker_B
+         elsif Project_Tools.Files.File_Exists (Checker_C) then Checker_C
+         else "");
       Test_Manifest : constant String := Project_Tools.Files.Join (Root, "tests/alire.toml");
       Coverage_File : constant String := Project_Tools.Files.Join (Root, "coverage/gcov-summary.txt");
       Before        : constant String := Source_Fingerprint (Root);
@@ -888,8 +896,7 @@ package body Ada_Quality.Checks is
         "standard src layout present", "missing src directory", Root));
       Add (Present (Project_Tools.Files.File_Exists (Test_Manifest), STR_04,
         "test subcrate present", "missing tests/alire.toml", Test_Manifest));
-      Add (Present (Project_Tools.Files.File_Exists (Checker_A) or else Project_Tools.Files.File_Exists (Checker_B),
-        STR_05, "release checker present", "missing release checker", Root));
+      Add (Present (Release_Checker'Length > 0, STR_05, "release checker present", "missing release checker", Root));
 
       if Project_Tools.Files.File_Exists (Manifest) and then Valid_Manifest (Manifest_Data) and then
         Any_GPR'Length > 0
@@ -1168,24 +1175,10 @@ package body Ada_Quality.Checks is
 
       procedure Measure_Release is
       begin
-      if Project_Tools.Files.File_Exists (Checker_A) then
+      if Release_Checker'Length > 0 then
          declare
             Staged_Checker : constant String := Project_Tools.Files.Join
-              (To_String (Execution_Root), Relative (Root, Checker_A));
-         begin
-            if Project_Tools.Files.File_Exists (Staged_Checker) then
-               Release_Run := Execute
-                 ("release-checker", To_String (Execution_Root), Staged_Checker,
-                  Project_Tools.Processes.No_Arguments);
-               Add (Tool_Result (REL_01, Release_Run, "release checker passes", "release checker failed"));
-            else
-               Add (Blocked_Result (REL_01, "release checker absent from staged build", Staged_Checker));
-            end if;
-         end;
-      elsif Project_Tools.Files.File_Exists (Checker_B) then
-         declare
-            Staged_Checker : constant String := Project_Tools.Files.Join
-              (To_String (Execution_Root), Relative (Root, Checker_B));
+              (To_String (Execution_Root), Relative (Root, Release_Checker));
          begin
             if Project_Tools.Files.File_Exists (Staged_Checker) then
                Release_Run := Execute
