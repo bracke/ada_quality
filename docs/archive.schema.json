@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/archive-v1.schema.json",
+  "title": "Ada Quality persistent archive v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "projects",
+    "assessments",
+    "results",
+    "measurements",
+    "findings",
+    "executions",
+    "events",
+    "regressions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "projects": { "type": "array" },
+    "assessments": { "type": "array" },
+    "results": { "type": "array" },
+    "measurements": { "type": "array" },
+    "findings": { "type": "array" },
+    "executions": { "type": "array" },
+    "events": { "type": "array" },
+    "regressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project_id", "baseline_id", "current_id", "indicator", "kind", "before", "after"],
+        "properties": {
+          "project_id": { "type": "integer", "minimum": 1 },
+          "baseline_id": { "type": "integer", "minimum": 1 },
+          "current_id": { "type": "integer", "minimum": 1 },
+          "indicator": { "type": "string", "pattern": "^[A-Z]{3}-[0-9]{2}$" },
+          "kind": { "type": "string" },
+          "before": { "type": "string" },
+          "after": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,8 @@
+{
+  "name": "ada_quality",
+  "version": "0.1.0",
+  "language": "Ada 2022",
+  "executable": "bin/ada-quality",
+  "indicator_count": 33,
+  "schema_version": 1
+}

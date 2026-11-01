@@ -1,0 +1,37 @@
+name = "ada_quality"
+description = "Deterministic quality assessment for local Ada projects"
+version = "0.1.0"
+licenses = "MIT"
+authors = ["Bent Bracke"]
+maintainers = ["Bent Bracke <bent@bracke.dk>"]
+maintainers-logins = ["bracke"]
+project-files = ["ada_quality.gpr"]
+executables = ["ada-quality"]
+
+[[depends-on]]
+gnat_native = "=15.2.1"
+
+[[depends-on]]
+database = "*"
+
+[[depends-on]]
+project_tools = "*"
+
+[[depends-on]]
+jsonlib = "*"
+
+[[depends-on]]
+terminal_styles = "*"
+
+[[depends-on]]
+messages = "*"
+
+[[depends-on]]
+regexp = "*"
+
+[build-profiles]
+"*" = "development"
+
+[[actions]]
+type = "test"
+command = ["sh", "-c", "cd tests && alr build && ./bin/ada_quality_tests"]

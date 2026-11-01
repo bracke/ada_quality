@@ -1,0 +1,19 @@
+name = "ada_quality_tests"
+description = "AUnit tests for ada_quality"
+version = "0.1.0-dev"
+executables = ["ada_quality_tests"]
+
+[[depends-on]]
+gnat_native = "=15.2.1"
+
+[[depends-on]]
+aunit = "^26.0.0"
+
+[[depends-on]]
+ada_quality = "*"
+
+[[pins]]
+ada_quality = { path = ".." }
+
+[build-profiles]
+"*" = "development"

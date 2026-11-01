@@ -1,0 +1,27 @@
+# Alire-generated state
+/alire/
+/config/
+/tests/alire/
+/tests/config/
+
+# Build products
+/bin/
+/obj/
+/tests/bin/
+/tests/obj/
+/tests/cov-bin/
+/tests/cov-obj/
+
+# Local assessment databases
+/.ada-quality.db
+/.ada-quality.db.*
+
+# Ada and GNAT generated artifacts
+*.ali
+*.o
+*.bexch
+*.gcda
+*.gcno
+*.cswi
+*.stdout
+*.stderr

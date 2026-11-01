@@ -1,0 +1,8 @@
+# Central policy applied uniformly to every registered project.
+coverage_minimum_basis_points = 9000
+maximum_source_lines = 1000
+maximum_complexity = 15
+process_timeout_seconds = 600
+maximum_output_bytes = 1048576
+#  This exported source snapshot has no Git metadata; REL-04 still enforces an unchanged source fingerprint.
+require_clean_worktree = false

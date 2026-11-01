@@ -1,0 +1,47 @@
+with "database";
+with "project_tools";
+with "jsonlib";
+with "terminal_styles";
+with "messages";
+with "regexp";
+
+project Ada_Quality is
+   Database_Root := external ("DATABASE_ALIRE_PREFIX", "../database");
+   Cryptolib_Root := external ("CRYPTOLIB_ALIRE_PREFIX", "../cryptolib");
+   Project_Tools_Root := external ("PROJECT_TOOLS_ALIRE_PREFIX", "../project_tools");
+   Jsonlib_Root := external ("JSONLIB_ALIRE_PREFIX", "../jsonlib");
+   Terminal_Styles_Root := external ("TERMINAL_STYLES_ALIRE_PREFIX", "../terminal_styles");
+   Messages_Root := external ("MESSAGES_ALIRE_PREFIX", "../messages");
+   I18n_Root := external ("I18N_ALIRE_PREFIX", "../i18n");
+   Regexp_Root := external ("REGEXP_ALIRE_PREFIX", "../regexp");
+
+   for Languages use ("Ada");
+   for Source_Dirs use ("src");
+   for Object_Dir use "obj";
+   for Exec_Dir use "bin";
+   for Main use ("ada_quality_cli.adb", "ada_quality_check_all.adb", "ada_quality_coverage.adb");
+   for Create_Missing_Dirs use "True";
+
+   package Compiler is
+      for Default_Switches ("Ada") use
+        ("-gnat2022", "-gnatyM120", "-gnata", "-gnatwa", "-gnatVa");
+   end Compiler;
+
+   package Binder is
+      for Switches ("Ada") use ("-Es");
+   end Binder;
+
+   package Builder is
+      for Executable ("ada_quality_cli.adb") use "ada-quality";
+      for Executable ("ada_quality_check_all.adb") use "check_all";
+      for Executable ("ada_quality_coverage.adb") use "coverage";
+   end Builder;
+
+   package Documentation is
+      for Excluded_Project_Files use
+        (Database_Root & "/database.gpr", Cryptolib_Root & "/cryptolib.gpr",
+         Project_Tools_Root & "/project_tools.gpr", Jsonlib_Root & "/jsonlib.gpr",
+         Terminal_Styles_Root & "/terminal_styles.gpr", Messages_Root & "/messages.gpr",
+         I18n_Root & "/i18n.gpr", Regexp_Root & "/regexp.gpr");
+   end Documentation;
+end Ada_Quality;

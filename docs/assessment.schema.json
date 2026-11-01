@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/assessment-v1.schema.json",
+  "title": "Ada Quality assessment report v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "assessment_id",
+    "project_id",
+    "project_path",
+    "source_fingerprint",
+    "policy_fingerprint",
+    "toolchain_fingerprint",
+    "status",
+    "results",
+    "executions"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "assessment_id": { "type": "integer", "minimum": 0 },
+    "project_id": { "type": "integer", "minimum": 0 },
+    "project_path": { "type": "string" },
+    "source_fingerprint": { "type": "string" },
+    "policy_fingerprint": { "type": "string" },
+    "toolchain_fingerprint": { "type": "string" },
+    "status": { "type": "string" },
+    "results": {
+      "type": "array",
+      "minItems": 33,
+      "maxItems": 33,
+      "items": {
+        "type": "object",
+        "required": ["indicator", "execution", "compliance", "applicable", "summary", "evidence", "measurement", "findings"],
+        "properties": {
+          "indicator": { "type": "string", "pattern": "^[A-Z]{3}-[0-9]{2}$" },
+          "execution": { "type": "string" },
+          "compliance": { "type": "string" },
+          "applicable": { "type": "boolean" },
+          "summary": { "type": "string" },
+          "evidence": { "type": "string" },
+          "measurement": { "type": "object" },
+          "findings": { "type": "array" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "executions": { "type": "array" }
+  },
+  "additionalProperties": false
+}
