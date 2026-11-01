@@ -10,6 +10,7 @@ with Project_Tools.Gcov;
 with Project_Tools.Links;
 with Project_Tools.Processes;
 with Project_Tools.Ada_Source;
+with Project_Tools.Release_Checks;
 with Project_Tools.TOML;
 with Regexp;
 with Ada_Quality.Execution;
@@ -61,6 +62,10 @@ package body Ada_Quality.Checks is
    function Lower (Text : String) return String is
      (Ada.Characters.Handling.To_Lower (Text));
 
+   function Starts_With (Text, Prefix : String) return Boolean is
+     (Text'Length >= Prefix'Length and then
+      Text (Text'First .. Text'First + Prefix'Length - 1) = Prefix);
+
    function Normalize_Test_Output (Text : String) return String is
       Result : Ada.Strings.Unbounded.Unbounded_String;
       Start  : Positive := Text'First;
@@ -68,9 +73,9 @@ package body Ada_Quality.Checks is
       procedure Append_Line (Line : String) is
          Normalized : constant String := Lower (Ada.Strings.Fixed.Trim (Line, Ada.Strings.Both));
          Volatile   : constant Boolean :=
-           Contains (Normalized, "elapsed:") or else Contains (Normalized, "elapsed time") or else
-           Contains (Normalized, "duration:") or else Contains (Normalized, "timestamp:") or else
-           (Normalized'Length >= 5 and then Normalized (Normalized'First .. Normalized'First + 4) = "time:");
+           Starts_With (Normalized, "elapsed:") or else Starts_With (Normalized, "elapsed time:") or else
+           Starts_With (Normalized, "duration:") or else Starts_With (Normalized, "timestamp:") or else
+           Starts_With (Normalized, "time:");
       begin
          if not Volatile then Append (Result, Line & Ada.Characters.Latin_1.LF); end if;
       end Append_Line;
@@ -153,6 +158,79 @@ package body Ada_Quality.Checks is
       end loop;
       return Result;
    end Without_TOML_Comments;
+
+   function Has_Suffix (Text, Suffix : String) return Boolean;
+
+   function Manifest_Project_Files (Root, Text : String) return Text_Vectors.Vector is
+      Clean  : constant String := Without_TOML_Comments (Text);
+      Result : Text_Vectors.Vector;
+      Key    : constant String := "project-files";
+      Start  : Natural := Clean'First;
+      Key_At : Natural := 0;
+   begin
+      if Text'Length = 0 then return Result; end if;
+      while Start <= Clean'Last loop
+         declare
+            Stop : Natural := Ada.Strings.Fixed.Index (Clean, [ASCII.LF], From => Start);
+            First : Natural := Start;
+         begin
+            if Stop = 0 then Stop := Clean'Last + 1; end if;
+            while First < Stop and then Clean (First) in ' ' | Character'Val (9) | ASCII.CR loop
+               First := First + 1;
+            end loop;
+            if Stop - First >= Key'Length and then
+              Clean (First .. First + Key'Length - 1) = Key and then
+              (First + Key'Length = Stop or else
+               Clean (First + Key'Length) in ' ' | Character'Val (9) | '=')
+            then
+               Key_At := First;
+               exit;
+            end if;
+            exit when Stop > Clean'Last;
+            Start := Stop + 1;
+         end;
+      end loop;
+      if Key_At = 0 then return Result; end if;
+      declare
+         Open_At : constant Natural := Ada.Strings.Fixed.Index
+           (Clean, "[", From => Key_At + Key'Length);
+         Position : Natural := Open_At + 1;
+      begin
+         if Open_At = 0 then return Result; end if;
+         while Position <= Clean'Last loop
+            exit when Clean (Position) = ']';
+            if Clean (Position) in ''' | '"' then
+               declare
+                  Quote : constant Character := Clean (Position);
+                  First : constant Natural := Position + 1;
+                  Escaped : Boolean := False;
+               begin
+                  Position := First;
+                  while Position <= Clean'Last loop
+                     exit when Clean (Position) = Quote and then (Quote = ''' or else not Escaped);
+                     if Quote = '"' then
+                        Escaped := Clean (Position) = '\' and then not Escaped;
+                     end if;
+                     Position := Position + 1;
+                  end loop;
+                  if Position > Clean'Last then return Text_Vectors.Empty_Vector; end if;
+                  declare
+                     Relative_Path : constant String := Clean (First .. Position - 1);
+                     Full_Path : constant String := Project_Tools.Files.Join (Root, Relative_Path);
+                  begin
+                     if Relative_Path'Length > 0 and then Has_Suffix (Lower (Relative_Path), ".gpr") and then
+                       Project_Tools.Files.File_Exists (Full_Path)
+                     then
+                        Result.Append (To_Unbounded_String (Full_Path));
+                     end if;
+                  end;
+               end;
+            end if;
+            Position := Position + 1;
+         end loop;
+      end;
+      return Result;
+   end Manifest_Project_Files;
 
    function Is_Skipped (Name : String) return Boolean is
    begin
@@ -357,9 +435,62 @@ package body Ada_Quality.Checks is
       return Result;
    end Hash_Image;
 
-   function Source_Fingerprint (Root : String) return String is
+   function Artifact_Files (Root : String) return Text_Vectors.Vector is
+      Result : Text_Vectors.Vector;
+
+      function Is_Artifact_Directory (Name : String) return Boolean is
+        (Name in "obj" | "bin" | "cov-obj" | "cov-bin" | "coverage" | "lib" | "gnatprove");
+
+      procedure Walk (Directory : String; Inside_Artifact : Boolean; Depth : Positive) is
+         Search      : Ada.Directories.Search_Type;
+         Search_Open : Boolean := False;
+         Item        : Ada.Directories.Directory_Entry_Type;
+      begin
+         if Depth > Maximum_Tree_Depth then
+            raise Constraint_Error with "project tree exceeds maximum directory depth";
+         end if;
+         Ada.Directories.Start_Search (Search, Directory, "");
+         Search_Open := True;
+         while Ada.Directories.More_Entries (Search) loop
+            Ada.Directories.Get_Next_Entry (Search, Item);
+            declare
+               Name : constant String := Ada.Directories.Simple_Name (Item);
+               Path : constant String := Directory & "/" & Name;
+               In_Artifact : constant Boolean := Inside_Artifact or else Is_Artifact_Directory (Name);
+            begin
+               if Name in "." | ".." or else (not Inside_Artifact and then Name in ".git" | ".alire") then
+                  null;
+               elsif Project_Tools.Links.Is_Link (Path) then
+                  if In_Artifact then Result.Append (To_Unbounded_String (Path)); end if;
+               elsif Ada.Directories.Kind (Item) = Ada.Directories.Directory then
+                  Walk (Path, In_Artifact, Depth + 1);
+               elsif In_Artifact and then Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
+                  Result.Append (To_Unbounded_String (Path));
+               end if;
+               if Result.Length > Maximum_Project_Files then
+                  raise Constraint_Error with "project artifact tree exceeds maximum file count";
+               end if;
+            end;
+         end loop;
+         Ada.Directories.End_Search (Search);
+         Search_Open := False;
+      exception
+         when others =>  --  AQ: audited exception boundary
+            if Search_Open then Ada.Directories.End_Search (Search); end if;
+            raise;
+      end Walk;
+   begin
+      Walk (Root, Inside_Artifact => False, Depth => 1);
+      Text_Sorting.Sort (Result);
+      return Result;
+   end Artifact_Files;
+
+   function Tree_Fingerprint
+     (Root             : String;
+      Files            : Text_Vectors.Vector;
+      Ignore_Generated : Boolean) return String
+   is
       Hash  : Interfaces.Unsigned_64 := 16#CBF29CE484222325#;
-      Files : constant Text_Vectors.Vector := All_Files (Root);
       Total_Bytes : Natural := 0;
 
       procedure Add_To_Hash (Text : String) is
@@ -370,30 +501,101 @@ package body Ada_Quality.Checks is
       end Add_To_Hash;
    begin
       for Path of Files loop
-         if not Is_Generated_Fingerprint_File (Root, To_String (Path)) then
+         if not Ignore_Generated or else not Is_Generated_Fingerprint_File (Root, To_String (Path)) then
             declare
                Name : constant String := Relative (Root, To_String (Path));
-               Size : constant Ada.Directories.File_Size := Ada.Directories.Size (To_String (Path));
             begin
-               if Size > Ada.Directories.File_Size (Maximum_File_Bytes) then
-                  raise Constraint_Error with "project file exceeds fingerprint size limit: " & Name;
-               elsif Natural (Size) > Maximum_Fingerprint_Bytes - Total_Bytes then
-                  raise Constraint_Error with "project exceeds aggregate fingerprint size limit";
+               if Project_Tools.Links.Is_Link (To_String (Path)) then
+                  Add_To_Hash (Name & Character'Val (0) & "<symbolic-link>");
+               else
+                  declare
+                     Size : constant Ada.Directories.File_Size := Ada.Directories.Size (To_String (Path));
+                  begin
+                     if Size > Ada.Directories.File_Size (Maximum_File_Bytes) then
+                        raise Constraint_Error with "project file exceeds fingerprint size limit: " & Name;
+                     elsif Natural (Size) > Maximum_Fingerprint_Bytes - Total_Bytes then
+                        raise Constraint_Error with "project exceeds aggregate fingerprint size limit";
+                     end if;
+                     Total_Bytes := Total_Bytes + Natural (Size);
+                     if Ignore_Generated then
+                        declare
+                           Data : constant String := Project_Tools.Files.Read_Raw_File (To_String (Path));
+                        begin
+                           Add_To_Hash (Name & Character'Val (0) & Data);
+                        end;
+                     else
+                        Add_To_Hash
+                          (Name & Character'Val (0) & Ada.Directories.File_Size'Image (Size) & ":" &
+                           Project_Tools.Release_Checks.FNV1A64 (To_String (Path)));
+                     end if;
+                  end;
                end if;
-               Total_Bytes := Total_Bytes + Natural (Size);
-               declare
-                  Data : constant String := Project_Tools.Files.Read_Raw_File (To_String (Path));
-               begin
-                  Add_To_Hash (Name & Character'Val (0) & Data);
-               end;
             end;
          end if;
       end loop;
-      for Path of All_Links (Root) loop
-         Add_To_Hash (Relative (Root, To_String (Path)) & Character'Val (0) & "<symbolic-link>");
-      end loop;
       return Hash_Image (Hash);
+   end Tree_Fingerprint;
+
+   function Source_Fingerprint (Root : String) return String is
+      Files : Text_Vectors.Vector := All_Files (Root);
+   begin
+      Files.Append_Vector (All_Links (Root));
+      Text_Sorting.Sort (Files);
+      return Tree_Fingerprint (Root, Files, Ignore_Generated => True);
    end Source_Fingerprint;
+
+   function Project_State_Fingerprint (Root : String) return String is
+     (Source_Fingerprint (Root) & ":" &
+      Tree_Fingerprint (Root, Artifact_Files (Root), Ignore_Generated => False));
+
+   procedure Copy_State_Tree (Source, Target : String) is
+      Count : Natural := 0;
+
+      procedure Copy_Directory (From, Into : String; Depth : Positive) is
+         Search      : Ada.Directories.Search_Type;
+         Search_Open : Boolean := False;
+         Item        : Ada.Directories.Directory_Entry_Type;
+      begin
+         if Depth > Maximum_Tree_Depth then
+            raise Constraint_Error with "test baseline exceeds maximum directory depth";
+         end if;
+         Ada.Directories.Create_Path (Into);
+         Ada.Directories.Start_Search (Search, From, "");
+         Search_Open := True;
+         while Ada.Directories.More_Entries (Search) loop
+            Ada.Directories.Get_Next_Entry (Search, Item);
+            declare
+               Name      : constant String := Ada.Directories.Simple_Name (Item);
+               From_Path : constant String := Project_Tools.Files.Join (From, Name);
+               Into_Path : constant String := Project_Tools.Files.Join (Into, Name);
+            begin
+               if Name in "." | ".." then
+                  null;
+               elsif Project_Tools.Links.Is_Link (From_Path) then
+                  raise Constraint_Error with "test baseline contains a symbolic link: " & From_Path;
+               elsif Ada.Directories.Kind (Item) = Ada.Directories.Directory then
+                  Copy_Directory (From_Path, Into_Path, Depth + 1);
+               elsif Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
+                  Count := Count + 1;
+                  if Count > Maximum_Project_Files then
+                     raise Constraint_Error with "test baseline exceeds maximum file count";
+                  end if;
+                  Ada.Directories.Copy_File
+                    (Source_Name => From_Path, Target_Name => Into_Path,
+                     Form => "preserve=all_attributes");
+               end if;
+            end;
+         end loop;
+         Ada.Directories.End_Search (Search);
+         Search_Open := False;
+      exception
+         when others =>
+            if Search_Open then Ada.Directories.End_Search (Search); end if;
+            raise;
+      end Copy_Directory;
+   begin
+      Copy_Directory (Source, Target, 1);
+   end Copy_State_Tree;
 
    procedure Add_Finding
      (Item    : in out Indicator_Result;
@@ -771,6 +973,86 @@ package body Ada_Quality.Checks is
      return Project_Tools.Processes.Argument_Vectors.Vector is
      (Project_Tools.Processes.Arguments (Values));
 
+   function GPR_String (Text : String) return String is
+      Result : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      for Value of Text loop
+         if Value = '"' then Append (Result, """"""); else Append (Result, Value); end if;
+      end loop;
+      return To_String (Result);
+   end GPR_String;
+
+   function GPR_Project_Name (Path : String) return String is
+      Code     : constant String := Code_Without_Comments_And_Strings (Path);
+      Position : Natural := Code'First;
+      Marker   : constant String := "project";
+
+      function Identifier_Character (Value : Character) return Boolean is
+        (Value in 'a' .. 'z' | '0' .. '9' or else Value = '_');
+   begin
+      while Position <= Code'Last loop
+         Position := Ada.Strings.Fixed.Index (Code, Marker, From => Position);
+         if Position = 0 then return ""; end if;
+         declare
+            After : Natural := Position + Marker'Length;
+         begin
+            if (Position = Code'First or else not Identifier_Character (Code (Position - 1))) and then
+              (After > Code'Last or else not Identifier_Character (Code (After)))
+            then
+               while After <= Code'Last and then Code (After) in ' ' | Character'Val (9) |
+                 ASCII.CR | ASCII.LF
+               loop
+                  After := After + 1;
+               end loop;
+               declare
+                  Last : Natural := After;
+               begin
+                  while Last <= Code'Last and then Identifier_Character (Code (Last)) loop
+                     Last := Last + 1;
+                  end loop;
+                  if Last > After then return Code (After .. Last - 1); end if;
+               end;
+            end if;
+            Position := Position + Marker'Length;
+         end;
+      end loop;
+      return "";
+   end GPR_Project_Name;
+
+   function GPR_Has_Compiler_Package (Path : String) return Boolean is
+      Code     : constant String := Code_Without_Comments_And_Strings (Path);
+      Position : Natural := Code'First;
+      Marker   : constant String := "package";
+
+      function Identifier_Character (Value : Character) return Boolean is
+        (Value in 'a' .. 'z' | '0' .. '9' or else Value = '_');
+   begin
+      while Position <= Code'Last loop
+         Position := Ada.Strings.Fixed.Index (Code, Marker, From => Position);
+         if Position = 0 then return False; end if;
+         declare
+            After : Natural := Position + Marker'Length;
+         begin
+            if (Position = Code'First or else not Identifier_Character (Code (Position - 1))) and then
+              (After > Code'Last or else not Identifier_Character (Code (After)))
+            then
+               while After <= Code'Last and then Code (After) in ' ' | Character'Val (9) |
+                 ASCII.CR | ASCII.LF
+               loop
+                  After := After + 1;
+               end loop;
+               if After + 7 <= Code'Last and then Code (After .. After + 7) = "compiler" and then
+                 (After + 8 > Code'Last or else not Identifier_Character (Code (After + 8)))
+               then
+                  return True;
+               end if;
+            end if;
+            Position := Position + Marker'Length;
+         end;
+      end loop;
+      return False;
+   end GPR_Has_Compiler_Package;
+
    function Assess
      (Project_Id : Natural;
       Root       : String;
@@ -786,6 +1068,27 @@ package body Ada_Quality.Checks is
         Project_Tools.Files.Find_File (Root, Ada.Directories.Simple_Name (Root) & ".gpr");
       Any_GPR       : constant Project_Tools.Files.Path_List :=
         Project_Tools.Files.List_Tree (Root, "*.gpr", Skip_Names);
+      function Selected_Project_Files return Text_Vectors.Vector is
+         Result : Text_Vectors.Vector := Manifest_Project_Files (Root, Manifest_Data);
+         Name   : constant Project_Tools.TOML.String_Parse_Result :=
+           Project_Tools.TOML.Parse_String_After (Manifest_Data, "name", Manifest_Data'First);
+      begin
+         if Result.Is_Empty and then Name.Status = Project_Tools.TOML.Parsed_String then
+            declare
+               Named_GPR : constant String := Project_Tools.Files.Find_File
+                 (Root, To_String (Name.Value) & ".gpr");
+            begin
+               if Named_GPR'Length > 0 then Result.Append (To_Unbounded_String (Named_GPR)); end if;
+            end;
+         end if;
+         if Result.Is_Empty and then GPR'Length > 0 then
+            Result.Append (To_Unbounded_String (GPR));
+         elsif Result.Is_Empty and then Any_GPR'Length > 0 then
+            Result.Append (Any_GPR (Any_GPR'First));
+         end if;
+         return Result;
+      end Selected_Project_Files;
+      Project_GPRs  : constant Text_Vectors.Vector := Selected_Project_Files;
       Checker_A     : constant String := Project_Tools.Files.Join (Root, "tools/bin/check_all");
       Checker_B     : constant String := Project_Tools.Files.Join (Root, "bin/check_all");
       Checker_C     : constant String := Project_Tools.Files.Join (Root, "tests/bin/check_all");
@@ -910,13 +1213,49 @@ package body Ada_Quality.Checks is
             Args ([Project_Tools.Processes.Argument ("build"),
             Project_Tools.Processes.Argument ("--validation"), Project_Tools.Processes.Argument ("--"),
             Project_Tools.Processes.Argument ("-f")]));
-         Warning_Run := Execute
-           ("compiler-warning-build", To_String (Execution_Root),
-            Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
-            Args ([Project_Tools.Processes.Argument ("build"),
-            Project_Tools.Processes.Argument ("--validation"), Project_Tools.Processes.Argument ("--"),
-            Project_Tools.Processes.Argument ("-f"),
-            Project_Tools.Processes.Argument ("-XADA_QUALITY_WARNINGS_AS_ERRORS=true")]));
+         for Index in Project_GPRs.First_Index .. Project_GPRs.Last_Index loop
+            declare
+               Original_Project : constant String := Project_Tools.Files.Join
+                 (To_String (Execution_Root), Relative (Root, To_String (Project_GPRs (Index))));
+               Original_Name : constant String := GPR_Project_Name (Original_Project);
+               Inherited_Switches : constant String :=
+                 (if GPR_Has_Compiler_Package (Original_Project)
+                  then Original_Name & ".Compiler'Default_Switches (""Ada"") & "
+                  else "");
+               Suffix : constant String := Ada.Strings.Fixed.Trim (Positive'Image (Index), Ada.Strings.Both);
+               Wrapper_Name : constant String := "Ada_Quality_Warning_Gate_" & Suffix;
+               Warning_Project : constant String := Ada_Quality.Workspaces.Scratch_Path
+                 (Stage, "ada_quality_warning_gate_" & Suffix & ".gpr");
+               Current_Run : Ada_Quality.Execution.Run_Result;
+            begin
+               if Original_Name'Length = 0 then
+                  raise Constraint_Error with "cannot determine GPR project name: " & Original_Project;
+               end if;
+               Project_Tools.Files.Write_Text_File
+                 (Warning_Project,
+                  "project " & Wrapper_Name & " extends """ & GPR_String (Original_Project) & """ is" &
+                  Ada.Characters.Latin_1.LF &
+                  "   package Compiler is" & Ada.Characters.Latin_1.LF &
+                  "      for Default_Switches (""Ada"") use " & Inherited_Switches &
+                  "(""-gnatwa"", ""-gnatwe"");" &
+                  Ada.Characters.Latin_1.LF &
+                  "   end Compiler;" & Ada.Characters.Latin_1.LF &
+                  "end " & Wrapper_Name & ";" & Ada.Characters.Latin_1.LF);
+               Current_Run := Execute
+                 ("compiler-warning-build-" & Suffix, To_String (Execution_Root),
+                  Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
+                  Args ([Project_Tools.Processes.Argument ("exec"), Project_Tools.Processes.Argument ("--"),
+                  Project_Tools.Processes.Argument ("gprbuild"), Project_Tools.Processes.Argument ("-P"),
+                  Project_Tools.Processes.Argument (Warning_Project), Project_Tools.Processes.Argument ("-p"),
+                  Project_Tools.Processes.Argument ("-f")]));
+               if Index = Project_GPRs.First_Index or else
+                 (Warning_Run.Status = Ada_Quality.Execution.Completed and then Warning_Run.Exit_Code = 0 and then
+                  (Current_Run.Status /= Ada_Quality.Execution.Completed or else Current_Run.Exit_Code /= 0))
+               then
+                  Warning_Run := Current_Run;
+               end if;
+            end;
+         end loop;
          Toolchain_Run := Execute
            ("gnat-toolchain", To_String (Execution_Root), Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
             Args ([Project_Tools.Processes.Argument ("exec"),
@@ -949,6 +1288,8 @@ package body Ada_Quality.Checks is
            (To_String (Execution_Root), "tests");
          Test_Binary : constant String := Project_Tools.Files.Join
            (Test_Directory, "bin/ada_quality_tests");
+         Baseline_Directory : constant String :=
+           Ada_Quality.Workspaces.Scratch_Path (Stage, "determinism-baseline");
       begin
       if Project_Tools.Files.File_Exists (Test_Manifest) and then
         Build_Run.Status = Ada_Quality.Execution.Completed and then Build_Run.Exit_Code = 0
@@ -963,12 +1304,15 @@ package body Ada_Quality.Checks is
             Project_Tools.Processes.Argument ("-p"),
             Project_Tools.Processes.Argument ("-j0")]));
          if Test_Build_Run.Status = Ada_Quality.Execution.Completed and then Test_Build_Run.Exit_Code = 0 then
+            Copy_State_Tree (To_String (Execution_Root), Baseline_Directory);
             Test_Run_1 := Execute
               ("aunit-first", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
-            Test_Artifact_1 := To_Unbounded_String (Source_Fingerprint (To_String (Execution_Root)));
+            Test_Artifact_1 := To_Unbounded_String (Project_State_Fingerprint (To_String (Execution_Root)));
+            Project_Tools.Files.Delete_Tree (To_String (Execution_Root));
+            Copy_State_Tree (Baseline_Directory, To_String (Execution_Root));
             Test_Run_2 := Execute
               ("aunit-second", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
-            Test_Artifact_2 := To_Unbounded_String (Source_Fingerprint (To_String (Execution_Root)));
+            Test_Artifact_2 := To_Unbounded_String (Project_State_Fingerprint (To_String (Execution_Root)));
             Add (Tool_Result (TST_01, Test_Run_1, "AUnit suite passes", "AUnit suite failed"));
          else
             Test_Run_1 := Test_Build_Run;
@@ -985,7 +1329,7 @@ package body Ada_Quality.Checks is
            Test_Artifact_1 = Test_Artifact_2, TST_04,
            "test execution, normalized output, and artifacts are deterministic across two runs",
            "test runs differed in execution, normalized output, or project artifacts",
-           "two direct AUnit runs with normalized output and source-artifact fingerprints"));
+           "two AUnit runs restored from one post-build baseline with normalized output and state fingerprints"));
       else
          Add (Blocked_Result (TST_01, "test subcrate unavailable", Test_Manifest));
          Add (Blocked_Result (TST_02, "test subcrate unavailable", Test_Manifest));

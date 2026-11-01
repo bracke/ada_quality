@@ -130,6 +130,60 @@ package body Ada_Quality_Test_Suite is
                   Project_Tools.Files.Write_Text_File (Objects & "/beta.gcno", "fixture");
                   Assert (Ada_Quality.Coverage.Missing_Objects (Units, Objects).Is_Empty,
                     "coverage inventory is complete only when every production unit has instrumentation");
+                  Assert
+                    (Ada_Quality.Coverage.Has_Source_Record
+                       ("File '" & Root & "/src/alpha.adb'" & ASCII.LF &
+                        "Lines executed:100.00% of 0" & ASCII.CR & ASCII.LF,
+                        Root & "/src/alpha.adb") and then
+                     not Ada_Quality.Coverage.Has_Source_Record
+                       ("File '" & Root & "/src/alpha.adb'" & ASCII.LF,
+                        Root & "/src/alpha.adb") and then
+                     Ada_Quality.Coverage.Has_Source_Record
+                       ("File '" & Root & "/src/alpha.ads'" & ASCII.LF &
+                        "No executable lines" & ASCII.LF,
+                        Root & "/src/alpha.ads") and then
+                     not Ada_Quality.Coverage.Has_Source_Record
+                       ("File '" & Root & "/src/alpha.adb'" & ASCII.LF &
+                        "Lines executed:malformed" & ASCII.LF,
+                        Root & "/src/alpha.adb") and then
+                     not Ada_Quality.Coverage.Has_Source_Record
+                       ("File '" & Root & "/src/alpha.adb'" & ASCII.LF &
+                        "Lines executed:100.00% of 0" & ASCII.LF,
+                        Root & "/src/alpha.ads"),
+                     "coverage completeness requires a parsed summary and distinguishes zero-line evidence");
+               end;
+               Ada.Directories.Create_Path (Root & "/src/nested");
+               declare
+                  Rejected : Boolean := False;
+               begin
+                  Project_Tools.Files.Write_Text_File
+                    (Root & "/src/nested/alpha.adb", "package body Alpha is end Alpha;" & ASCII.LF);
+                  begin
+                     declare
+                        Duplicate_Units : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+                          Ada_Quality.Coverage.Production_Units (Root);
+                     begin
+                        Rejected := Duplicate_Units.Is_Empty;
+                     end;
+                  exception
+                     when Constraint_Error => Rejected := True;
+                  end;
+                  Assert (Rejected, "coverage inventory rejects duplicate production body stems");
+                  Ada.Directories.Delete_File (Root & "/src/nested/alpha.adb");
+                  Rejected := False;
+                  Project_Tools.Files.Write_Text_File
+                    (Root & "/src/nested/alpha.ads", "package Alpha is end Alpha;" & ASCII.LF);
+                  begin
+                     declare
+                        Duplicate_Units : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+                          Ada_Quality.Coverage.Production_Units (Root);
+                     begin
+                        Rejected := Duplicate_Units.Is_Empty;
+                     end;
+                  exception
+                     when Constraint_Error => Rejected := True;
+                  end;
+                  Assert (Rejected, "coverage inventory rejects duplicate production specification stems");
                end;
                Project_Tools.Files.Delete_Tree (Root);
                declare
@@ -138,10 +192,23 @@ package body Ada_Quality_Test_Suite is
                   Project_Policy  : constant Ada_Quality.Policy.Quality_Policy := Ada_Quality.Policy.Default;
                   Project_Metrics : constant Ada_Quality.Checks.Source_Analysis :=
                     Ada_Quality.Checks.Analyze_Source (Project_Root, Project_Policy);
+
+                  function Complexity_Evidence return String is
+                  begin
+                     for Finding of Project_Metrics.Findings loop
+                        if Finding.Indicator = SRC_03 then
+                           return " in " & To_String (Finding.Relative_Path) &
+                             ":" & Natural'Image (Finding.Line);
+                        end if;
+                     end loop;
+                     return "";
+                  end Complexity_Evidence;
                begin
                   Assert (Project_Metrics.Maximum_Complexity <= Project_Policy.Maximum_Complexity,
                     "the integrated source tree remains within the declared complexity contract; measured" &
-                    Natural'Image (Project_Metrics.Maximum_Complexity));
+                    Natural'Image (Project_Metrics.Maximum_Complexity) & Complexity_Evidence);
+                  Assert (Ada_Quality.Checks.Project_State_Fingerprint (Project_Root)'Length > 0,
+                    "project-state fingerprinting streams large generated artifacts without exhausting the stack");
                end;
             end;
 
@@ -612,24 +679,44 @@ package body Ada_Quality_Test_Suite is
                   "procedure Warning_Fixture is" & ASCII.LF &
                   "begin" & ASCII.LF & "   null;" & ASCII.LF &
                   "end Warning_Fixture;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Hostile_Root & "/warning_fixture.gpr",
+                  "project Warning_Fixture is" & ASCII.LF &
+                  "   for Source_Dirs use (""."");" & ASCII.LF &
+                  "   for Object_Dir use ""warning-obj"";" & ASCII.LF &
+                  "   for Main use (""warning_fixture.adb"");" & ASCII.LF &
+                  "   package Compiler is" & ASCII.LF &
+                  "      for Default_Switches (""Ada"") use " &
+                  "(""-gnat2022"", ""-gnatwa"", ""-gnatVa"");" & ASCII.LF &
+                  "   end Compiler;" & ASCII.LF &
+                  "end Warning_Fixture;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Hostile_Root & "/warning_gate.gpr",
+                  "project Warning_Gate extends ""warning_fixture.gpr"" is" & ASCII.LF &
+                  "   package Compiler is" & ASCII.LF &
+                  "      for Default_Switches (""Ada"") use " &
+                  "Warning_Fixture.Compiler'Default_Switches (""Ada"") & " &
+                  "(""-gnatwa"", ""-gnatwe"");" & ASCII.LF &
+                  "   end Compiler;" & ASCII.LF &
+                  "end Warning_Gate;" & ASCII.LF);
                declare
                   Warning_Build : constant Ada_Quality.Execution.Run_Result :=
                     Ada_Quality.Execution.Run
-                      (Hostile_Root, "gnatmake",
+                      (Hostile_Root, "gprbuild",
                        Project_Tools.Processes.Arguments
-                         ([Project_Tools.Processes.Argument ("-q"),
+                         ([Project_Tools.Processes.Argument ("-P"),
+                           Project_Tools.Processes.Argument ("warning_gate.gpr"),
                            Project_Tools.Processes.Argument ("-f"),
-                           Project_Tools.Processes.Argument ("-gnat2022"),
-                           Project_Tools.Processes.Argument ("-gnatwa"),
-                           Project_Tools.Processes.Argument ("-gnatwe"),
-                           Project_Tools.Processes.Argument ("warning_fixture.adb")]),
+                           Project_Tools.Processes.Argument ("-p"),
+                           Project_Tools.Processes.Argument ("-v")]),
                        Timeout_Seconds => 20, Maximum_Bytes => 4_096);
                begin
                   Assert (Warning_Build.Status = Ada_Quality.Execution.Completed and then
                     Warning_Build.Exit_Code /= 0 and then
                     Ada.Strings.Fixed.Index
-                      (Ada.Characters.Handling.To_Lower (To_String (Warning_Build.Output)), "warning:") > 0,
-                    "the compiler warning fixture fails when the BLD-03 warning-as-error policy is explicit");
+                      (Ada.Characters.Handling.To_Lower (To_String (Warning_Build.Output)), "warning:") > 0 and then
+                    Ada.Strings.Fixed.Index (To_String (Warning_Build.Output), "-gnatVa") > 0,
+                    "BLD-03 wrapper preserves inherited switches and rejects target warnings");
                end;
                Project_Tools.Files.Delete_Tree (Hostile_Root);
             end;
@@ -1085,6 +1172,7 @@ package body Ada_Quality_Test_Suite is
                Outside    : constant String := "/tmp/ada_quality_symlink_outside";
                Before     : Ada.Strings.Unbounded.Unbounded_String;
                With_Links : Ada.Strings.Unbounded.Unbounded_String;
+               State_Before : Ada.Strings.Unbounded.Unbounded_String;
                Link_Run   : Ada_Quality.Execution.Run_Result;
                Stage      : Ada_Quality.Workspaces.Workspace;
                Other_Stage : Ada_Quality.Workspaces.Workspace;
@@ -1107,13 +1195,26 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/alire.toml",
                   "name = ""local""" & ASCII.LF & "version = ""0.1.0""" & ASCII.LF &
                   "# path = ""../../../comment-is-not-a-pin""" & ASCII.LF &
-                  "dependency={path='../ada_quality_symlink_outside'}" & ASCII.LF);
+                  "description = """"""an unrelated multiline value" & ASCII.LF &
+                  "path = '../../../multiline-is-not-a-pin'""""""" & ASCII.LF &
+                  "[[pins]]" & ASCII.LF &
+                  "dependency = { ""\u0070ath"" = ""../\u0061da_quality_symlink_outside"" }" & ASCII.LF &
+                  "[configuration.values]" & ASCII.LF &
+                  "path = ""../../../unrelated-key-is-not-a-pin""" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Outside & "/alire.toml", "name = ""dependency""" & ASCII.LF &
                   "version = ""0.1.0""" & ASCII.LF);
+               Ada_Quality.Workspaces.Prepare (Stage, Root, "toml-pin-test");
+               Assert (Project_Tools.Files.File_Exists
+                 (Ada_Quality.Workspaces.Path (Stage) & "/../ada_quality_symlink_outside/outside.ads"),
+                 "staging accepts quoted path keys and Unicode escapes in TOML basic strings");
+               Ada_Quality.Workspaces.Cleanup (Stage);
                Project_Tools.Files.Write_Text_File
                  (Root & "/alire/alire.lock",
-                  "dependency={path = '../ada_quality_symlink_outside'}" & ASCII.LF);
+                  "[solution.state.link]" & ASCII.LF &
+                  "path = '../ada_quality_symlink_outside'" & ASCII.LF &
+                  "[solution.state.release.configuration]" & ASCII.LF &
+                  "path = '../../../unrelated-key-is-not-a-pin'" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Root & "/alire/build_hash_inputs", "generated and stale" & ASCII.LF);
                Before := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (Root));
@@ -1149,8 +1250,12 @@ package body Ada_Quality_Test_Suite is
                Assert (Raised, "staging rejects symbolic links instead of following them");
                Project_Tools.Files.Delete_Tree (Root & "/src/outside");
                Project_Tools.Files.Delete_Tree (Root & "/src/cycle");
+               State_Before := To_Unbounded_String (Ada_Quality.Checks.Project_State_Fingerprint (Root));
                Ada.Directories.Create_Path (Root & "/obj");
                Project_Tools.Files.Write_Text_File (Root & "/obj/generated.o", "generated");
+               Assert
+                 (State_Before /= To_Unbounded_String (Ada_Quality.Checks.Project_State_Fingerprint (Root)),
+                  "generated build artifacts participate in the deterministic project-state fingerprint");
                Ada_Quality.Workspaces.Prepare (Stage, Root, "safe/test");
                Assert (Project_Tools.Files.File_Exists
                  (Ada_Quality.Workspaces.Path (Stage) & "/src/local.adb"), "staging copies source files");
@@ -1197,6 +1302,7 @@ package body Ada_Quality_Test_Suite is
                Project_Tools.Files.Write_Text_File
                  (Root & "/alire.toml",
                   "name = ""local""" & ASCII.LF & "version = ""0.1.0""" & ASCII.LF &
+                  "[[pins]]" & ASCII.LF &
                   "dependency = { path = ""../../../etc"" }" & ASCII.LF);
                Raised := False;
                begin
@@ -1232,6 +1338,7 @@ package body Ada_Quality_Test_Suite is
                   Policy_Fingerprint => To_Unbounded_String ("policy"),
                   Toolchain_Fingerprint => To_Unbounded_String ("toolchain"));
                Current : Ada_Quality.Storage.History_Item := Baseline;
+               Policy_Changed, Interrupted : Ada_Quality.Storage.History_Item := Baseline;
                Old_Results, New_Results : Ada_Quality.Storage.Detail_Vectors.Vector;
                Old_Measures, New_Measures : Ada_Quality.Storage.Detail_Vectors.Vector;
                Empty, Older, Renamed : Ada_Quality.Storage.Detail_Vectors.Vector;
@@ -1251,6 +1358,15 @@ package body Ada_Quality_Test_Suite is
                end;
                Current.Id := 2;
                Current.Source_Fingerprint := To_Unbounded_String ("source-b");
+               Policy_Changed.Id := 2;
+               Policy_Changed.Source_Fingerprint := To_Unbounded_String ("source-b");
+               Policy_Changed.Policy_Fingerprint := To_Unbounded_String ("policy-new");
+               Interrupted.Policy_Fingerprint := To_Unbounded_String ("policy-old");
+               Interrupted.Status := To_Unbounded_String ("interrupted");
+               Assert (Ada_Quality.History.Policy_Comparable (Baseline, Policy_Changed),
+                 "completed assessments with changed policy and stable toolchain are comparable");
+               Assert (not Ada_Quality.History.Policy_Comparable (Interrupted, Policy_Changed),
+                 "an interrupted assessment cannot become a clean policy comparison");
                Old_Results.Append
                  (Ada_Quality.Storage.Detail_Info'(Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
                    State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("96%")));

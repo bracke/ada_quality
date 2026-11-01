@@ -749,8 +749,8 @@ package body Ada_Quality.Reporting is
    end History_Items;
 
    function Read_History_Evidence (Item : Session; Run_Id : Positive) return History_Evidence is
-      Run   : constant Run_Record := Completed_Run (Item, Run_Id);
-      Group : constant Detail_Group := Item.Details.Element (Run.Id);
+      Validated : constant Assessment_Record := Read_Assessment (Item, Run_Id);
+      Group     : constant Detail_Group := Item.Details.Element (Validated.Run.Id);
    begin
       return (Results => Group.Results, Measurements => Group.Measurements, Findings => Group.Findings);
    end Read_History_Evidence;
@@ -763,7 +763,11 @@ package body Ada_Quality.Reporting is
       Require_Open (Item);
       for Run of Item.All_Runs loop
          if Run.State = Assessment_Completed and then (Project_Id = 0 or else Run.Project_Id = Project_Id) then
-            Result.Append (Item.Details.Element (Run.Id).Measurements);
+            declare
+               Validated : constant Assessment_Record := Read_Assessment (Item, Run.Id);
+            begin
+               Result.Append (Item.Details.Element (Validated.Run.Id).Measurements);
+            end;
          end if;
       end loop;
       return Result;

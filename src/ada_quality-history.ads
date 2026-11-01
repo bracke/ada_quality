@@ -63,6 +63,13 @@ package Ada_Quality.History is
    --  @param Current Later assessment.
    --  @return True when project, policy, and toolchain identities are compatible.
 
+   function Policy_Comparable
+     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean;
+   --  Test whether two completed assessments may be compared across a policy change.
+   --  @param Baseline Earlier assessment under a different policy.
+   --  @param Current Later assessment.
+   --  @return True when both runs have complete source and toolchain identity evidence.
+
    function Baseline_Id
      (Runs : Ada_Quality.Storage.History_Vectors.Vector;
       Current_Id : Positive) return Natural;

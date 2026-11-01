@@ -57,6 +57,11 @@ package Ada_Quality.Checks is
    --  @param Root Canonical project root.
    --  @return Stable hexadecimal source fingerprint.
 
+   function Project_State_Fingerprint (Root : String) return String;
+   --  Hash source state and conventional generated artifact directories.
+   --  @param Root Canonical project root.
+   --  @return Stable source and artifact fingerprint for determinism comparisons.
+
    function Declares_SPARK (Root : String) return Boolean;
    --  Determine whether any project source declares `SPARK_Mode` outside comments and strings.
    --  @param Root Canonical project root.

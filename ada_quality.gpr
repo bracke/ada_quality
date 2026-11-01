@@ -6,14 +6,6 @@ with "messages";
 with "regexp";
 
 project Ada_Quality is
-   type Boolean_Text is ("false", "true");
-   Warnings_As_Errors : Boolean_Text := external ("ADA_QUALITY_WARNINGS_AS_ERRORS", "false");
-   Warning_Switches := ();
-   case Warnings_As_Errors is
-      when "false" => null;
-      when "true"  => Warning_Switches := ("-gnatwe");
-   end case;
-
    Database_Root := external ("DATABASE_ALIRE_PREFIX", "../database");
    Cryptolib_Root := external ("CRYPTOLIB_ALIRE_PREFIX", "../cryptolib");
    Project_Tools_Root := external ("PROJECT_TOOLS_ALIRE_PREFIX", "../project_tools");
@@ -32,7 +24,7 @@ project Ada_Quality is
 
    package Compiler is
       for Default_Switches ("Ada") use
-        ("-gnat2022", "-gnatyM120", "-gnata", "-gnatwa", "-gnatVa") & Warning_Switches;
+        ("-gnat2022", "-gnatyM120", "-gnata", "-gnatwa", "-gnatVa");
    end Compiler;
 
    package Binder is

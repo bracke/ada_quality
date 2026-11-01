@@ -22,6 +22,7 @@ package body Ada_Quality_Reporting_Tests is
 
    package Reporting renames Ada_Quality.Reporting;
    package Storage renames Ada_Quality.Storage;
+   use type Storage.Testing_Corruption;
 
    type Test_Kind is
      (Missing_Database_Test, Round_Trip_Test, Lifecycle_Test, Schema_Test, Busy_Test, Legacy_Test,
@@ -224,6 +225,42 @@ package body Ada_Quality_Reporting_Tests is
       end;
       Assert (To_String (Raised) = Expected, Message & " (raised '" & To_String (Raised) & "')");
    end Expect_Read_Error;
+
+   procedure Expect_History_Error (Database_Path : String; Run_Id : Positive; Message : String) is
+      Session : Reporting.Session;
+      Raised  : Boolean := False;
+   begin
+      begin
+         Reporting.Open (Session, Database_Path);
+         declare
+            Value : constant Reporting.History_Evidence := Reporting.Read_History_Evidence (Session, Run_Id);
+            pragma Unreferenced (Value);
+         begin
+            null;
+         end;
+      exception
+         when Reporting.Integrity_Error => Raised := True;
+      end;
+      Assert (Raised, Message);
+   end Expect_History_Error;
+
+   procedure Expect_Trend_Error (Database_Path : String; Message : String) is
+      Session : Reporting.Session;
+      Raised  : Boolean := False;
+   begin
+      begin
+         Reporting.Open (Session, Database_Path);
+         declare
+            Value : constant Storage.Detail_Vectors.Vector := Reporting.All_Measurements (Session);
+            pragma Unreferenced (Value);
+         begin
+            null;
+         end;
+      exception
+         when Reporting.Integrity_Error => Raised := True;
+      end;
+      Assert (Raised, Message);
+   end Expect_Trend_Error;
 
    procedure Missing_Database is
       Directory : constant String := Fixture ("missing");
@@ -485,6 +522,12 @@ package body Ada_Quality_Reporting_Tests is
                when others =>
                   Expect_Read_Error
                     (Copy, Run_Id, "integrity", Storage.Testing_Corruption'Image (Kind) & " is an integrity error");
+                  Expect_History_Error
+                    (Copy, Run_Id,
+                     Storage.Testing_Corruption'Image (Kind) & " is rejected by history evidence adapters");
+                  if Kind = Storage.Invalid_Measurement then
+                     Expect_Trend_Error (Copy, "invalid measurement evidence is rejected by trend adapters");
+                  end if;
             end case;
          end;
       end loop;
@@ -555,6 +598,7 @@ package body Ada_Quality_Reporting_Tests is
 
    overriding procedure Run_Test (Item : in out Reporting_Test) is
    begin
+      Project_Tools.Files.Delete_Tree (Fixture_Root);
       Ada.Directories.Create_Path (Fixture_Root);
       case Item.Kind is
          when Missing_Database_Test => Missing_Database;
@@ -567,6 +611,11 @@ package body Ada_Quality_Reporting_Tests is
          when Limit_Test => Limit;
          when History_Adapter_Test => History_Adapter;
       end case;
+      Project_Tools.Files.Delete_Tree (Fixture_Root);
+   exception
+      when others =>  --  AQ: audited exception boundary
+         Project_Tools.Files.Delete_Tree (Fixture_Root);
+         raise;
    end Run_Test;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is

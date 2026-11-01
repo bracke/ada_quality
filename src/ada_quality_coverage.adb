@@ -200,6 +200,11 @@ begin
                Project_Tools.Processes.Argument ("coverage.gpr"),
                Project_Tools.Processes.Argument
                  ("-XADA_QUALITY_COVERAGE_ROOT=" & Ada_Quality.Temporary_Directories.Path (Scratch)),
+               Project_Tools.Processes.Argument
+                 ("--relocate-build-tree=" &
+                  Ada_Quality.Temporary_Directories.Child (Scratch, "relocated")),
+               Project_Tools.Processes.Argument
+                 ("--root-dir=" & Ada.Directories.Containing_Directory (Root)),
                Project_Tools.Processes.Argument ("-j0")]),
            Quiet => True);
    begin
@@ -503,13 +508,21 @@ begin
             Run : constant Project_Tools.Processes.Captured_Process :=
               Project_Tools.Processes.Capture ("gcov", Tests_Dir, Alr, Args, Quiet => True);
             Gcov_Output : constant String := Per_File_Gcov_Output (To_String (Run.Output));
+            No_Functions : constant Boolean :=
+              Ada.Strings.Fixed.Index (Gcov_Output, "File '") = 0 and
+              Ada.Strings.Fixed.Index (Gcov_Output, "No executable lines") /= 0;
             Unit_Covered : Natural := 0;
             Unit_Total   : Natural := 0;
+            Has_Unit_Record : Boolean := False;
 
             procedure Include_Source (Source : Unbounded_String) is
                One : Project_Tools.Gcov.Coverage_Summary;
             begin
                if Length (Source) = 0 then return; end if;
+               if not Ada_Quality.Coverage.Has_Source_Record (Gcov_Output, To_String (Source)) then
+                  return;
+               end if;
+               Has_Unit_Record := True;
                One := Project_Tools.Gcov.Parse_Lines_Executed_Output
                  (Gcov_Output, To_String (Source));
                Unit_Covered := Unit_Covered + Project_Tools.Gcov.Covered_Lines (One);
@@ -519,6 +532,10 @@ begin
             if Run.Status /= 0 then Fail ("gcov failed for " & Object_Name); return; end if;
             Include_Source (Unit.Body_Path);
             Include_Source (Unit.Spec_Path);
+            if not (Has_Unit_Record or No_Functions) then
+               Fail ("gcov output is missing production unit " & Stem);
+               return;
+            end if;
             Covered := Covered + Unit_Covered;
             Total := Total + Unit_Total;
             Files.Append

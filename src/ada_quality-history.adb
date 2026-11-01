@@ -22,6 +22,19 @@ package body Ada_Quality.History is
       Length (Baseline.Toolchain_Fingerprint) > 0 and then
       Baseline.Toolchain_Fingerprint = Current.Toolchain_Fingerprint);
 
+   function Policy_Comparable
+     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean is
+     (Baseline.Project_Id = Current.Project_Id and then
+      To_String (Baseline.Status) = "completed" and then
+      To_String (Current.Status) = "completed" and then
+      Length (Baseline.Source_Fingerprint) > 0 and then
+      Length (Current.Source_Fingerprint) > 0 and then
+      Length (Baseline.Policy_Fingerprint) > 0 and then
+      Length (Current.Policy_Fingerprint) > 0 and then
+      Baseline.Policy_Fingerprint /= Current.Policy_Fingerprint and then
+      Length (Baseline.Toolchain_Fingerprint) > 0 and then
+      Baseline.Toolchain_Fingerprint = Current.Toolchain_Fingerprint);
+
    function Baseline_Id
      (Runs : Ada_Quality.Storage.History_Vectors.Vector;
       Current_Id : Positive) return Natural

@@ -6,7 +6,7 @@ with Project_Tools.Files;
 with Project_Tools.Links;
 
 package body Ada_Quality.Workspaces is
-   --  AQ: complexity-reviewed -- bounded TOML pin scanning is decomposed and fixture-covered.
+   --  AQ: complexity-reviewed -- bounded Alire pin parsing is decomposed and fixture-covered.
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
 
@@ -85,39 +85,13 @@ package body Ada_Quality.Workspaces is
            (Tail'Length < 2 or else Tail (Tail'Last - 1 .. Tail'Last) /= "..");
       end Safe_Relative_Pin;
 
-      function Without_Comments (Text : String) return String is
-         Result    : String := Text;
-         In_String : Boolean := False;
-         Quote     : Character := Character'Val (0);
-         Escaped   : Boolean := False;
-         In_Comment : Boolean := False;
-      begin
-         for J in Text'Range loop
-            if Text (J) = Ada.Characters.Latin_1.LF then
-               In_Comment := False;
-               In_String := False;
-               Escaped := False;
-            elsif In_Comment then
-               Result (J) := ' ';
-            elsif not In_String and then Text (J) = '#' then
-               In_Comment := True;
-               Result (J) := ' ';
-            elsif In_String then
-               if Text (J) = Quote and then not Escaped then In_String := False; end if;
-               Escaped := Text (J) = '\' and then not Escaped;
-            elsif Text (J) in ''' | '"' then
-               In_String := True;
-               Quote := Text (J);
-            end if;
-         end loop;
-         return Result;
-      end Without_Comments;
-
       procedure Copy_Crate (From, Into : String);
 
       procedure Copy_Pins (Canonical, Into, Manifest : String) is
-         Data   : constant String := Without_Comments (Project_Tools.Files.Read_Raw_File (Manifest));
-         Cursor : Natural := Data'First;
+         Data : constant String := Project_Tools.Files.Read_Raw_File (Manifest);
+         type Section_Kind is (Other_Section, Pins_Section, Solution_Link_Section);
+         Section         : Section_Kind := Other_Section;
+         Multiline_Quote : Character := Character'Val (0);
 
          function Key_Character (Value : Character) return Boolean is
            (Value in 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' or else Value in '_' | '-');
@@ -140,71 +114,278 @@ package body Ada_Quality.Workspaces is
             end;
          end Copy_Pin;
 
-         procedure Skip_Whitespace (Position : in out Natural) is
+         function Trim (Text : String) return String is
+           (Ada.Strings.Fixed.Trim (Text, Ada.Strings.Both));
+
+         procedure Skip_Whitespace (Text : String; Position : in out Natural) is
          begin
-            while Position <= Data'Last and then Data (Position) in ' ' | Character'Val (9) |
-              Ada.Characters.Latin_1.CR | Ada.Characters.Latin_1.LF
+            while Position <= Text'Last and then Text (Position) in ' ' | Character'Val (9) |
+              Ada.Characters.Latin_1.CR
             loop
                Position := Position + 1;
             end loop;
          end Skip_Whitespace;
 
-         function Closing_Quote (First : Positive; Quote : Character) return Natural is
-            Position : Natural := First + 1;
+         function Triple_At (Text : String; Position : Positive; Quote : Character) return Boolean is
+           (Position + 2 <= Text'Last and then Text (Position .. Position + 2) = [Quote, Quote, Quote]);
+
+         function Sanitized (Line : String) return String is
+            Result   : String := Line;
+            Position : Natural := Line'First;
+            Quote    : Character := Character'Val (0);
             Escaped  : Boolean := False;
          begin
-            while Position <= Data'Last loop
-               if Data (Position) = Quote and then (Quote = ''' or else not Escaped) then
-                  return Position;
+            while Position <= Line'Last loop
+               if Multiline_Quote /= Character'Val (0) then
+                  if Triple_At (Line, Position, Multiline_Quote) then
+                     Result (Position .. Position + 2) := [others => ' '];
+                     Position := Position + 3;
+                     Multiline_Quote := Character'Val (0);
+                  else
+                     Result (Position) := ' ';
+                     Position := Position + 1;
+                  end if;
+               elsif Quote /= Character'Val (0) then
+                  if Line (Position) = Quote and then (Quote = ''' or else not Escaped) then
+                     Quote := Character'Val (0);
+                     Escaped := False;
+                  elsif Quote = '"' then
+                     Escaped := Line (Position) = '\' and then not Escaped;
+                  end if;
+                  Position := Position + 1;
+               elsif Line (Position) = '#' then
+                  Result (Position .. Result'Last) := [others => ' '];
+                  exit;
+               elsif Line (Position) in ''' | '"' and then Triple_At (Line, Position, Line (Position)) then
+                  Multiline_Quote := Line (Position);
+                  Result (Position .. Position + 2) := [others => ' '];
+                  Position := Position + 3;
+               elsif Line (Position) in ''' | '"' then
+                  Quote := Line (Position);
+                  Escaped := False;
+                  Position := Position + 1;
+               else
+                  Position := Position + 1;
                end if;
-               if Quote = '"' then
-                  Escaped := Data (Position) = '\' and then not Escaped;
+            end loop;
+            if Quote /= Character'Val (0) then
+               raise Workspace_Error with "unterminated TOML string in " & Manifest;
+            end if;
+            return Result;
+         end Sanitized;
+
+         function Compact (Text : String) return String is
+            Result : Unbounded_String;
+         begin
+            for Value of Text loop
+               if Value not in ' ' | Character'Val (9) | Ada.Characters.Latin_1.CR then
+                  Append (Result, Value);
                end if;
-               Position := Position + 1;
+            end loop;
+            return To_String (Result);
+         end Compact;
+
+         function Hex_Value (Value : Character) return Natural is
+         begin
+            if Value in '0' .. '9' then
+               return Character'Pos (Value) - Character'Pos ('0');
+            elsif Value in 'a' .. 'f' then
+               return Character'Pos (Value) - Character'Pos ('a') + 10;
+            elsif Value in 'A' .. 'F' then
+               return Character'Pos (Value) - Character'Pos ('A') + 10;
+            end if;
+            raise Workspace_Error with "invalid Unicode escape in local pin path in " & Manifest;
+         end Hex_Value;
+
+         procedure Append_UTF8 (Result : in out Unbounded_String; Code : Natural) is
+         begin
+            if Code > 16#10FFFF# or else Code in 16#D800# .. 16#DFFF# then
+               raise Workspace_Error with "invalid Unicode scalar in local pin path in " & Manifest;
+            elsif Code <= 16#7F# then
+               Append (Result, Character'Val (Code));
+            elsif Code <= 16#7FF# then
+               Append (Result, Character'Val (16#C0# + Code / 64));
+               Append (Result, Character'Val (16#80# + Code mod 64));
+            elsif Code <= 16#FFFF# then
+               Append (Result, Character'Val (16#E0# + Code / 4_096));
+               Append (Result, Character'Val (16#80# + (Code / 64) mod 64));
+               Append (Result, Character'Val (16#80# + Code mod 64));
+            else
+               Append (Result, Character'Val (16#F0# + Code / 262_144));
+               Append (Result, Character'Val (16#80# + (Code / 4_096) mod 64));
+               Append (Result, Character'Val (16#80# + (Code / 64) mod 64));
+               Append (Result, Character'Val (16#80# + Code mod 64));
+            end if;
+         end Append_UTF8;
+
+         procedure Append_Escape
+           (Result   : in out Unbounded_String;
+            Line     : String;
+            Position : in out Natural)
+         is
+         begin
+            case Line (Position) is
+               when 'b' => Append (Result, Character'Val (8));
+               when 't' => Append (Result, Character'Val (9));
+               when 'n' => Append (Result, Ada.Characters.Latin_1.LF);
+               when 'f' => Append (Result, Character'Val (12));
+               when 'r' => Append (Result, Ada.Characters.Latin_1.CR);
+               when '"' => Append (Result, '"');
+               when '\' => Append (Result, '\');
+               when 'u' | 'U' =>
+                  declare
+                     Count : constant Positive := (if Line (Position) = 'u' then 4 else 8);
+                     Code  : Natural := 0;
+                  begin
+                     if Position + Count > Line'Last then
+                        raise Workspace_Error with
+                          "truncated Unicode escape in local pin path in " & Manifest;
+                     end if;
+                     for Index in Position + 1 .. Position + Count loop
+                        Code := Code * 16 + Hex_Value (Line (Index));
+                     end loop;
+                     Append_UTF8 (Result, Code);
+                     Position := Position + Count;
+                  end;
+               when others =>
+                  raise Workspace_Error with "unsupported escape in local pin path in " & Manifest;
+            end case;
+         end Append_Escape;
+
+         function Decode_String
+           (Line : String;
+            First : Positive;
+            Last : out Natural) return String
+         is
+            Quote    : constant Character := Line (First);
+            Position : Natural := First + 1;
+            Escaped  : Boolean := False;
+            Result   : Unbounded_String;
+         begin
+            Last := 0;
+            if Quote not in ''' | '"' or else Triple_At (Line, First, Quote) then
+               raise Workspace_Error with "local pin path must be a single-line TOML string in " & Manifest;
+            end if;
+            while Position <= Line'Last loop
+               if Quote = ''' then
+                  if Line (Position) = Quote then
+                     Last := Position;
+                     return To_String (Result);
+                  end if;
+                  Append (Result, Line (Position));
+                  Position := Position + 1;
+               elsif not Escaped and then Line (Position) = Quote then
+                  Last := Position;
+                  return To_String (Result);
+               elsif not Escaped and then Line (Position) = '\' then
+                  Escaped := True;
+                  Position := Position + 1;
+               elsif Escaped then
+                  Append_Escape (Result, Line, Position);
+                  Escaped := False;
+                  Position := Position + 1;
+               else
+                  Append (Result, Line (Position));
+                  Position := Position + 1;
+               end if;
+            end loop;
+            raise Workspace_Error with "unterminated local pin path in " & Manifest;
+         end Decode_String;
+
+         function Path_Value_Position (Line : String) return Natural is
+            Position : Natural := Line'First;
+
+            function Value_After_Key (After_Key : Natural) return Natural is
+               Cursor : Natural := After_Key;
+            begin
+               Skip_Whitespace (Line, Cursor);
+               if Cursor <= Line'Last and then Line (Cursor) = '=' then
+                  Cursor := Cursor + 1;
+                  Skip_Whitespace (Line, Cursor);
+                  return Cursor;
+               end if;
+               return 0;
+            end Value_After_Key;
+         begin
+            while Position <= Line'Last loop
+               if Line (Position) in ''' | '"' then
+                  declare
+                     Last : Natural;
+                     Key  : constant String := Decode_String (Line, Position, Last);
+                  begin
+                     if Key = "path" then
+                        declare
+                           Value : constant Natural := Value_After_Key (Last + 1);
+                        begin
+                           if Value > 0 then return Value; end if;
+                        end;
+                     end if;
+                     Position := Last + 1;
+                  end;
+               elsif Position + 3 <= Line'Last and then Line (Position .. Position + 3) = "path" and then
+                 (Position = Line'First or else not Key_Character (Line (Position - 1))) and then
+                 (Position + 3 = Line'Last or else not Key_Character (Line (Position + 4)))
+               then
+                  declare
+                     Value : constant Natural := Value_After_Key (Position + 4);
+                  begin
+                     if Value > 0 then return Value; end if;
+                  end;
+                  Position := Position + 4;
+               else
+                  Position := Position + 1;
+               end if;
             end loop;
             return 0;
-         end Closing_Quote;
-      begin
-         while Cursor <= Data'Last loop
-            if Data (Cursor) in ''' | '"' then
-               declare
-                  Last : constant Natural := Closing_Quote (Cursor, Data (Cursor));
-               begin
-                  if Last = 0 then raise Workspace_Error with "unterminated string in " & Manifest; end if;
-                  Cursor := Last + 1;
-               end;
-            elsif Cursor + 3 <= Data'Last and then Data (Cursor .. Cursor + 3) = "path" and then
-              (Cursor = Data'First or else not Key_Character (Data (Cursor - 1))) and then
-              (Cursor + 3 = Data'Last or else not Key_Character (Data (Cursor + 4)))
-            then
-               declare
-                  Position : Natural := Cursor + 4;
-               begin
-                  Skip_Whitespace (Position);
-                  if Position <= Data'Last and then Data (Position) = '=' then
-                     Position := Position + 1;
-                     Skip_Whitespace (Position);
-                     if Position <= Data'Last and then Data (Position) in ''' | '"' then
-                        declare
-                           Last : constant Natural := Closing_Quote (Position, Data (Position));
-                        begin
-                           if Last = 0 then
-                              raise Workspace_Error with "unterminated local pin path in " & Manifest;
-                           end if;
-                           Copy_Pin (Data (Position + 1 .. Last - 1));
-                           Cursor := Last + 1;
-                        end;
-                     else
-                        raise Workspace_Error with "local pin path must be a TOML string in " & Manifest;
-                     end if;
-                  else
-                     Cursor := Cursor + 4;
-                  end if;
-               end;
-            else
-               Cursor := Cursor + 1;
+         end Path_Value_Position;
+
+         procedure Process_Line (Raw_Line : String) is
+            Line       : constant String := Sanitized (Raw_Line);
+            Clean      : constant String := Trim (Line);
+            Header     : constant String := Compact (Clean);
+            Value_At   : Natural;
+         begin
+            if Clean'Length = 0 then return; end if;
+            if Clean (Clean'First) = '[' then
+               if Header = "[[pins]]" then
+                  Section := Pins_Section;
+               elsif Header = "[solution.state.link]" then
+                  Section := Solution_Link_Section;
+               else
+                  Section := Other_Section;
+               end if;
+               return;
             end if;
-         end loop;
+            if Multiline_Quote /= Character'Val (0) or else Section = Other_Section then return; end if;
+            Value_At := Path_Value_Position (Line);
+            if Value_At > 0 then
+               if Value_At > Line'Last then
+                  raise Workspace_Error with "missing local pin path in " & Manifest;
+               end if;
+               declare
+                  Last : Natural;
+               begin
+                  Copy_Pin (Decode_String (Line, Value_At, Last));
+               end;
+            end if;
+         end Process_Line;
+      begin
+         if Data'Length > 0 then
+            declare
+               Start : Positive := Data'First;
+            begin
+               for Position in Data'Range loop
+                  if Data (Position) = Ada.Characters.Latin_1.LF then
+                     Process_Line ((if Position = Start then "" else Data (Start .. Position - 1)));
+                     Start := Position + 1;
+                  end if;
+               end loop;
+               if Start <= Data'Last then Process_Line (Data (Start .. Data'Last)); end if;
+            end;
+         end if;
+         if Multiline_Quote /= Character'Val (0) then
+            raise Workspace_Error with "unterminated multiline TOML string in " & Manifest;
+         end if;
       end Copy_Pins;
 
       procedure Copy_Crate (From, Into : String) is

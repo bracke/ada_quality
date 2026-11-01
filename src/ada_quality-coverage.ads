@@ -34,4 +34,10 @@ package Ada_Quality.Coverage is
    --  @param Units Independently enumerated production units.
    --  @param Object_Dir Instrumented GNAT object directory.
    --  @return Units for which `<stem>.gcno` is absent.
+
+   function Has_Source_Record (Output, Source : String) return Boolean;
+   --  Test whether gcov output contains a complete per-file record for Source.
+   --  @param Output Captured per-file gcov output.
+   --  @param Source Absolute inventoried source path.
+   --  @return True when a matching file header has a valid line summary.
 end Ada_Quality.Coverage;

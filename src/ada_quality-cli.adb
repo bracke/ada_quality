@@ -448,8 +448,7 @@ package body Ada_Quality.CLI is
                           Runs (Runs.Last_Index - 1);
                         Policy_Comparison : constant Boolean :=
                           Compatible_Id = 0 and then
-                          Previous_Run.Policy_Fingerprint /= Current_Run.Policy_Fingerprint and then
-                          Previous_Run.Toolchain_Fingerprint = Current_Run.Toolchain_Fingerprint;
+                          Ada_Quality.History.Policy_Comparable (Previous_Run, Current_Run);
                         Baseline_Run : constant Ada_Quality.Storage.History_Item :=
                           (if Compatible_Id > 0 then Find_Run (Runs, Compatible_Id)
                            else Previous_Run);
