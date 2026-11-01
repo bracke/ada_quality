@@ -59,16 +59,46 @@ package body Ada_Quality.Policy is
                Result.Value.Maximum_Output_Bytes := Positive'Value (Value);
                if Result.Value.Maximum_Output_Bytes > 16 * 1_024 * 1_024 then raise Constraint_Error; end if;
             when Clean_Key =>
+               if Value not in "true" | "false" then
+                  raise Constraint_Error with "policy booleans must be TOML true or false";
+               end if;
                Result.Value.Require_Clean_Worktree := Boolean'Value (Value);
          end case;
       end Assign;
 
+      function Without_Comment (Line : String) return String is
+         In_String : Boolean := False;
+         Quote     : Character := Character'Val (0);
+         Escaped   : Boolean := False;
+      begin
+         for J in Line'Range loop
+            if In_String then
+               if Line (J) = Quote and then not Escaped then
+                  In_String := False;
+               end if;
+               Escaped := Line (J) = '\' and then not Escaped;
+            elsif Line (J) in ''' | '"' then
+               In_String := True;
+               Quote := Line (J);
+               Escaped := False;
+            elsif Line (J) = '#' then
+               return (if J = Line'First then "" else Line (Line'First .. J - 1));
+            end if;
+         end loop;
+         if In_String then
+            raise Constraint_Error with "unterminated TOML string";
+         end if;
+         return Line;
+      end Without_Comment;
+
       procedure Apply (Line : String) is
-         Clean : constant String := Trim (Line);
+         Clean : constant String := Trim (Without_Comment (Line));
          Eq    : Natural := 0;
       begin
-         if Clean'Length = 0 or else Clean (Clean'First) = '#' or else Clean (Clean'First) = '[' then
+         if Clean'Length = 0 then
             return;
+         elsif Clean (Clean'First) = '[' then
+            raise Constraint_Error with "policy sections are not supported";
          end if;
          for J in Clean'Range loop
             if Clean (J) = '=' then Eq := J; exit; end if;

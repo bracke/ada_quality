@@ -421,7 +421,7 @@ package body Ada_Quality.CLI is
          return 0;
       elsif Command = "regressions" then
          declare
-            Found : Natural := 0;
+            Projects_Seen : Natural := 0;
 
             function Find_Run
               (Runs : Ada_Quality.Storage.History_Vectors.Vector;
@@ -434,6 +434,7 @@ package body Ada_Quality.CLI is
             end Find_Run;
          begin
             for P of Ada_Quality.Storage.Projects (Store) loop
+               Projects_Seen := Projects_Seen + 1;
                declare
                   Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
                     Ada_Quality.Storage.History (Store, P.Id);
@@ -452,29 +453,60 @@ package body Ada_Quality.CLI is
                         Baseline_Run : constant Ada_Quality.Storage.History_Item :=
                           (if Compatible_Id > 0 then Find_Run (Runs, Compatible_Id)
                            else Previous_Run);
-                        Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
-                          (if Compatible_Id > 0 or else Policy_Comparison then
-                             Ada_Quality.History.Compare
-                               (Baseline_Run, Current_Run,
-                                Ada_Quality.Storage.Results (Store, Baseline_Run.Id),
-                                Ada_Quality.Storage.Results (Store, Current_Run.Id),
-                                Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
-                                Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
-                                Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
-                                Ada_Quality.Storage.Findings (Store, Current_Run.Id))
-                           else Ada_Quality.History.Regression_Vectors.Empty_Vector);
                      begin
-                        for Change of Changes loop
-                           Found := Found + 1;
+                        if To_String (Current_Run.Status) /= "completed" then
                            Ada.Text_IO.Put_Line
-                             (Image (Change.Indicator) & " " & Ada_Quality.History.Image (Change.Kind) & ": " &
-                              To_String (Change.Before) & " -> " & To_String (Change.After));
-                        end loop;
+                             ("project" & Positive'Image (P.Id) &
+                              ": comparison unavailable: current assessment is not completed");
+                        elsif Compatible_Id = 0 and then not Policy_Comparison then
+                           Ada.Text_IO.Put_Line
+                             ("project" & Positive'Image (P.Id) &
+                              (if To_String (Previous_Run.Status) /= "completed" then
+                                  ": comparison unavailable: no completed baseline exists"
+                               elsif Previous_Run.Toolchain_Fingerprint /= Current_Run.Toolchain_Fingerprint then
+                                  ": comparison unavailable: toolchain fingerprint changed"
+                               else ": comparison unavailable: no compatible baseline exists"));
+                        else
+                           declare
+                              Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
+                                Ada_Quality.History.Compare
+                                  (Baseline_Run, Current_Run,
+                                   Ada_Quality.Storage.Results (Store, Baseline_Run.Id),
+                                   Ada_Quality.Storage.Results (Store, Current_Run.Id),
+                                   Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
+                                   Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
+                                   Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
+                                   Ada_Quality.Storage.Findings (Store, Current_Run.Id));
+                           begin
+                              if Changes.Is_Empty then
+                                 Ada.Text_IO.Put_Line
+                                   ("project" & Positive'Image (P.Id) &
+                                    ": no regressions in comparable assessments");
+                              else
+                                 for Change of Changes loop
+                                    Ada.Text_IO.Put_Line
+                                      ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
+                                       Ada_Quality.History.Image (Change.Kind) & ": " &
+                                       To_String (Change.Before) & " -> " & To_String (Change.After));
+                                 end loop;
+                              end if;
+                           end;
+                        end if;
                      end;
+                  elsif Runs.Is_Empty then
+                     Ada.Text_IO.Put_Line
+                       ("project" & Positive'Image (P.Id) &
+                        ": comparison unavailable: no assessments exist");
+                  else
+                     Ada.Text_IO.Put_Line
+                       ("project" & Positive'Image (P.Id) &
+                        ": comparison unavailable: no baseline assessment exists");
                   end if;
                end;
             end loop;
-            if Found = 0 then Ada.Text_IO.Put_Line ("no regressions"); end if;
+            if Projects_Seen = 0 then
+               Ada.Text_IO.Put_Line ("comparison unavailable: no projects are registered");
+            end if;
          end;
          return 0;
       elsif Command = "report" and then Option ("--format", "") = "json" then

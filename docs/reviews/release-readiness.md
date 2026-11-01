@@ -5,8 +5,8 @@ Decision: **ready**.
 | Gate | Exit/status | Evidence |
 |---|---:|---|
 | `alr build --validation -- -f` | 0 | disposable workspace, GNAT 15.2.1 |
-| `alr test` | 0 | 12/12 tests; no failures or unexpected errors |
-| `alr exec -- ./bin/coverage` | 0 | 2,742/2,979, 92.04%, repeated identically, source/toolchain-bound |
+| `alr test` | 0 | 21/21 tests; no failures or unexpected errors |
+| `alr exec -- ./bin/coverage` | 0 | 3,320/3,687, 90.04%, repeated identically, complete/source/toolchain-bound |
 | `gnatdoc ... --warnings` | 0 | documentation generated; zero warnings |
 | `./bin/check_all` | 0 | AUnit and release structure pass |
 | full 33-indicator assessment | 0 | 32 pass, PRF-01 N/A, terminal status completed |

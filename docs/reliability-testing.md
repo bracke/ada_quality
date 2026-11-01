@@ -1,6 +1,6 @@
 # Reliability testing
 
-The reliability suite combines twelve AUnit cases with process-level instrumented CLI workflows. It covers registry
+The reliability suite combines 21 AUnit cases with process-level instrumented CLI workflows. It covers registry
 and domain invariants, native analysis, policy failures, strict JSON/schema parsing, persistent reopen, migrations,
 commit-boundary rollback, recovery, hostile process paths, timeouts, signals, output bounds, SPARK applicability,
 recursive pin staging, link escape/cycle handling, deep trees, and 1,000-run histories.

@@ -209,6 +209,25 @@ package Ada_Quality.Storage is
    --  Arm one deterministic commit fault for the next matching transaction.
    --  @param Point Transaction boundary to fail, or No_Testing_Fault to disarm.
 
+   procedure Testing_Use_Legacy_Evidence (Enabled : Boolean);
+   --  Make subsequent publications write the schema-2 evidence encoding, for legacy-decoding tests.
+   --  @param Enabled Whether publication omits timestamps and the lossless evidence format.
+
+   type Testing_Corruption is
+     (Duplicate_Result, Missing_Result, Invalid_Measurement, Malformed_Finding, Invalid_Run_State);
+   --  Deliberate damage applied to a disposable test database.
+   --  @enum Duplicate_Result Add a second result row for one indicator.
+   --  @enum Missing_Result Delete one result row.
+   --  @enum Invalid_Measurement Store a nonnumeric value as a decimal measurement.
+   --  @enum Malformed_Finding Replace a finding payload with undecodable text.
+   --  @enum Invalid_Run_State Store an unknown lifecycle state.
+
+   procedure Testing_Corrupt (Item : in out Store; Run_Id : Positive; Kind : Testing_Corruption);
+   --  Damage the evidence of one published run in a disposable test database.
+   --  @param Item Open test store.
+   --  @param Run_Id Published run to damage.
+   --  @param Kind Damage to apply.
+
    procedure Check (Item : in out Store);
    --  Validate schema, row ownership, lifecycle, cardinality, and immutable evidence invariants.
    --  @param Item Open store to check.

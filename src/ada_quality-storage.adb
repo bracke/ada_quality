@@ -1,15 +1,11 @@
 with Ada.Directories;
 with Ada.Strings.Fixed;
-with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Ada_Quality.Persistence;
 with Database.Catalog;
 with Database.Predicates;
-with Database.Rows;
 with Database.Status;
-with Database.Tables;
 with Database.Transactions;
-with Database.Types;
-with Database.Values;
 with Project_Tools.Links;
 with Project_Tools.Files;
 with Project_Tools.TOML;
@@ -17,19 +13,14 @@ with Project_Tools.TOML;
 package body Ada_Quality.Storage is
    use Ada.Strings.Unbounded;
    use Ada.Strings.Wide_Wide_Unbounded;
+   use Ada_Quality.Persistence;
    use Ada_Quality.Types;
    use type Project_Tools.TOML.String_Parse_Status;
 
-   Projects_Table          : constant Positive := 1;
-   Assessments_Table       : constant Positive := 2;
-   Indicator_Results_Table : constant Positive := 3;
-   Measurements_Table      : constant Positive := 4;
-   Findings_Table          : constant Positive := 5;
-   Executions_Table        : constant Positive := 6;
-   Events_Table            : constant Positive := 7;
-   Metadata_Table          : constant Positive := 8;
-   Current_Schema_Version  : constant String := "2";
+   Current_Schema_Version  : constant String :=
+     Ada.Strings.Fixed.Trim (Positive'Image (Ada_Quality.Persistence.Current_Schema_Version), Ada.Strings.Both);
    Next_Testing_Fault      : Testing_Fault_Point := No_Testing_Fault;
+   Legacy_Testing_Evidence : Boolean := False;
 
    procedure Trigger_Testing_Fault (Point : Testing_Fault_Point) is
    begin
@@ -38,55 +29,6 @@ package body Ada_Quality.Storage is
          raise Storage_Error with "injected storage fault at " & Testing_Fault_Point'Image (Point);
       end if;
    end Trigger_Testing_Fault;
-
-   Table_Names : constant array (Positive range 1 .. 8) of access constant Wide_Wide_String :=
-     [new Wide_Wide_String'("projects"), new Wide_Wide_String'("assessment_runs"),
-      new Wide_Wide_String'("indicator_results"), new Wide_Wide_String'("measurements"),
-      new Wide_Wide_String'("findings"), new Wide_Wide_String'("tool_executions"),
-      new Wide_Wide_String'("assessment_events"), new Wide_Wide_String'("schema_metadata")];
-
-   type Entity is record
-      Id        : Positive;
-      Parent_Id : Natural := 0;
-      Kind      : Unbounded_Wide_Wide_String;
-      State     : Unbounded_Wide_Wide_String;
-      Payload   : Unbounded_Wide_Wide_String;
-      Active    : Boolean := True;
-   end record;
-
-   package Entity_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Entity);
-
-   function To_Row (Item : Entity) return Database.Rows.Row is
-      Result : Database.Rows.Row;
-   begin
-      Database.Rows.Append (Result, Database.Values.From_Integer (Integer (Item.Id)));
-      Database.Rows.Append (Result, Database.Values.From_Integer (Integer (Item.Parent_Id)));
-      Database.Rows.Append (Result, Database.Values.From_Text (To_Wide_Wide_String (Item.Kind)));
-      Database.Rows.Append (Result, Database.Values.From_Text (To_Wide_Wide_String (Item.State)));
-      Database.Rows.Append (Result, Database.Values.From_Text (To_Wide_Wide_String (Item.Payload)));
-      Database.Rows.Append (Result, Database.Values.From_Boolean (Item.Active));
-      return Result;
-   end To_Row;
-
-   function From_Row (Row : Database.Rows.Row) return Entity is
-   begin
-      return
-        (Id => Positive (Database.Rows.Get (Row, 0).Int),
-         Parent_Id => Natural (Database.Rows.Get (Row, 1).Int),
-         Kind => Database.Rows.Get (Row, 2).Text,
-         State => Database.Rows.Get (Row, 3).Text,
-         Payload => Database.Rows.Get (Row, 4).Text,
-         Active => Database.Rows.Get (Row, 5).Bool);
-   end From_Row;
-
-   function Key_Of (Item : Entity) return Positive is (Item.Id);
-   function Key_Value (Key : Positive) return Database.Values.Value is
-     (Database.Values.From_Integer (Integer (Key)));
-
-   package Entity_Tables is new Database.Tables.Typed
-     (Row_Type => Entity, Key_Type => Positive, To_Row => To_Row, From_Row => From_Row,
-      Key_Of => Key_Of, Key_Value => Key_Value);
 
    function Project_Less (Left, Right : Project_Info) return Boolean is (Left.Id < Right.Id);
    package Project_Sorting is new Project_Vectors.Generic_Sorting ("<" => Project_Less);
@@ -97,46 +39,6 @@ package body Ada_Quality.Storage is
    function Detail_Less (Left, Right : Detail_Info) return Boolean is (Left.Id < Right.Id);
    package Detail_Sorting is new Detail_Vectors.Generic_Sorting ("<" => Detail_Less);
 
-   function Encode (Text : String) return Wide_Wide_String is
-     (Ada.Strings.UTF_Encoding.Wide_Wide_Strings.Decode (Text));
-
-   function Decode (Text : Wide_Wide_String) return String is
-     (Ada.Strings.UTF_Encoding.Wide_Wide_Strings.Encode (Text));
-
-   function WW (Text : String) return Unbounded_Wide_Wide_String is
-     (To_Unbounded_Wide_Wide_String (Encode (Text)));
-
-   function S (Text : Unbounded_Wide_Wide_String) return String is
-     (Decode (To_Wide_Wide_String (Text)));
-
-   function Field (Payload, Name : String) return String is
-      Prefix : constant String := Name & "=";
-      Start  : Natural := Payload'First;
-   begin
-      while Start <= Payload'Last loop
-         declare
-            Stop : Natural := Start;
-         begin
-            while Stop <= Payload'Last and then Payload (Stop) /= Character'Val (10) loop
-               Stop := Stop + 1;
-            end loop;
-            if Stop > Start and then Stop - Start >= Prefix'Length and then
-              Payload (Start .. Start + Prefix'Length - 1) = Prefix
-            then
-               return Payload (Start + Prefix'Length .. Stop - 1);
-            end if;
-            Start := Stop + 1;
-         end;
-      end loop;
-      return "";
-   end Field;
-
-   function Assessment_Payload
-     (Source_Fingerprint, Policy_Fingerprint, Toolchain_Fingerprint : String) return String is
-     ("source=" & Source_Fingerprint & Character'Val (10) &
-      "policy=" & Policy_Fingerprint & Character'Val (10) &
-      "toolchain=" & Toolchain_Fingerprint);
-
    procedure Require_OK (Status : Database.Status.Result; Context : String) is
    begin
       if not Database.Status.Is_Ok (Status) then
@@ -144,26 +46,13 @@ package body Ada_Quality.Storage is
       end if;
    end Require_OK;
 
-   function New_Schema (Name : Wide_Wide_String) return Database.Schema.Table_Schema is
-      Result : Database.Schema.Table_Schema;
-   begin
-      Result.Name := To_Unbounded_Wide_Wide_String (Name);
-      Database.Schema.Add_Column (Result, "id", Database.Types.Integer_Value, False, True);
-      Database.Schema.Add_Column (Result, "parent_id", Database.Types.Integer_Value, False);
-      Database.Schema.Add_Column (Result, "kind", Database.Types.Text_Value, False);
-      Database.Schema.Add_Column (Result, "state", Database.Types.Text_Value, False);
-      Database.Schema.Add_Column (Result, "payload", Database.Types.Text_Value, False);
-      Database.Schema.Add_Column (Result, "active", Database.Types.Boolean_Value, False);
-      return Result;
-   end New_Schema;
-
    procedure Register_Schemas (Item : in out Store) is
       Status : Database.Status.Result;
    begin
       for J in Item.Schemas'Range loop
-         Item.Schemas (J) := New_Schema (Table_Names (J).all);
+         Item.Schemas (J) := New_Schema (Table_Name (J));
          Status := Entity_Tables.Register (Item.DB, Item.Schemas (J));
-         Require_OK (Status, "register " & Decode (Table_Names (J).all));
+         Require_OK (Status, "register " & Decode (Table_Name (J)));
       end loop;
 
       declare
@@ -188,8 +77,8 @@ package body Ada_Quality.Storage is
    begin
       for J in Item.Schemas'Range loop
          Status := Database.Catalog.Find_By_Name
-           (Database.Catalog_State_Key (Item.DB), Table_Names (J).all, Item.Schemas (J));
-         Require_OK (Status, "load " & Decode (Table_Names (J).all));
+           (Database.Catalog_State_Key (Item.DB), Table_Name (J), Item.Schemas (J));
+         Require_OK (Status, "load " & Decode (Table_Name (J)));
       end loop;
    end Load_Schemas;
 
@@ -203,40 +92,44 @@ package body Ada_Quality.Storage is
       Require_OK (Status, "read schema version for migration");
       if S (Row.Payload) = Current_Schema_Version then
          Require_OK (Database.Transactions.Commit (Tx), "complete schema version check");
-      elsif S (Row.Payload) = "1" then
-         declare
-            Cursor : Entity_Tables.Cursor;
-            Legacy : Entity_Vectors.Vector;
-         begin
-            Status := Entity_Tables.Scan
-              (Tx, Item.DB, Item.Schemas (Assessments_Table), Database.Predicates.True_Predicate, Cursor);
-            Require_OK (Status, "scan legacy assessments");
-            while Entity_Tables.Has_Element (Cursor) loop
-               Legacy.Append (Entity_Tables.Element (Cursor));
-               Status := Entity_Tables.Next
+      elsif S (Row.Payload) in "1" | "2" then
+         if S (Row.Payload) = "1" then
+            declare
+               Cursor : Entity_Tables.Cursor;
+               Legacy : Entity_Vectors.Vector;
+            begin
+               Status := Entity_Tables.Scan
                  (Tx, Item.DB, Item.Schemas (Assessments_Table), Database.Predicates.True_Predicate, Cursor);
-               Require_OK (Status, "advance legacy assessment scan");
-            end loop;
-            for Assessment_Row of Legacy loop
-               declare
-                  Payload : constant String := S (Assessment_Row.Payload);
-                  Split   : constant Natural := Ada.Strings.Fixed.Index (Payload, "|");
-                  Updated : Entity := Assessment_Row;
-               begin
-                  if Field (Payload, "source") = "" and then Split > Payload'First and then Split < Payload'Last then
-                     Updated.Payload := WW
-                       (Assessment_Payload
-                          (Payload (Payload'First .. Split - 1), Payload (Split + 1 .. Payload'Last), ""));
-                     Status := Entity_Tables.Update
-                       (Tx, Item.DB, Item.Schemas (Assessments_Table), Updated);
-                     Require_OK (Status, "migrate legacy assessment fingerprints");
-                  end if;
-               end;
-            end loop;
-         end;
+               Require_OK (Status, "scan legacy assessments");
+               while Entity_Tables.Has_Element (Cursor) loop
+                  Legacy.Append (Entity_Tables.Element (Cursor));
+                  Status := Entity_Tables.Next
+                    (Tx, Item.DB, Item.Schemas (Assessments_Table), Database.Predicates.True_Predicate, Cursor);
+                  Require_OK (Status, "advance legacy assessment scan");
+               end loop;
+               for Assessment_Row of Legacy loop
+                  declare
+                     Payload : constant String := S (Assessment_Row.Payload);
+                     Split   : constant Natural := Ada.Strings.Fixed.Index (Payload, "|");
+                     Updated : Entity := Assessment_Row;
+                  begin
+                     if Field (Payload, "source") = "" and then Split > Payload'First and then Split < Payload'Last then
+                        Updated.Payload := WW
+                          (Assessment_Payload
+                             (Payload (Payload'First .. Split - 1), Payload (Split + 1 .. Payload'Last), ""));
+                        Status := Entity_Tables.Update
+                          (Tx, Item.DB, Item.Schemas (Assessments_Table), Updated);
+                        Require_OK (Status, "migrate legacy assessment fingerprints");
+                     end if;
+                  end;
+               end loop;
+            end;
+         end if;
+         --  Version 3 adds run timestamps and lossless child payloads for new runs only; existing rows stay
+         --  byte-identical and remain identified as legacy evidence by the absent run format marker.
          Row.Payload := WW (Current_Schema_Version);
          Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Metadata_Table), Row);
-         Require_OK (Status, "migrate schema metadata from version 1");
+         Require_OK (Status, "migrate schema metadata to the current version");
          Trigger_Testing_Fault (Schema_Migration_Commit);
          Require_OK (Database.Transactions.Commit (Tx), "commit schema migration");
       else
@@ -462,7 +355,8 @@ package body Ada_Quality.Storage is
       Status := Entity_Tables.Insert
         (Tx, Item.DB, Item.Schemas (Assessments_Table),
          (Id => Run_Id, Parent_Id => Project_Id, Kind => WW ("assessment"), State => WW ("running"),
-          Payload => WW (Assessment_Payload (Source_Fingerprint, Policy_Fingerprint, "")), Active => False));
+          Payload => WW (Assessment_Payload (Source_Fingerprint, Policy_Fingerprint, "", Started_At => UTC_Now)),
+          Active => False));
       if not Database.Status.Is_Ok (Status) then
          Database.Transactions.Rollback (Tx);
          Require_OK (Status, "start assessment");
@@ -492,6 +386,7 @@ package body Ada_Quality.Storage is
       Finding_Id : Natural := Next_Id (Item, Findings_Table);
       Execution_Id : Natural := Next_Id (Item, Executions_Table);
       Event_Id   : constant Positive := Next_Id (Item, Events_Table);
+      Stamp      : constant String := (if Legacy_Testing_Evidence then "" else UTC_Now);
       Tx         : Database.Transactions.Transaction;
       Status     : Database.Status.Result;
       Run_Row    : Entity;
@@ -503,6 +398,95 @@ package body Ada_Quality.Storage is
             raise Storage_Error with Context;
          end if;
       end Insert;
+
+      procedure Publish_Run is
+      begin
+         if Value.Id = 0 then
+            Insert
+              (Assessments_Table,
+               (Id => Run_Id, Parent_Id => Value.Project_Id, Kind => WW ("assessment"),
+                State => WW (Assessment_Status_Image (Value.Status)),
+                Payload => WW (Assessment_Payload
+                  (To_String (Value.Source_Fingerprint), To_String (Value.Policy_Fingerprint),
+                   To_String (Value.Toolchain_Fingerprint), Started_At => Stamp, Finished_At => Stamp,
+                   Lossless => not Legacy_Testing_Evidence)),
+                Active => Value.Status = Assessment_Completed), "insert assessment");
+         else
+            Status := Entity_Tables.Find
+              (Tx, Item.DB, Item.Schemas (Assessments_Table), Run_Id, Run_Row);
+            if not Database.Status.Is_Ok (Status) or else S (Run_Row.State) /= "running" then
+               raise Storage_Error with "assessment publication requires a running record";
+            elsif Run_Row.Parent_Id /= Value.Project_Id then
+               raise Storage_Error with "assessment publication project does not own the running record";
+            end if;
+            Run_Row.State := WW (Assessment_Status_Image (Value.Status));
+            Run_Row.Payload :=
+              WW (Assessment_Payload
+                (To_String (Value.Source_Fingerprint), To_String (Value.Policy_Fingerprint),
+                 To_String (Value.Toolchain_Fingerprint), Started_At => Field (S (Run_Row.Payload), "started_at"),
+                 Finished_At => Stamp, Lossless => not Legacy_Testing_Evidence));
+            Run_Row.Active := Value.Status = Assessment_Completed;
+            Status := Entity_Tables.Update
+              (Tx, Item.DB, Item.Schemas (Assessments_Table), Run_Row);
+            if not Database.Status.Is_Ok (Status) then
+               raise Storage_Error with "update running assessment";
+            end if;
+         end if;
+      end Publish_Run;
+
+      procedure Publish_Children is
+      begin
+         for R of Value.Results loop
+            Insert
+              (Indicator_Results_Table,
+               (Id => Positive (Result_Id), Parent_Id => Run_Id, Kind => WW (Image (R.Indicator)),
+                State => WW (Image (R.Execution) & "/" & Image (R.Compliance)),
+                Payload => WW
+                  (if Legacy_Testing_Evidence then To_String (R.Summary) & Character'Val (10) & To_String (R.Evidence)
+                   else Result_Payload (R)),
+                Active => R.Compliance = Pass), "insert indicator result");
+            Result_Id := Result_Id + 1;
+            Insert
+              (Measurements_Table,
+               (Id => Positive (Measure_Id), Parent_Id => Run_Id, Kind => WW (Image (R.Indicator)),
+                State => WW (Value_Kind'Image (R.Measurement.Kind)),
+                Payload => WW (Image (R.Measurement)), Active => R.Execution = Succeeded), "insert measurement");
+            Measure_Id := Measure_Id + 1;
+            for F of R.Findings loop
+               Insert
+                 (Findings_Table,
+                  (Id => Positive (Finding_Id), Parent_Id => Run_Id, Kind => WW (To_String (F.Fingerprint)),
+                   State => WW (Severity'Image (F.Level)),
+                   Payload => WW
+                     (if Legacy_Testing_Evidence then To_String (F.Rule) & Character'Val (10) & To_String (F.Message)
+                      else Finding_Payload (F)),
+                   Active => True),
+                  "insert finding");
+               Finding_Id := Finding_Id + 1;
+            end loop;
+         end loop;
+         for Execution of Value.Executions loop
+            Insert
+              (Executions_Table,
+               (Id => Positive (Execution_Id), Parent_Id => Run_Id, Kind => WW (To_String (Execution.Tool)),
+                State => WW (Image (Execution.Status)),
+                Payload => WW
+                  ("command=" & To_String (Execution.Command) & Character'Val (10) &
+                   "exit_code=" & Integer'Image (Execution.Exit_Code) & Character'Val (10) &
+                   "output_digest=" & To_String (Execution.Output_Digest) & Character'Val (10) &
+                   "output_bytes=" & Natural'Image (Execution.Output_Bytes) & Character'Val (10) &
+                   "truncated=" & Boolean'Image (Execution.Truncated)),
+                Active => Execution.Status = Tool_Completed),
+               "insert tool execution");
+            Execution_Id := Execution_Id + 1;
+         end loop;
+         Insert
+           (Events_Table,
+            (Id => Event_Id, Parent_Id => Run_Id, Kind => WW ("published"),
+             State => WW (Assessment_Status_Image (Value.Status)),
+             Payload => WW ("atomic publication"), Active => True),
+            "insert event");
+      end Publish_Children;
    begin
       if not Is_Publishable (Value) then
          raise Storage_Error with "assessment is not a complete valid terminal result set";
@@ -516,79 +500,8 @@ package body Ada_Quality.Storage is
          end;
       end if;
       Database.Transactions.Begin_Write (Item.DB, Tx);
-      if Value.Id = 0 then
-         Insert
-           (Assessments_Table,
-            (Id => Run_Id, Parent_Id => Value.Project_Id, Kind => WW ("assessment"),
-             State => WW (Assessment_Status_Image (Value.Status)),
-             Payload => WW (Assessment_Payload
-               (To_String (Value.Source_Fingerprint), To_String (Value.Policy_Fingerprint),
-                To_String (Value.Toolchain_Fingerprint))),
-             Active => Value.Status = Assessment_Completed), "insert assessment");
-      else
-         Status := Entity_Tables.Find
-           (Tx, Item.DB, Item.Schemas (Assessments_Table), Run_Id, Run_Row);
-         if not Database.Status.Is_Ok (Status) or else S (Run_Row.State) /= "running" then
-            raise Storage_Error with "assessment publication requires a running record";
-         elsif Run_Row.Parent_Id /= Value.Project_Id then
-            raise Storage_Error with "assessment publication project does not own the running record";
-         end if;
-         Run_Row.State := WW (Assessment_Status_Image (Value.Status));
-         Run_Row.Payload :=
-           WW (Assessment_Payload
-             (To_String (Value.Source_Fingerprint), To_String (Value.Policy_Fingerprint),
-              To_String (Value.Toolchain_Fingerprint)));
-         Run_Row.Active := Value.Status = Assessment_Completed;
-         Status := Entity_Tables.Update
-           (Tx, Item.DB, Item.Schemas (Assessments_Table), Run_Row);
-         if not Database.Status.Is_Ok (Status) then
-            raise Storage_Error with "update running assessment";
-         end if;
-      end if;
-      for R of Value.Results loop
-         Insert
-           (Indicator_Results_Table,
-            (Id => Positive (Result_Id), Parent_Id => Run_Id, Kind => WW (Image (R.Indicator)),
-             State => WW (Image (R.Execution) & "/" & Image (R.Compliance)),
-             Payload => WW (To_String (R.Summary) & Character'Val (10) & To_String (R.Evidence)),
-             Active => R.Compliance = Pass), "insert indicator result");
-         Result_Id := Result_Id + 1;
-         Insert
-           (Measurements_Table,
-            (Id => Positive (Measure_Id), Parent_Id => Run_Id, Kind => WW (Image (R.Indicator)),
-             State => WW (Value_Kind'Image (R.Measurement.Kind)),
-             Payload => WW (Image (R.Measurement)), Active => R.Execution = Succeeded), "insert measurement");
-         Measure_Id := Measure_Id + 1;
-         for F of R.Findings loop
-            Insert
-              (Findings_Table,
-               (Id => Positive (Finding_Id), Parent_Id => Run_Id, Kind => WW (To_String (F.Fingerprint)),
-                State => WW (Severity'Image (F.Level)),
-                Payload => WW (To_String (F.Rule) & Character'Val (10) & To_String (F.Message)), Active => True),
-               "insert finding");
-            Finding_Id := Finding_Id + 1;
-         end loop;
-      end loop;
-      for Execution of Value.Executions loop
-         Insert
-           (Executions_Table,
-            (Id => Positive (Execution_Id), Parent_Id => Run_Id, Kind => WW (To_String (Execution.Tool)),
-             State => WW (Image (Execution.Status)),
-             Payload => WW
-               ("command=" & To_String (Execution.Command) & Character'Val (10) &
-                "exit_code=" & Integer'Image (Execution.Exit_Code) & Character'Val (10) &
-                "output_digest=" & To_String (Execution.Output_Digest) & Character'Val (10) &
-                "output_bytes=" & Natural'Image (Execution.Output_Bytes) & Character'Val (10) &
-                "truncated=" & Boolean'Image (Execution.Truncated)),
-             Active => Execution.Status = Tool_Completed),
-            "insert tool execution");
-         Execution_Id := Execution_Id + 1;
-      end loop;
-      Insert
-        (Events_Table,
-         (Id => Event_Id, Parent_Id => Run_Id, Kind => WW ("published"),
-          State => WW (Assessment_Status_Image (Value.Status)), Payload => WW ("atomic publication"), Active => True),
-         "insert event");
+      Publish_Run;
+      Publish_Children;
       Trigger_Testing_Fault (Assessment_Publication_Commit);
       Require_OK (Database.Transactions.Commit (Tx), "publish assessment");
       return Run_Id;
@@ -688,6 +601,7 @@ package body Ada_Quality.Storage is
       end if;
       Row.State := WW ("interrupted");
       Row.Active := False;
+      Row.Payload := WW (With_Field (S (Row.Payload), "finished_at", UTC_Now));
       Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Assessments_Table), Row);
       Require_OK (Status, "mark assessment interrupted");
       Status := Entity_Tables.Insert
@@ -719,6 +633,7 @@ package body Ada_Quality.Storage is
                Require_OK (Status, "load abandoned assessment");
                Row.State := WW ("interrupted");
                Row.Active := False;
+               Row.Payload := WW (With_Field (S (Row.Payload), "finished_at", UTC_Now));
                Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Assessments_Table), Row);
                Require_OK (Status, "mark assessment interrupted");
                Status := Entity_Tables.Insert
@@ -797,4 +712,98 @@ package body Ada_Quality.Storage is
    begin
       Next_Testing_Fault := Point;
    end Testing_Inject_Next_Fault;
+
+   procedure Testing_Use_Legacy_Evidence (Enabled : Boolean) is
+   begin
+      Legacy_Testing_Evidence := Enabled;
+   end Testing_Use_Legacy_Evidence;
+
+   procedure Find_Testing_Evidence
+     (Item   : in out Store;
+      Tx     : in out Database.Transactions.Transaction;
+      Table  : Positive;
+      Run_Id : Positive;
+      Target : out Entity;
+      Found  : out Boolean)
+   is
+      Cursor : Entity_Tables.Cursor;
+      Status : Database.Status.Result;
+   begin
+      Found := False;
+      Status := Entity_Tables.Scan
+        (Tx, Item.DB, Item.Schemas (Table), Database.Predicates.True_Predicate, Cursor);
+      Require_OK (Status, "scan rows to corrupt");
+      while not Found and then Entity_Tables.Has_Element (Cursor) loop
+         if Entity_Tables.Element (Cursor).Parent_Id = Run_Id then
+            Target := Entity_Tables.Element (Cursor);
+            Found := True;
+         else
+            Status := Entity_Tables.Next
+              (Tx, Item.DB, Item.Schemas (Table), Database.Predicates.True_Predicate, Cursor);
+            Require_OK (Status, "advance rows to corrupt");
+         end if;
+      end loop;
+   end Find_Testing_Evidence;
+
+   function Testing_Corruption_Table (Kind : Testing_Corruption) return Positive is
+     (case Kind is
+         when Duplicate_Result | Missing_Result => Indicator_Results_Table,
+         when Invalid_Measurement => Measurements_Table,
+         when Malformed_Finding => Findings_Table,
+         when Invalid_Run_State => Assessments_Table);
+
+   procedure Testing_Corrupt (Item : in out Store; Run_Id : Positive; Kind : Testing_Corruption) is
+      Table  : constant Positive := Testing_Corruption_Table (Kind);
+      New_Id : constant Positive := Next_Id (Item, Table);
+      Tx     : Database.Transactions.Transaction;
+      Status : Database.Status.Result;
+      Target : Entity;
+      Found  : Boolean := False;
+
+      procedure Apply_Corruption is
+      begin
+         case Kind is
+            when Duplicate_Result =>
+               Target.Id := New_Id;
+               Status := Entity_Tables.Insert (Tx, Item.DB, Item.Schemas (Table), Target);
+            when Missing_Result =>
+               Status := Entity_Tables.Delete (Tx, Item.DB, Item.Schemas (Table), Target.Id);
+            when Invalid_Measurement =>
+               Target.State := WW ("DECIMAL_VALUE");
+               Target.Payload := WW ("ninety percent");
+               Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Table), Target);
+            when Malformed_Finding =>
+               if Found then
+                  Target.Payload := WW ("not a finding");
+                  Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Table), Target);
+               else
+                  Status := Entity_Tables.Insert
+                    (Tx, Item.DB, Item.Schemas (Table),
+                     (Id => New_Id, Parent_Id => Run_Id, Kind => WW ("STR-01:corrupt"), State => WW ("HIGH"),
+                      Payload => WW ("not a finding"), Active => True));
+               end if;
+            when Invalid_Run_State =>
+               null;
+         end case;
+      end Apply_Corruption;
+   begin
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      if Kind = Invalid_Run_State then
+         Require_OK (Entity_Tables.Find (Tx, Item.DB, Item.Schemas (Table), Run_Id, Target), "load run to corrupt");
+         Target.State := WW ("exploded");
+         Require_OK (Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Table), Target), "corrupt run state");
+      else
+         Find_Testing_Evidence (Item, Tx, Table, Run_Id, Target, Found);
+         Apply_Corruption;
+         if Kind /= Malformed_Finding and then not Found then
+            raise Storage_Error with "run has no evidence to corrupt";
+         end if;
+         Require_OK (Status, "corrupt evidence");
+      end if;
+      Require_OK (Database.Transactions.Commit (Tx), "commit corruption fixture");
+   exception
+      when others =>  --  AQ: audited exception boundary
+         if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+         raise;
+   end Testing_Corrupt;
 end Ada_Quality.Storage;

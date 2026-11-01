@@ -142,6 +142,22 @@ package body Ada_Quality.History is
      (Id in BLD_01 .. BLD_04 or else Id in TST_01 .. TST_04 or else
       Id in REL_01 .. REL_04 or else Id = PRF_01);
 
+   type Metric_Direction is (Higher_Is_Better, Lower_Is_Better, No_Trend);
+
+   function Direction (Id : Indicator_Id) return Metric_Direction is
+     (case Id is
+         when TST_02 | TST_03 => Higher_Is_Better,
+         when SRC_01 | SRC_02 | SRC_03 | SRC_04 | SRC_05 | SRC_06 |
+              DOC_01 | SEC_01 | SEC_02 | SEC_03 => Lower_Is_Better,
+         when others => No_Trend);
+
+   function Is_Worse
+     (Id : Indicator_Id; Before, After : Long_Long_Integer) return Boolean is
+     (case Direction (Id) is
+         when Higher_Is_Better => After < Before,
+         when Lower_Is_Better  => After > Before,
+         when No_Trend         => False);
+
    function Severity_Rank (Text : String) return Natural is
       Upper : constant String := Ada.Characters.Handling.To_Upper (Text);
    begin
@@ -211,8 +227,7 @@ package body Ada_Quality.History is
          Old_Number := Number (Baseline_Measurements, New_Item.Kind, Old_Number_Found);
          New_Number := Number (Current_Measurements, New_Item.Kind, New_Number_Found);
          if Old_Number_Found and then New_Number_Found and then
-           ((Id = TST_03 and then New_Number < Old_Number) or else
-            (Id /= TST_03 and then New_Number > Old_Number))
+           Is_Worse (Id, Old_Number, New_Number)
          then
             Add (Id, Worsened_Metric, Long_Long_Integer'Image (Old_Number),
               Long_Long_Integer'Image (New_Number));

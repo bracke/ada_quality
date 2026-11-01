@@ -6,7 +6,7 @@ publication, interruption, recovery, reads, and integrity checking.
 Verified controls:
 
 - eight typed tables are registered and reopened through stored schema metadata;
-- schema version 1 migrates atomically to version 2 and unknown versions fail closed;
+- schema versions 1 and 2 migrate atomically to version 3 and unknown versions fail closed;
 - assessment start writes its running record and start event in one transaction;
 - terminal publication validates 33 unique results and commits results, measurements, findings, executions, and the
   publication event atomically;

@@ -8,23 +8,24 @@ a disposable copy with the same relative lockfile topology and cached GNAT 15.2.
 were then remediated in implementation and verified in that writable copy.
 
 Reviewed production units: `Ada_Quality.Types`, `Indicators`, `Policy`, `Evaluation`, `Checks`, `Execution`,
-`Workspaces`, `Storage`, `History`, `JSON`, `Presentation`, `Tools`, and `CLI`, plus the three executable entry
+`Workspaces`, `Storage`, `Persistence`, `Reporting`, `History`, `JSON`, `Presentation`, `Tools`, and `CLI`, plus the three executable entry
 points and the AUnit child crate.
 
 Verified facts:
 
 - the registry has exactly 33 unique indicator identifiers;
 - a fresh full assessment completed with 32 passing indicators and PRF-01 correctly not applicable;
-- the validation build, twelve-test AUnit action, coverage gate, GNATdoc generation, and release checker passed;
+- the validation build, 21-test AUnit action, coverage gate, GNATdoc generation, and release checker passed;
 - database integrity passed before and after an assessment, and exported JSON parsed with the documented structure;
-- repeated isolated coverage runs produced identical per-unit counts of 2,742/2,979 (92.04%).
+- repeated isolated coverage runs produced identical per-unit counts of 3,320/3,687 (90.04%).
 
 Remediated findings:
 
 - **AQ9-001, resolved:** workspaces, GNATdoc output, coverage objects, binaries, and databases now live beneath
   atomically created private mode-0700 invocation directories. Same-identity workspaces are isolated, and an explicit
   coverage lock rejects overlap with a clear diagnostic.
-- **AQ9-002, resolved:** deterministic branch tests raised stable production coverage to 92.04%. The artifact records
+- **AQ9-002, resolved:** deterministic branch tests keep stable production coverage above the 90% policy at 90.04%.
+  The artifact records
   source and toolchain fingerprints plus per-unit counts; identical runs fail if any count changes. A current-fingerprint
   seed removes the coverage workflow's former self-reference to its preceding artifact.
 

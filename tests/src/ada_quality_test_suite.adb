@@ -1,4 +1,5 @@
 with Ada.Containers;
+with Ada.Characters.Handling;
 with Ada.Directories;
 with Ada.Environment_Variables;
 with Ada.Strings.Fixed;
@@ -16,6 +17,7 @@ with Project_Tools.Files;
 with Ada_Quality.Execution;
 with Ada_Quality.Evaluation;
 with Ada_Quality.Checks;
+with Ada_Quality.Coverage;
 with Ada_Quality.History;
 with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
@@ -102,6 +104,46 @@ package body Ada_Quality_Test_Suite is
             Assert (not Coverage_Passes (0, 0), "zero eligible lines cannot pass");
             Assert
               (Coverage_Passes (Natural'Last, Natural'Last), "multiplication uses overflow-safe wide arithmetic");
+            declare
+               Root    : constant String := "/tmp/ada_quality_coverage_inventory_test";
+               Objects : constant String := Root & "/objects";
+            begin
+               Project_Tools.Files.Delete_Tree (Root);
+               Ada.Directories.Create_Path (Root & "/src");
+               Ada.Directories.Create_Path (Objects);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/src/alpha.ads", "package Alpha is end Alpha;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/src/alpha.adb", "package body Alpha is end Alpha;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/src/beta.ads", "package Beta is end Beta;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File (Objects & "/alpha.gcno", "fixture");
+               declare
+                  Units : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+                    Ada_Quality.Coverage.Production_Units (Root);
+                  Missing : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+                    Ada_Quality.Coverage.Missing_Objects (Units, Objects);
+               begin
+                  Assert (Units.Length = 2 and then Missing.Length = 1 and then
+                    To_String (Missing.First_Element.Stem) = "beta",
+                    "coverage inventory independently detects an uninstrumented production unit");
+                  Project_Tools.Files.Write_Text_File (Objects & "/beta.gcno", "fixture");
+                  Assert (Ada_Quality.Coverage.Missing_Objects (Units, Objects).Is_Empty,
+                    "coverage inventory is complete only when every production unit has instrumentation");
+               end;
+               Project_Tools.Files.Delete_Tree (Root);
+               declare
+                  Project_Root : constant String :=
+                    Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
+                  Project_Policy  : constant Ada_Quality.Policy.Quality_Policy := Ada_Quality.Policy.Default;
+                  Project_Metrics : constant Ada_Quality.Checks.Source_Analysis :=
+                    Ada_Quality.Checks.Analyze_Source (Project_Root, Project_Policy);
+               begin
+                  Assert (Project_Metrics.Maximum_Complexity <= Project_Policy.Maximum_Complexity,
+                    "the integrated source tree remains within the declared complexity contract; measured" &
+                    Natural'Image (Project_Metrics.Maximum_Complexity));
+               end;
+            end;
 
          when Status_Test =>
             Assert
@@ -161,6 +203,20 @@ package body Ada_Quality_Test_Suite is
                Loaded := Ada_Quality.Policy.Load (Path);
                Assert (Loaded.Success, "valid policy loads");
                Assert (Loaded.Value.Maximum_Source_Lines = 800, "policy values are decoded");
+               Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+               Ada.Text_IO.Put_Line (File, "maximum_source_lines = 700 # bounded source size");
+               Ada.Text_IO.Put_Line (File, "require_clean_worktree = false # explicit TOML boolean");
+               Ada.Text_IO.Close (File);
+               Loaded := Ada_Quality.Policy.Load (Path);
+               Assert (Loaded.Success and then Loaded.Value.Maximum_Source_Lines = 700 and then
+                 not Loaded.Value.Require_Clean_Worktree,
+                 "policy parsing accepts TOML inline comments without weakening value validation");
+               Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+               Ada.Text_IO.Put_Line (File, "[unsupported]");
+               Ada.Text_IO.Put_Line (File, "maximum_complexity = 12");
+               Ada.Text_IO.Close (File);
+               Loaded := Ada_Quality.Policy.Load (Path);
+               Assert (not Loaded.Success, "unsupported TOML sections are rejected instead of ignored");
                Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
                Ada.Text_IO.Put_Line (File, "maximum_complexity = 12");
                Ada.Text_IO.Put_Line (File, "maximum_complexity = 13");
@@ -283,7 +339,7 @@ package body Ada_Quality_Test_Suite is
                if Ada.Directories.Exists (Path) then Ada.Directories.Delete_File (Path); end if;
                Ada_Quality.Storage.Open (Store, Path);
                Ada_Quality.Storage.Check (Store);
-               Assert (Ada_Quality.Storage.Schema_Version (Store) = 2,
+               Assert (Ada_Quality.Storage.Schema_Version (Store) = 3,
                  "new databases use the current migrated schema version");
                Pid := Ada_Quality.Storage.Add_Project (Store, Root);
                Assert (Pid = 1, "first persisted project ID is one");
@@ -550,6 +606,31 @@ package body Ada_Quality_Test_Suite is
                      Restore_Environment;
                      raise;
                end;
+               Project_Tools.Files.Write_Text_File
+                 (Hostile_Root & "/warning_fixture.adb",
+                  "with Ada.Text_IO;" & ASCII.LF &
+                  "procedure Warning_Fixture is" & ASCII.LF &
+                  "begin" & ASCII.LF & "   null;" & ASCII.LF &
+                  "end Warning_Fixture;" & ASCII.LF);
+               declare
+                  Warning_Build : constant Ada_Quality.Execution.Run_Result :=
+                    Ada_Quality.Execution.Run
+                      (Hostile_Root, "gnatmake",
+                       Project_Tools.Processes.Arguments
+                         ([Project_Tools.Processes.Argument ("-q"),
+                           Project_Tools.Processes.Argument ("-f"),
+                           Project_Tools.Processes.Argument ("-gnat2022"),
+                           Project_Tools.Processes.Argument ("-gnatwa"),
+                           Project_Tools.Processes.Argument ("-gnatwe"),
+                           Project_Tools.Processes.Argument ("warning_fixture.adb")]),
+                       Timeout_Seconds => 20, Maximum_Bytes => 4_096);
+               begin
+                  Assert (Warning_Build.Status = Ada_Quality.Execution.Completed and then
+                    Warning_Build.Exit_Code /= 0 and then
+                    Ada.Strings.Fixed.Index
+                      (Ada.Characters.Handling.To_Lower (To_String (Warning_Build.Output)), "warning:") > 0,
+                    "the compiler warning fixture fails when the BLD-03 warning-as-error policy is explicit");
+               end;
                Project_Tools.Files.Delete_Tree (Hostile_Root);
             end;
 
@@ -570,9 +651,21 @@ package body Ada_Quality_Test_Suite is
                  "comments and string literals do not declare SPARK");
                Project_Tools.Files.Write_Text_File
                  (Path,
+                  "package Example is" & ASCII.LF &
+                  "   Not_SPARK_Mode : constant Boolean := False;" & ASCII.LF &
+                  "end Example;" & ASCII.LF);
+               Assert (not Ada_Quality.Checks.Declares_SPARK (Root),
+                 "SPARK applicability requires an exact language token");
+               Project_Tools.Files.Write_Text_File
+                 (Path,
                   "pragma SPARK_Mode (On);" & ASCII.LF &
                   "package Example is end Example;" & ASCII.LF);
                Assert (Ada_Quality.Checks.Declares_SPARK (Root), "SPARK pragma is detected in Ada code");
+               Project_Tools.Files.Write_Text_File (Path, "package Example is end Example;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/spark.adc", "pragma SPARK_Mode (On);" & ASCII.LF);
+               Assert (Ada_Quality.Checks.Declares_SPARK (Root),
+                 "project configuration pragmas make SPARK proof applicable");
                Project_Tools.Files.Delete_Tree (Root);
             end;
 
@@ -621,17 +714,33 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/tests/src/example_tests.adb",
                   "procedure Example_Tests is begin Register_Routine; end Example_Tests;" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
+                 (Root & "/src/nested.adb",
+                  "--  AQ: size-reviewed" & ASCII.LF &
+                  "procedure Nested is" & ASCII.LF &
+                  "   function Expression (Flag : Boolean) return Boolean is (Flag and then Ready);" & ASCII.LF &
+                  "   procedure Inner is" & ASCII.LF &
+                  "   begin" & ASCII.LF &
+                  "      case Value is" & ASCII.LF &
+                  "         when One => null;" & ASCII.LF &
+                  "         when others => null;" & ASCII.LF &
+                  "      end case;" & ASCII.LF &
+                  "   end Inner;" & ASCII.LF &
+                  "begin" & ASCII.LF &
+                  "   while Ready loop exit; end loop;" & ASCII.LF &
+                  "end Nested;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
                  (Root & "/config/example_config.ads", "package Example_Config is end Example_Config;" & ASCII.LF);
                Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
-               Assert (Metrics.File_Count = 4 and then Metrics.Spec_Count = 2 and then
-                 Metrics.Production_Files = 3 and then Metrics.Test_Files = 1 and then
+               Assert (Metrics.File_Count = 5 and then Metrics.Spec_Count = 2 and then
+                 Metrics.Production_Files = 4 and then Metrics.Test_Files = 1 and then
                  Metrics.Generated_Files = 1,
                  "native inventory distinguishes production, test, and generated Ada sources");
                Assert (Metrics.Naming_Errors = 1, "non-lowercase Ada file names are findings");
                Assert (Metrics.Undocumented_Specs = 1,
                  "a standalone package documentation comment is required");
                Assert (Metrics.Maximum_Complexity = 5,
-                 "complexity counts exact if, short-circuit, elsif, and handler tokens");
+                 "defined complexity covers conditionals, short circuits, alternatives, loops, " &
+                 "nested declarations, and expression functions");
                Assert (Metrics.Long_Lines = 1 and then Metrics.Oversized_Files = 1,
                  "line and file-size policy violations are measured");
                Assert (Metrics.Secret_Matches = 1 and then Metrics.Unsafe_Processes = 1,
@@ -948,8 +1057,8 @@ package body Ada_Quality_Test_Suite is
                Assert (Raised and then not Ada_Quality.Storage.Is_Open (Store),
                  "a migration commit fault leaves the database closed at its prior version");
                Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-               Assert (Ada_Quality.Storage.Schema_Version (Store) = 2,
-                 "opening a version-1 database runs the explicit migration to version 2");
+               Assert (Ada_Quality.Storage.Schema_Version (Store) = 3,
+                 "opening a version-1 database runs the explicit migration to version 3");
                Ada_Quality.Storage.Testing_Set_Schema_Version (Store, 99);
                Raised := False;
                begin
@@ -988,6 +1097,7 @@ package body Ada_Quality_Test_Suite is
                Project_Tools.Files.Delete_Tree (Root);
                Project_Tools.Files.Delete_Tree (Outside);
                Ada.Directories.Create_Path (Root & "/src");
+               Ada.Directories.Create_Path (Root & "/alire");
                Ada.Directories.Create_Path (Outside);
                Project_Tools.Files.Write_Text_File
                  (Root & "/src/local.adb", "procedure Local is begin null; end Local;" & ASCII.LF);
@@ -997,10 +1107,15 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/alire.toml",
                   "name = ""local""" & ASCII.LF & "version = ""0.1.0""" & ASCII.LF &
                   "# path = ""../../../comment-is-not-a-pin""" & ASCII.LF &
-                  "dependency = { path = ""../ada_quality_symlink_outside"" }" & ASCII.LF);
+                  "dependency={path='../ada_quality_symlink_outside'}" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Outside & "/alire.toml", "name = ""dependency""" & ASCII.LF &
                   "version = ""0.1.0""" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/alire/alire.lock",
+                  "dependency={path = '../ada_quality_symlink_outside'}" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/alire/build_hash_inputs", "generated and stale" & ASCII.LF);
                Before := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (Root));
                Link_Run := Ada_Quality.Execution.Run
                  (Root, "ln",
@@ -1044,6 +1159,11 @@ package body Ada_Quality_Test_Suite is
                  "staging recursively copies local pin targets without using the original dependency tree");
                Assert (not Project_Tools.Files.Exists (Ada_Quality.Workspaces.Path (Stage) & "/obj"),
                  "staging excludes generated build trees");
+               Assert (Project_Tools.Files.File_Exists
+                 (Ada_Quality.Workspaces.Path (Stage) & "/alire/alire.lock") and then
+                 not Project_Tools.Files.File_Exists
+                   (Ada_Quality.Workspaces.Path (Stage) & "/alire/build_hash_inputs"),
+                 "staging retains the dependency lock but omits mutable Alire build state");
                Ada_Quality.Workspaces.Prepare (Other_Stage, Root, "safe/test");
                First_Scratch := To_Unbounded_String (Ada_Quality.Workspaces.Scratch_Path (Stage, "marker"));
                Second_Scratch := To_Unbounded_String (Ada_Quality.Workspaces.Scratch_Path (Other_Stage, "marker"));
@@ -1161,6 +1281,59 @@ package body Ada_Quality_Test_Suite is
                  (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
                Assert (Changes.Length = 1 and then Changes.First_Element.Kind =
                  Ada_Quality.History.Worsened_Metric, "coverage drop above the gate is a metric regression");
+               Old_Results.Replace_Element
+                 (Old_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-02"),
+                     State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("5")));
+               New_Results.Replace_Element
+                 (New_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 2, Run_Id => 2, Kind => To_Unbounded_String ("TST-02"),
+                     State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("6")));
+               Old_Measures.Replace_Element
+                 (Old_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-02"),
+                     State => To_Unbounded_String ("INTEGER_VALUE"), Summary => To_Unbounded_String ("5")));
+               New_Measures.Replace_Element
+                 (New_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 2, Run_Id => 2, Kind => To_Unbounded_String ("TST-02"),
+                     State => To_Unbounded_String ("INTEGER_VALUE"), Summary => To_Unbounded_String ("6")));
+               Changes := Ada_Quality.History.Compare
+                 (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
+               Assert (not Has_Kind (Ada_Quality.History.Worsened_Metric),
+                 "increased test registration evidence is an improvement, not a regression");
+               New_Measures.Replace_Element
+                 (New_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 2, Run_Id => 2, Kind => To_Unbounded_String ("TST-02"),
+                     State => To_Unbounded_String ("INTEGER_VALUE"), Summary => To_Unbounded_String ("4")));
+               Changes := Ada_Quality.History.Compare
+                 (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
+               Assert (Has_Kind (Ada_Quality.History.Worsened_Metric),
+                 "decreased test registration evidence is a metric deterioration");
+               Old_Results.Replace_Element
+                 (Old_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("96%")));
+               New_Results.Replace_Element
+                 (New_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 2, Run_Id => 2, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("92%")));
+               Old_Measures.Replace_Element
+                 (Old_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("DECIMAL_VALUE"), Summary => To_Unbounded_String ("9600")));
+               New_Measures.Replace_Element
+                 (New_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 2, Run_Id => 2, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("DECIMAL_VALUE"), Summary => To_Unbounded_String ("9200")));
                New_Results.Replace_Element
                  (New_Results.First_Index,
                   Ada_Quality.Storage.Detail_Info'
@@ -1176,6 +1349,31 @@ package body Ada_Quality_Test_Suite is
                Assert (Has_Kind (Ada_Quality.History.Failed_Gate) and then
                  Has_Kind (Ada_Quality.History.Worsened_Metric),
                  "a coverage fall below policy is both a failed gate and worsened metric");
+               Old_Results.Replace_Element
+                 (Old_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("succeeded/violation"), Summary => To_Unbounded_String ("88%")));
+               Old_Measures.Replace_Element
+                 (Old_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("DECIMAL_VALUE"), Summary => To_Unbounded_String ("8800")));
+               Changes := Ada_Quality.History.Compare
+                 (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
+               Assert (Has_Kind (Ada_Quality.History.Worsened_Metric) and then
+                 not Has_Kind (Ada_Quality.History.Failed_Gate),
+                 "a metric can deteriorate while the indicator remains in violation");
+               Old_Results.Replace_Element
+                 (Old_Results.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("96%")));
+               Old_Measures.Replace_Element
+                 (Old_Measures.First_Index,
+                  Ada_Quality.Storage.Detail_Info'
+                    (Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
+                     State => To_Unbounded_String ("DECIMAL_VALUE"), Summary => To_Unbounded_String ("9600")));
                New_Results.Replace_Element
                  (New_Results.First_Index,
                   Ada_Quality.Storage.Detail_Info'

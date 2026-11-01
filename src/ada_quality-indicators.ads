@@ -52,6 +52,12 @@ package Ada_Quality.Indicators is
    --  @param Id Parsed identifier on success.
    --  @return True when Text names a registered indicator.
 
+   function Measurement_Unit (Id : Indicator_Id) return String;
+   --  Return the unit of the numeric measurement an indicator records.
+   --  @param Id Indicator identity.
+   --  @return Stable lowercase unit such as `basis_points` or `lines`, or `none` when the indicator records
+   --  only a Boolean, text, or unavailable measurement.
+
    function Validate_Acyclic return Boolean;
    --  Validate that prerequisite relationships form an acyclic graph.
    --  @return True when every dependency is valid and no cycle exists.

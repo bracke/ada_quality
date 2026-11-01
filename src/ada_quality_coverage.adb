@@ -10,6 +10,7 @@ with Project_Tools.Files;
 with Project_Tools.Gcov;
 with Project_Tools.Processes;
 with Ada_Quality.Checks;
+with Ada_Quality.Coverage;
 with Ada_Quality.Temporary_Directories;
 with Ada_Quality.Types;
 
@@ -63,7 +64,8 @@ procedure Ada_Quality_Coverage is
          "covered=" & (if Covered'Length = 0 then "0" else Covered) & ASCII.LF &
          "total=" & (if Total'Length = 0 then "1" else Total) & ASCII.LF &
          "complete=true" & ASCII.LF &
-         "inventory=gcov-production-lines-v1" & ASCII.LF &
+         "inventory=gcov-production-lines-v2" & ASCII.LF &
+         "excluded_ada_quality_coverage=coverage-driver" & ASCII.LF &
          "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
          "toolchain_fingerprint=" & Selected_Toolchain & ASCII.LF);
    end Seed;
@@ -124,6 +126,14 @@ procedure Ada_Quality_Coverage is
 
    function Trim (Text : String) return String is
      (Ada.Strings.Fixed.Trim (Text, Ada.Strings.Both));
+
+   function Per_File_Gcov_Output (Text : String) return String is
+      Aggregate : constant Natural := Ada.Strings.Fixed.Index
+        (Text, ASCII.LF & "Lines executed:", Going => Ada.Strings.Backward);
+   begin
+      if Aggregate = 0 then return Text; end if;
+      return Text (Text'First .. Aggregate - 1);
+   end Per_File_Gcov_Output;
 
    function Hash_Output (Text : String) return String is
       use type Interfaces.Unsigned_64;
@@ -215,7 +225,7 @@ begin
          Project_Tools.Processes.Argument ("disable"), Project_Tools.Processes.Argument ("enable")];
       Queries : constant Project_Tools.Processes.Argument_Items :=
         [Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("status"),
-         Project_Tools.Processes.Argument ("findings"), Project_Tools.Processes.Argument ("regressions")];
+         Project_Tools.Processes.Argument ("findings")];
 
       procedure Cleanup_Database is
       begin
@@ -231,7 +241,8 @@ begin
          Allow_One   : Boolean := False;
          Allow_Two   : Boolean := False;
          Allow_Three : Boolean := False;
-         Allow_Four  : Boolean := False)
+         Allow_Four  : Boolean := False;
+         Expected_Text : String := "")
       is
          Result : constant Project_Tools.Processes.Captured_Process :=
            Project_Tools.Processes.Capture (Label, Root, CLI_Binary, Args, Quiet => True);
@@ -241,6 +252,10 @@ begin
            not (Allow_Four and then Result.Status = 4)
          then
             raise Program_Error with Label & " failed with status" & Integer'Image (Result.Status);
+         elsif Expected_Text'Length > 0 and then
+           Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Text) = 0
+         then
+            raise Program_Error with Label & " did not report: " & Expected_Text;
          end if;
       end Run_CLI;
 
@@ -300,6 +315,13 @@ begin
              Project_Tools.Processes.Argument ("--no-color")]),
          Allow_One => True, Allow_Three => True);
       Run_CLI
+        ("regressions without baseline",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "comparison unavailable: no baseline assessment exists");
+      Run_CLI
         ("second full assessment",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
@@ -308,6 +330,13 @@ begin
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
              Project_Tools.Processes.Argument ("--no-color")]),
          Allow_One => True, Allow_Three => True);
+      Run_CLI
+        ("regressions with compatible baseline",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
       Run_CLI
         ("JSON report",
          Project_Tools.Processes.Arguments
@@ -444,41 +473,57 @@ begin
    end;
 
    declare
-      Data : constant Project_Tools.Files.Path_List :=
-        Project_Tools.Files.List_Tree (Object_Dir, "*.gcno");
+      Units : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+        Ada_Quality.Coverage.Production_Units (Root);
+      Missing : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
+        Ada_Quality.Coverage.Missing_Objects (Units, Object_Dir);
       Covered : Natural := 0;
       Total   : Natural := 0;
       Files   : File_Coverage_Vectors.Vector;
    begin
-      for Path of Data loop
+      if Units.Is_Empty then
+         Fail ("production source inventory is empty");
+         return;
+      elsif not Missing.Is_Empty then
+         Fail ("instrumented coverage data is missing for production unit " &
+           To_String (Missing.First_Element.Stem));
+         return;
+      end if;
+      for Unit of Units loop
          declare
-            Object_Name : constant String := Ada.Directories.Simple_Name (To_String (Path));
-            Stem : constant String := Object_Name (Object_Name'First .. Object_Name'Last - 5);
-            Source : constant String := Project_Tools.Files.Join (Root, "src/" & Stem & ".adb");
+            Stem : constant String := To_String (Unit.Stem);
+            Object_Name : constant String := Stem & ".gcno";
+            Args : constant Project_Tools.Processes.Argument_Vectors.Vector :=
+              Project_Tools.Processes.Arguments
+                ([Project_Tools.Processes.Argument ("exec"), Project_Tools.Processes.Argument ("--"),
+                  Project_Tools.Processes.Argument ("gcov"), Project_Tools.Processes.Argument ("-n"),
+                  Project_Tools.Processes.Argument ("-o"),
+                  Project_Tools.Processes.Argument (Object_Dir),
+                  Project_Tools.Processes.Argument (Project_Tools.Files.Join (Object_Dir, Object_Name))]);
+            Run : constant Project_Tools.Processes.Captured_Process :=
+              Project_Tools.Processes.Capture ("gcov", Tests_Dir, Alr, Args, Quiet => True);
+            Gcov_Output : constant String := Per_File_Gcov_Output (To_String (Run.Output));
+            Unit_Covered : Natural := 0;
+            Unit_Total   : Natural := 0;
+
+            procedure Include_Source (Source : Unbounded_String) is
+               One : Project_Tools.Gcov.Coverage_Summary;
+            begin
+               if Length (Source) = 0 then return; end if;
+               One := Project_Tools.Gcov.Parse_Lines_Executed_Output
+                 (Gcov_Output, To_String (Source));
+               Unit_Covered := Unit_Covered + Project_Tools.Gcov.Covered_Lines (One);
+               Unit_Total := Unit_Total + Project_Tools.Gcov.Total_Lines (One);
+            end Include_Source;
          begin
-            if Project_Tools.Files.File_Exists (Source) then
-               declare
-                  Args : constant Project_Tools.Processes.Argument_Vectors.Vector :=
-                    Project_Tools.Processes.Arguments
-                      ([Project_Tools.Processes.Argument ("exec"), Project_Tools.Processes.Argument ("--"),
-                        Project_Tools.Processes.Argument ("gcov"), Project_Tools.Processes.Argument ("-n"),
-                        Project_Tools.Processes.Argument ("-o"),
-                        Project_Tools.Processes.Argument (Object_Dir),
-                        Project_Tools.Processes.Argument (Project_Tools.Files.Join (Object_Dir, Object_Name))]);
-                  Run : constant Project_Tools.Processes.Captured_Process :=
-                    Project_Tools.Processes.Capture ("gcov", Tests_Dir, Alr, Args, Quiet => True);
-                  One : constant Project_Tools.Gcov.Coverage_Summary :=
-                    Project_Tools.Gcov.Parse_Lines_Executed_Output (To_String (Run.Output), Source);
-               begin
-                  if Run.Status /= 0 then Fail ("gcov failed for " & Object_Name); return; end if;
-                  Covered := Covered + Project_Tools.Gcov.Covered_Lines (One);
-                  Total := Total + Project_Tools.Gcov.Total_Lines (One);
-                  Files.Append
-                    (File_Coverage'(Name => To_Unbounded_String (Stem),
-                      Covered => Project_Tools.Gcov.Covered_Lines (One),
-                      Total => Project_Tools.Gcov.Total_Lines (One)));
-               end;
-            end if;
+            if Run.Status /= 0 then Fail ("gcov failed for " & Object_Name); return; end if;
+            Include_Source (Unit.Body_Path);
+            Include_Source (Unit.Spec_Path);
+            Covered := Covered + Unit_Covered;
+            Total := Total + Unit_Total;
+            Files.Append
+              (File_Coverage'(Name => To_Unbounded_String (Stem),
+                Covered => Unit_Covered, Total => Unit_Total));
          end;
       end loop;
       declare
@@ -544,7 +589,8 @@ begin
            ("covered=" & Trim (Natural'Image (Covered)) & ASCII.LF &
             "total=" & Trim (Natural'Image (Total)) & ASCII.LF &
             "complete=true" & ASCII.LF &
-            "inventory=gcov-production-lines-v1" & ASCII.LF &
+            "inventory=gcov-production-lines-v2" & ASCII.LF &
+            "excluded_ada_quality_coverage=coverage-driver" & ASCII.LF &
             "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
             "toolchain_fingerprint=" & To_String (Toolchain_Fingerprint) & ASCII.LF &
             To_String (File_Details));

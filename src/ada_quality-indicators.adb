@@ -103,6 +103,20 @@ package body Ada_Quality.Indicators is
          return False;
    end Parse;
 
+   function Measurement_Unit (Id : Indicator_Id) return String is
+     (case Id is
+         when TST_02 => "registered_tests",
+         when TST_03 => "basis_points",
+         when SRC_01 => "lines",
+         when SRC_02 | SRC_06 => "files",
+         when SRC_03 => "decision_points",
+         when SRC_04 => "findings",
+         when SRC_05 => "handlers",
+         when DOC_01 => "warnings",
+         when SEC_01 | SEC_02 => "matches",
+         when SEC_03 => "forbidden_entries",
+         when others => "none");
+
    function Validate_Acyclic return Boolean is
       type Visit_State is (Unseen, Visiting, Complete);
       State : array (Indicator_Id) of Visit_State := [others => Unseen];

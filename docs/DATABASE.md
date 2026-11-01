@@ -1,7 +1,7 @@
 # Database
 
-The persistent store uses the sibling Ada `database` crate. Schema version 2 contains exactly eight logical typed
-tables and has an explicit atomic migration from version 1:
+The persistent store uses the sibling Ada `database` crate. Schema version 3 contains exactly eight logical typed
+tables and has explicit atomic migrations from versions 1 and 2:
 
 1. `projects`
 2. `assessment_runs`
@@ -20,6 +20,10 @@ Assessment publication requires 33 unique valid results and inserts the run stat
 execution summary, and publication event in one write transaction. The caller performs all external work before
 opening that transaction. Terminal assessment rows are never updated. Recovery changes an abandoned `running` row
 and inserts its recovery event in one transaction; repeated recovery is idempotent.
+
+Version 3 records run timestamps and uses escaped, named fields for result and finding evidence. This preserves
+newlines and source locations without changing the eight-table catalog. Migrated legacy rows remain readable and
+are explicitly distinguishable from lossless version-3 evidence.
 
 Opening a persistent database acquires the storage engine's process lock. `database check` verifies the open handle,
 the eight-table catalog, and schema metadata version.

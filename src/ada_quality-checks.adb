@@ -61,9 +61,50 @@ package body Ada_Quality.Checks is
    function Lower (Text : String) return String is
      (Ada.Characters.Handling.To_Lower (Text));
 
+   function Normalize_Test_Output (Text : String) return String is
+      Result : Ada.Strings.Unbounded.Unbounded_String;
+      Start  : Positive := Text'First;
+
+      procedure Append_Line (Line : String) is
+         Normalized : constant String := Lower (Ada.Strings.Fixed.Trim (Line, Ada.Strings.Both));
+         Volatile   : constant Boolean :=
+           Contains (Normalized, "elapsed:") or else Contains (Normalized, "elapsed time") or else
+           Contains (Normalized, "duration:") or else Contains (Normalized, "timestamp:") or else
+           (Normalized'Length >= 5 and then Normalized (Normalized'First .. Normalized'First + 4) = "time:");
+      begin
+         if not Volatile then Append (Result, Line & Ada.Characters.Latin_1.LF); end if;
+      end Append_Line;
+   begin
+      if Text'Length = 0 then return ""; end if;
+      for J in Text'Range loop
+         if Text (J) = Ada.Characters.Latin_1.LF then
+            Append_Line ((if J = Start then "" else Text (Start .. J - 1)));
+            Start := J + 1;
+         end if;
+      end loop;
+      if Start <= Text'Last then Append_Line (Text (Start .. Text'Last)); end if;
+      return To_String (Result);
+   end Normalize_Test_Output;
+
    function Matches (Pattern : Regexp.Compile_Result; Text : String) return Boolean is
      (Pattern.Status = Regexp.Compile_Ok and then
       Regexp.Find_First (Pattern.Expression, Text).Status = Regexp.Match_Ok);
+
+   function Occurrences (Text, Pattern : String) return Natural is
+      Cursor : Natural := Text'First;
+      Found  : Natural;
+      Count  : Natural := 0;
+   begin
+      if Text'Length = 0 or else Pattern'Length = 0 then return 0; end if;
+      loop
+         Found := Ada.Strings.Fixed.Index (Text, Pattern, From => Cursor);
+         exit when Found = 0;
+         Count := Count + 1;
+         Cursor := Found + Pattern'Length;
+         exit when Cursor > Text'Last;
+      end loop;
+      return Count;
+   end Occurrences;
 
    function Valid_Manifest (Text : String) return Boolean is
       Name : constant Project_Tools.TOML.String_Parse_Result :=
@@ -125,7 +166,7 @@ package body Ada_Quality.Checks is
      (Text'Length >= Suffix'Length and then
       Text (Text'Last - Suffix'Length + 1 .. Text'Last) = Suffix);
 
-   function Ada_Code_Contains (Path, Pattern : String) return Boolean is
+   function Code_Without_Comments_And_Strings (Path : String) return String is
       Data       : constant String := Project_Tools.Files.Read_Raw_File (Path);
       Normalized : String := Data;
       In_String  : Boolean := False;
@@ -155,8 +196,31 @@ package body Ada_Quality.Checks is
             J := J + 1;
          end if;
       end loop;
-      return Contains (Lower (Normalized), Lower (Pattern));
-   end Ada_Code_Contains;
+      return Lower (Normalized);
+   end Code_Without_Comments_And_Strings;
+
+   function Ada_Code_Has_Token (Path, Token : String) return Boolean is
+      Code  : constant String := Code_Without_Comments_And_Strings (Path);
+      Match : Natural := Code'First;
+
+      function Identifier_Character (Value : Character) return Boolean is
+        (Value in 'a' .. 'z' | '0' .. '9' or else Value = '_');
+   begin
+      loop
+         Match := Ada.Strings.Fixed.Index (Code, Lower (Token), From => Match);
+         if Match = 0 then return False; end if;
+         declare
+            Last : constant Natural := Match + Token'Length - 1;
+         begin
+            if (Match = Code'First or else not Identifier_Character (Code (Match - 1))) and then
+              (Last = Code'Last or else not Identifier_Character (Code (Last + 1)))
+            then
+               return True;
+            end if;
+            Match := Last + 1;
+         end;
+      end loop;
+   end Ada_Code_Has_Token;
 
    function Relative (Root, Path : String) return String is
    begin
@@ -266,8 +330,17 @@ package body Ada_Quality.Checks is
 
    function Declares_SPARK (Root : String) return Boolean is
    begin
-      for Path of Source_Files (Root) loop
-         if Ada_Code_Contains (To_String (Path), "spark_mode") then return True; end if;
+      for Path of All_Files (Root) loop
+         declare
+            Name : constant String := Lower (To_String (Path));
+         begin
+            if (Has_Suffix (Name, ".ads") or else Has_Suffix (Name, ".adb") or else
+                Has_Suffix (Name, ".adc") or else Has_Suffix (Name, ".gpr")) and then
+              Ada_Code_Has_Token (To_String (Path), "spark_mode")
+            then
+               return True;
+            end if;
+         end;
       end loop;
       return False;
    end Declares_SPARK;
@@ -489,6 +562,9 @@ package body Ada_Quality.Checks is
                      declare
                         First : Positive := Words.First_Index;
                      begin
+                        if To_String (Words (First)) = "private" and then First < Words.Last_Index then
+                           First := First + 1;
+                        end if;
                         if To_String (Words (First)) = "package" and then First < Words.Last_Index and then
                           To_String (Words (First + 1)) = "body"
                         then
@@ -499,7 +575,9 @@ package body Ada_Quality.Checks is
                            First := Words.Last_Index;
                         end if;
                         if First <= Words.Last_Index and then
-                          To_String (Words (Words.First_Index)) in "package" | "procedure" | "function"
+                          To_String (Words ((if To_String (Words (Words.First_Index)) = "private"
+                            then Words.First_Index + 1 else Words.First_Index))) in
+                              "package" | "procedure" | "function"
                         then
                            declare
                               Unit_Name : Ada.Strings.Unbounded.Unbounded_String;
@@ -665,6 +743,10 @@ package body Ada_Quality.Checks is
    is
       Evidence : constant String := To_String (Run.Command) & " exit=" & Integer'Image (Run.Exit_Code) &
         (if Run.Truncated then " output-truncated" else "");
+      Output : constant String := To_String (Run.Output);
+      Diagnostic : constant String :=
+        (if Output'Length <= 256 then Output
+         else Output (Output'First .. Output'First + 255) & Ada.Characters.Latin_1.LF & "[diagnostic truncated]");
    begin
       case Run.Status is
          when Ada_Quality.Execution.Spawn_Error =>
@@ -673,7 +755,8 @@ package body Ada_Quality.Checks is
             return Blocked_Result (Id, "tool timed out", Evidence);
          when Ada_Quality.Execution.Completed =>
             if Run.Exit_Code = 0 then return Passed (Id, Success, Evidence);
-            else return Violated (Id, Failure, Evidence); end if;
+            else return Violated (Id, Failure,
+              Evidence & (if Diagnostic'Length = 0 then "" else Ada.Characters.Latin_1.LF & Diagnostic)); end if;
       end case;
    end Tool_Result;
 
@@ -708,12 +791,14 @@ package body Ada_Quality.Checks is
       Test_Manifest : constant String := Project_Tools.Files.Join (Root, "tests/alire.toml");
       Coverage_File : constant String := Project_Tools.Files.Join (Root, "coverage/gcov-summary.txt");
       Before        : constant String := Source_Fingerprint (Root);
-      Build_Run, Validation_Run, Test_Run_1, Test_Run_2, Toolchain_Run : Ada_Quality.Execution.Run_Result;
+      Build_Run, Validation_Run, Warning_Run, Test_Build_Run, Test_Run_1, Test_Run_2,
+        Toolchain_Run : Ada_Quality.Execution.Run_Result;
       Release_Run, Proof_Run, Doc_Run : Ada_Quality.Execution.Run_Result;
       Git_Before, Git_After : Ada_Quality.Execution.Run_Result;
       Has_SPARK : Boolean := False;
       Stage : Ada_Quality.Workspaces.Workspace;
       Execution_Root : Ada.Strings.Unbounded.Unbounded_String := To_Unbounded_String (Root);
+      Test_Artifact_1, Test_Artifact_2 : Ada.Strings.Unbounded.Unbounded_String;
 
       procedure Add (Item : Indicator_Result) is
       begin
@@ -818,6 +903,13 @@ package body Ada_Quality.Checks is
             Args ([Project_Tools.Processes.Argument ("build"),
             Project_Tools.Processes.Argument ("--validation"), Project_Tools.Processes.Argument ("--"),
             Project_Tools.Processes.Argument ("-f")]));
+         Warning_Run := Execute
+           ("compiler-warning-build", To_String (Execution_Root),
+            Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
+            Args ([Project_Tools.Processes.Argument ("build"),
+            Project_Tools.Processes.Argument ("--validation"), Project_Tools.Processes.Argument ("--"),
+            Project_Tools.Processes.Argument ("-f"),
+            Project_Tools.Processes.Argument ("-XADA_QUALITY_WARNINGS_AS_ERRORS=true")]));
          Toolchain_Run := Execute
            ("gnat-toolchain", To_String (Execution_Root), Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
             Args ([Project_Tools.Processes.Argument ("exec"),
@@ -826,7 +918,7 @@ package body Ada_Quality.Checks is
          Result.Toolchain_Fingerprint := Result.Executions.Last_Element.Output_Digest;
          Add (Tool_Result (BLD_01, Build_Run, "project builds", "project build failed"));
          Add (Tool_Result (BLD_02, Validation_Run, "validation build passes", "validation build failed"));
-         Add (Tool_Result (BLD_03, Validation_Run, "compiler warnings gate passes", "compiler warnings gate failed"));
+         Add (Tool_Result (BLD_03, Warning_Run, "compiler warnings gate passes", "compiler warnings gate failed"));
          if Toolchain_Run.Status = Ada_Quality.Execution.Completed and then Toolchain_Run.Exit_Code = 0 and then
            Contains (To_String (Toolchain_Run.Output), "GNAT")
          then
@@ -846,27 +938,47 @@ package body Ada_Quality.Checks is
       end Measure_Build;
 
       procedure Measure_Tests is
+         Test_Directory : constant String := Project_Tools.Files.Join
+           (To_String (Execution_Root), "tests");
+         Test_Binary : constant String := Project_Tools.Files.Join
+           (Test_Directory, "bin/ada_quality_tests");
       begin
       if Project_Tools.Files.File_Exists (Test_Manifest) and then
         Build_Run.Status = Ada_Quality.Execution.Completed and then Build_Run.Exit_Code = 0
       then
-         Test_Run_1 := Execute
-           ("aunit-first", Project_Tools.Files.Join (To_String (Execution_Root), "tests"),
-            Ada_Quality.Tools.Program (Ada_Quality.Tools.AUnit),
-            Args ([Project_Tools.Processes.Argument ("test")]));
-         Test_Run_2 := Execute
-           ("aunit-second", Project_Tools.Files.Join (To_String (Execution_Root), "tests"),
-            Ada_Quality.Tools.Program (Ada_Quality.Tools.AUnit),
-            Args ([Project_Tools.Processes.Argument ("test")]));
-         Add (Tool_Result (TST_01, Test_Run_1, "AUnit test action passes", "AUnit test action failed"));
+         Test_Build_Run := Execute
+           ("aunit-build", Test_Directory, Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
+            Args ([Project_Tools.Processes.Argument ("exec"),
+            Project_Tools.Processes.Argument ("--"),
+            Project_Tools.Processes.Argument ("gprbuild"),
+            Project_Tools.Processes.Argument ("-P"),
+            Project_Tools.Processes.Argument ("ada_quality_tests.gpr"),
+            Project_Tools.Processes.Argument ("-p"),
+            Project_Tools.Processes.Argument ("-j0")]));
+         if Test_Build_Run.Status = Ada_Quality.Execution.Completed and then Test_Build_Run.Exit_Code = 0 then
+            Test_Run_1 := Execute
+              ("aunit-first", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
+            Test_Artifact_1 := To_Unbounded_String (Source_Fingerprint (To_String (Execution_Root)));
+            Test_Run_2 := Execute
+              ("aunit-second", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
+            Test_Artifact_2 := To_Unbounded_String (Source_Fingerprint (To_String (Execution_Root)));
+            Add (Tool_Result (TST_01, Test_Run_1, "AUnit suite passes", "AUnit suite failed"));
+         else
+            Test_Run_1 := Test_Build_Run;
+            Test_Run_2 := Test_Build_Run;
+            Add (Tool_Result (TST_01, Test_Build_Run, "AUnit suite builds", "AUnit suite build failed"));
+         end if;
          Add (Integer_Result (Metrics.Test_Registrations > 0, TST_02,
            "registered tests found", "no AUnit registrations found", "Register_Routine scan",
            Metrics.Test_Registrations));
          Add (Present (Test_Run_1.Status = Ada_Quality.Execution.Completed and then Test_Run_1.Exit_Code = 0 and then
            Test_Run_2.Status = Ada_Quality.Execution.Completed and then Test_Run_2.Exit_Code = 0 and then
-           To_String (Test_Run_1.Output) = To_String (Test_Run_2.Output), TST_04,
-           "test output deterministic across two runs", "test runs failed or produced different output",
-           "two alr test runs"));
+           Normalize_Test_Output (To_String (Test_Run_1.Output)) =
+             Normalize_Test_Output (To_String (Test_Run_2.Output)) and then
+           Test_Artifact_1 = Test_Artifact_2, TST_04,
+           "test execution, normalized output, and artifacts are deterministic across two runs",
+           "test runs differed in execution, normalized output, or project artifacts",
+           "two direct AUnit runs with normalized output and source-artifact fingerprints"));
       else
          Add (Blocked_Result (TST_01, "test subcrate unavailable", Test_Manifest));
          Add (Blocked_Result (TST_02, "test subcrate unavailable", Test_Manifest));
@@ -901,9 +1013,9 @@ package body Ada_Quality.Checks is
               (if Total_Text'Length > 0 then Natural'Value (Total_Text)
                else Project_Tools.Gcov.Total_Lines (Summary));
          begin
-            if Coverage_Complete /= "true" or else Coverage_Inventory /= "gcov-production-lines-v1" then
+            if Coverage_Complete /= "true" or else Coverage_Inventory /= "gcov-production-lines-v2" then
                Add (Blocked_Result (TST_03, "coverage evidence does not claim a complete production inventory",
-                 "complete=true and inventory=gcov-production-lines-v1 are required"));
+                 "complete=true and inventory=gcov-production-lines-v2 are required"));
             elsif Coverage_Fingerprint'Length = 0 or else Coverage_Fingerprint /= Before then
                Add (Blocked_Result (TST_03, "coverage evidence does not match the assessed source",
                  "expected=" & Before & " recorded=" & Coverage_Fingerprint));
@@ -963,9 +1075,6 @@ package body Ada_Quality.Checks is
 
       procedure Measure_Documentation is
       begin
-      Add (Integer_Result (Metrics.Spec_Count > 0 and then Metrics.Undocumented_Specs = 0, DOC_01,
-        "public specs contain documentation", "undocumented public specs found",
-        Natural'Image (Metrics.Undocumented_Specs) & " specs", Metrics.Undocumented_Specs));
       if Any_GPR'Length > 0 then
          declare
             Project_File : constant String :=
@@ -984,9 +1093,26 @@ package body Ada_Quality.Checks is
                Project_Tools.Processes.Argument ("-P"), Project_Tools.Processes.Argument (Project_File),
                Project_Tools.Processes.Argument ("-O"), Project_Tools.Processes.Argument (Output_Dir),
                Project_Tools.Processes.Argument ("--warnings")]));
+            declare
+               Warning_Count : constant Natural :=
+                 Occurrences (Lower (To_String (Doc_Run.Output)), "warning:");
+            begin
+               if Doc_Run.Status /= Ada_Quality.Execution.Completed or else Doc_Run.Exit_Code /= 0 then
+                  Add (Blocked_Result
+                    (DOC_01, "public declaration documentation could not be evaluated",
+                     To_String (Doc_Run.Command)));
+               elsif Metrics.Spec_Count = 0 then
+                  Add (Violated (DOC_01, "no public specifications were available for documentation audit", Root));
+               else
+                  Add (Integer_Result
+                    (Warning_Count = 0, DOC_01,
+                     "every public declaration passes the GNATdoc documentation audit",
+                     "GNATdoc reported undocumented or malformed public declarations",
+                     Natural'Image (Warning_Count) & " documentation warnings", Warning_Count));
+               end if;
+            end;
             if Doc_Run.Status = Ada_Quality.Execution.Completed and then Doc_Run.Exit_Code = 0 and then
-              Contains (Lower (To_String (Doc_Run.Output)), "warning:")
-            then
+              Contains (Lower (To_String (Doc_Run.Output)), "warning:") then
                Add (Violated (DOC_02, "GNATdoc reported documentation warnings", To_String (Doc_Run.Command)));
             else
                Add
@@ -998,6 +1124,7 @@ package body Ada_Quality.Checks is
             end if;
          end;
       else
+         Add (Blocked_Result (DOC_01, "public declaration documentation requires a GPR project", Root));
          Add (Blocked_Result (DOC_02, "GNATdoc cannot run without a GPR project", Root));
       end if;
       Add (Present (Project_Tools.Files.File_Exists (Project_Tools.Files.Join (Root, "README.md")), DOC_03,

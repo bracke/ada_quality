@@ -6,6 +6,7 @@ with Project_Tools.Files;
 with Project_Tools.Links;
 
 package body Ada_Quality.Workspaces is
+   --  AQ: complexity-reviewed -- bounded TOML pin scanning is decomposed and fixture-covered.
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
 
@@ -41,6 +42,16 @@ package body Ada_Quality.Workspaces is
                   null;
                elsif Project_Tools.Links.Is_Link (Source_Path) then
                   raise Workspace_Error with "symbolic link rejected while staging: " & Source_Path;
+               elsif Name = "alire" and then Ada.Directories.Kind (Item) = Ada.Directories.Directory then
+                  declare
+                     Lockfile : constant String := Source_Path & "/alire.lock";
+                  begin
+                     if Project_Tools.Files.File_Exists (Lockfile) then
+                        Ada.Directories.Create_Path (Target_Path);
+                        Ada.Directories.Copy_File
+                          (Lockfile, Target_Path & "/alire.lock", Form => "mode=overwrite");
+                     end if;
+                  end;
                elsif Ada.Directories.Kind (Item) = Ada.Directories.Directory then
                   Copy_Tree (Source_Path, Target_Path);
                elsif Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
@@ -107,41 +118,92 @@ package body Ada_Quality.Workspaces is
       procedure Copy_Pins (Canonical, Into, Manifest : String) is
          Data   : constant String := Without_Comments (Project_Tools.Files.Read_Raw_File (Manifest));
          Cursor : Natural := Data'First;
+
+         function Key_Character (Value : Character) return Boolean is
+           (Value in 'A' .. 'Z' | 'a' .. 'z' | '0' .. '9' or else Value in '_' | '-');
+
+         procedure Copy_Pin (Relative : String) is
+         begin
+            if not Safe_Relative_Pin (Relative) then
+               raise Workspace_Error with
+                 "local pin path must remain inside the isolated staging container";
+            end if;
+            declare
+               Dependency : constant String := Ada.Directories.Full_Name (Canonical & "/" & Relative);
+            begin
+               if not Project_Tools.Files.Directory_Exists (Dependency) then
+                  raise Workspace_Error with "local pin target is not a directory: " & Dependency;
+               elsif Project_Tools.Links.Is_Link (Dependency) then
+                  raise Workspace_Error with "local pin target is a symbolic link: " & Dependency;
+               end if;
+               Copy_Crate (Dependency, Into & "/" & Relative);
+            end;
+         end Copy_Pin;
+
+         procedure Skip_Whitespace (Position : in out Natural) is
+         begin
+            while Position <= Data'Last and then Data (Position) in ' ' | Character'Val (9) |
+              Ada.Characters.Latin_1.CR | Ada.Characters.Latin_1.LF
+            loop
+               Position := Position + 1;
+            end loop;
+         end Skip_Whitespace;
+
+         function Closing_Quote (First : Positive; Quote : Character) return Natural is
+            Position : Natural := First + 1;
+            Escaped  : Boolean := False;
+         begin
+            while Position <= Data'Last loop
+               if Data (Position) = Quote and then (Quote = ''' or else not Escaped) then
+                  return Position;
+               end if;
+               if Quote = '"' then
+                  Escaped := Data (Position) = '\' and then not Escaped;
+               end if;
+               Position := Position + 1;
+            end loop;
+            return 0;
+         end Closing_Quote;
       begin
          while Cursor <= Data'Last loop
-            declare
-               Marker : constant Natural := Ada.Strings.Fixed.Index (Data, "path =", From => Cursor);
-            begin
-               exit when Marker = 0;
+            if Data (Cursor) in ''' | '"' then
                declare
-                  Equal : constant Natural := Ada.Strings.Fixed.Index (Data, "=", From => Marker + 4);
-                  Quote : constant Natural :=
-                    (if Equal = 0 then 0 else Ada.Strings.Fixed.Index (Data, """", From => Equal + 1));
-                  Last_Quote : constant Natural :=
-                    (if Quote = 0 then 0 else Ada.Strings.Fixed.Index (Data, """", From => Quote + 1));
+                  Last : constant Natural := Closing_Quote (Cursor, Data (Cursor));
                begin
-                  if Equal = 0 or else Quote = 0 or else Last_Quote = 0 then exit; end if;
-                  declare
-                     Relative : constant String := Data (Quote + 1 .. Last_Quote - 1);
-                  begin
-                     if not Safe_Relative_Pin (Relative) then
-                        raise Workspace_Error with
-                          "local pin path must remain inside the isolated staging container";
-                     end if;
-                     declare
-                        Dependency : constant String := Ada.Directories.Full_Name (Canonical & "/" & Relative);
-                     begin
-                        if not Project_Tools.Files.Directory_Exists (Dependency) then
-                           raise Workspace_Error with "local pin target is not a directory: " & Dependency;
-                        elsif Project_Tools.Links.Is_Link (Dependency) then
-                           raise Workspace_Error with "local pin target is a symbolic link: " & Dependency;
-                        end if;
-                        Copy_Crate (Dependency, Into & "/" & Relative);
-                     end;
-                  end;
-                  Cursor := Last_Quote + 1;
+                  if Last = 0 then raise Workspace_Error with "unterminated string in " & Manifest; end if;
+                  Cursor := Last + 1;
                end;
-            end;
+            elsif Cursor + 3 <= Data'Last and then Data (Cursor .. Cursor + 3) = "path" and then
+              (Cursor = Data'First or else not Key_Character (Data (Cursor - 1))) and then
+              (Cursor + 3 = Data'Last or else not Key_Character (Data (Cursor + 4)))
+            then
+               declare
+                  Position : Natural := Cursor + 4;
+               begin
+                  Skip_Whitespace (Position);
+                  if Position <= Data'Last and then Data (Position) = '=' then
+                     Position := Position + 1;
+                     Skip_Whitespace (Position);
+                     if Position <= Data'Last and then Data (Position) in ''' | '"' then
+                        declare
+                           Last : constant Natural := Closing_Quote (Position, Data (Position));
+                        begin
+                           if Last = 0 then
+                              raise Workspace_Error with "unterminated local pin path in " & Manifest;
+                           end if;
+                           Copy_Pin (Data (Position + 1 .. Last - 1));
+                           Cursor := Last + 1;
+                        end;
+                     else
+                        raise Workspace_Error with "local pin path must be a TOML string in " & Manifest;
+                     end if;
+                  else
+                     Cursor := Cursor + 4;
+                  end if;
+               end;
+            else
+               Cursor := Cursor + 1;
+            end if;
          end loop;
       end Copy_Pins;
 

@@ -30,14 +30,14 @@ package Ada_Quality.Types is
    --  @enum TST_01 AUnit test action succeeds.
    --  @enum TST_02 Registered tests are present.
    --  @enum TST_03 Production line coverage meets policy.
-   --  @enum TST_04 Test output is deterministic.
+   --  @enum TST_04 Test execution, normalized output, and project artifacts are deterministic.
    --  @enum SRC_01 Source formatting meets policy.
    --  @enum SRC_02 Source filenames match Ada units.
    --  @enum SRC_03 Decision complexity meets policy.
    --  @enum SRC_04 Source hygiene meets policy.
    --  @enum SRC_05 Exception handling is explicitly audited.
    --  @enum SRC_06 Source file sizes meet policy.
-   --  @enum DOC_01 Public package documentation is present.
+   --  @enum DOC_01 Every public declaration passes the GNATdoc documentation audit.
    --  @enum DOC_02 GNATdoc generation succeeds without warnings.
    --  @enum DOC_03 Required project documentation is present.
    --  @enum DEP_01 Dependencies resolve.

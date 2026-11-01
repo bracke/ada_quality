@@ -1,7 +1,7 @@
 # Database integrity
 
 The store uses the sibling `database` crate and exactly eight catalog tables. `Entity` has explicit row conversion,
-key extraction, and typed database values. Schema metadata is version `2`; an absent database can be created, while
+key extraction, and typed database values. Schema metadata is version `3`; an absent database can be created, while
 missing or incompatible existing storage fails the integrity path.
 
 Transaction boundaries:
@@ -17,5 +17,6 @@ The integrity fixture injects failures before schema-creation, assessment-start,
 commits, plus invalid UTF-8 during publication. It verifies rollback, reopen/retry, no leaked dependent rows, immutable
 terminal evidence, and idempotent recovery.
 
-Opening version 1 atomically converts legacy assessment fingerprint payloads and advances metadata to version 2.
-Migration failure leaves version 1 intact for retry. Silently rewriting an unknown version is forbidden.
+Opening version 1 atomically converts legacy assessment fingerprint payloads; opening version 2 preserves its rows.
+Both advance metadata to version 3 in the same migration transaction. Migration failure leaves the prior version
+intact for retry. Silently rewriting an unknown version is forbidden.
