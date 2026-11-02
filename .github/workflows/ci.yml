@@ -98,6 +98,7 @@ jobs:
           regexp = { path = "../regexp" }
           TOML
           alr -n update
+          alr -n settings --set update.manually_only true
           restore_manifest
           trap - EXIT
 
