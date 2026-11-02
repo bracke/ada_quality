@@ -710,13 +710,15 @@ package body Ada_Quality_Test_Suite is
                            Project_Tools.Processes.Argument ("-p"),
                            Project_Tools.Processes.Argument ("-v")]),
                        Timeout_Seconds => 20, Maximum_Bytes => 4_096);
+                  Warning_Output : constant String :=
+                    Ada.Characters.Handling.To_Lower (To_String (Warning_Build.Output));
                begin
                   Assert (Warning_Build.Status = Ada_Quality.Execution.Completed and then
                     Warning_Build.Exit_Code /= 0 and then
-                    Ada.Strings.Fixed.Index
-                      (Ada.Characters.Handling.To_Lower (To_String (Warning_Build.Output)), "warning:") > 0 and then
-                    Ada.Strings.Fixed.Index (To_String (Warning_Build.Output), "-gnatVa") > 0,
-                    "BLD-03 wrapper preserves inherited switches and rejects target warnings");
+                    Ada.Strings.Fixed.Index (Warning_Output, "ada.text_io") > 0 and then
+                    Ada.Strings.Fixed.Index (Warning_Output, "not referenced") > 0,
+                    "BLD-03 wrapper rejects the target warning while extending inherited switches" &
+                    ASCII.LF & To_String (Warning_Build.Output));
                end;
                Project_Tools.Files.Delete_Tree (Hostile_Root);
             end;
