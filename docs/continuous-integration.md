@@ -6,9 +6,10 @@ the manifest-selected GNAT 15.2.1 toolchain, and read-only GitHub permissions.
 Ada Quality depends on sibling crates that are developed as separate repositories. CI checks out `database`,
 `project_tools`, `jsonlib`, `terminal_styles`, `messages`, `regexp`, `i18n`, and `cryptolib` beside `ada_quality`.
 It asks Alire to resolve the six direct dependencies through those paths, then restores the release manifest before
-building. Automatic re-resolution is disabled locally after the generated lock is complete, so restoring the tracked
-pin-free manifest does not discard those links. `database` and `messages` resolve their transitive sibling pins to
-`cryptolib` and `i18n` respectively.
+building. The AUnit child crate receives its own generated lock containing AUnit and the same transitive overrides.
+Automatic re-resolution is disabled locally after each generated lock is complete, so restoring the two tracked
+manifests does not discard those links. `database` and `messages` resolve their transitive sibling pins to `cryptolib`
+and `i18n` respectively. If the AUnit action fails, CI prints Alire's otherwise private local-test log.
 
 The required gates are:
 

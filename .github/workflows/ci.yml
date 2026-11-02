@@ -83,10 +83,12 @@ jobs:
         shell: bash
         run: |
           cp alire.toml "${RUNNER_TEMP}/ada_quality-alire.toml"
-          restore_manifest() {
+          cp tests/alire.toml "${RUNNER_TEMP}/ada_quality-tests-alire.toml"
+          restore_manifests() {
             cp "${RUNNER_TEMP}/ada_quality-alire.toml" alire.toml
+            cp "${RUNNER_TEMP}/ada_quality-tests-alire.toml" tests/alire.toml
           }
-          trap restore_manifest EXIT
+          trap restore_manifests EXIT
           cat >> alire.toml <<'TOML'
 
           [[pins]]
@@ -99,7 +101,19 @@ jobs:
           TOML
           alr -n update
           alr -n settings --set update.manually_only true
-          restore_manifest
+          cat >> tests/alire.toml <<'TOML'
+
+          [[pins]]
+          database = { path = "../../database" }
+          project_tools = { path = "../../project_tools" }
+          jsonlib = { path = "../../jsonlib" }
+          terminal_styles = { path = "../../terminal_styles" }
+          messages = { path = "../../messages" }
+          regexp = { path = "../../regexp" }
+          TOML
+          alr -n -C tests update
+          alr -n -C tests settings --set update.manually_only true
+          restore_manifests
           trap - EXIT
 
       - name: Show selected toolchain
@@ -112,7 +126,12 @@ jobs:
 
       - name: AUnit tests
         working-directory: ada_quality
-        run: alr -n test
+        shell: bash
+        run: |
+          if ! alr -n test; then
+            cat alire/alr_test_local.log
+            exit 1
+          fi
 
       - name: Complete coverage gate
         working-directory: ada_quality
