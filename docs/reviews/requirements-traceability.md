@@ -13,7 +13,7 @@ represented only by a placeholder.
 | Private isolated assessment | `Checks.Assess`, `Workspaces.Prepare`, `Temporary_Directories` | concurrent same-identity workspace regression; staged release checker |
 | Explicit process arguments and limits | `Ada_Quality.Execution` | `EXECUTION_TEST`; timeout and bounded-capture fixtures |
 | Safe source traversal and identity | `Checks`, `Workspaces` | `SYMLINK_TEST`; fingerprint assertions |
-| Exact stable source-bound coverage | `Types.Coverage_Passes`, coverage driver, TST-03 | 3,320/3,687 twice; complete source/toolchain and per-unit stability checked |
+| Exact stable source-bound coverage | `Types.Coverage_Passes`, coverage driver, TST-03 | 3,702/4,113; complete source/toolchain and per-unit stability checked |
 | Conditional SPARK proof | `Checks.Declares_SPARK`, PRF-01 | `APPLICABILITY_TEST`; current project reports N/A |
 | Deterministic versioned JSON | `Ada_Quality.JSON` | `JSON_TEST`; strict `jq` parse; schemas parse |
 | Finding/history lifecycle | `Ada_Quality.History`, CLI comparison | `HISTORY_TEST`; two-assessment coverage workflow |

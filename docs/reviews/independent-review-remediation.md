@@ -5,7 +5,7 @@ project architecture.
 
 | Finding | Correction and regression evidence |
 |---|---|
-| AQ-01 | Coverage inventory starts from every eligible production unit and requires matching instrumentation plus a complete, parsed gcov summary for every body and specification. Missing-unit, header-only, malformed-summary, and missing-source fixtures fail completeness. Evidence uses `gcov-production-lines-v2`. |
+| AQ-01 | Coverage inventory starts from every production unit and requires matching instrumentation plus either a parsed production-source gcov record or gcov's explicit whole-unit no-executable-lines result. Missing-unit, header-only, malformed-summary, duplicate-stem, and missing-unit-record fixtures fail completeness. Evidence uses `gcov-production-lines-v2`. |
 | AQ-02 | BLD-03 resolves the manifest's root GPR files and builds generated extending projects that preserve inherited switches while adding target-scoped `-gnatwa -gnatwe`; a standalone fixture proves switch preservation and warning rejection. |
 | AQ-03 | History defines metric direction per indicator and tests pass-to-fail, fail-to-worse-fail, improvement, deterioration, and evidence loss. |
 | AQ-04 | SRC-03 has a precise lexical Ada decision-complexity contract and representative nested, expression, case, loop, and short-circuit fixtures. |
@@ -19,5 +19,5 @@ project architecture.
 Reporting history and trend adapters additionally perform the same canonical 33-indicator evidence validation as
 single-assessment reads, so malformed persisted evidence cannot silently suppress a comparison.
 
-Release evidence must be regenerated after the final correction so that it is bound to the exact source and selected
-toolchain fingerprints.
+Release evidence was regenerated after the final correction and records 3,702/4,113 executable lines (90.00%), bound
+to the exact source and selected toolchain fingerprints.

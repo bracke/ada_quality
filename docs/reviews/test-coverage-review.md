@@ -8,8 +8,8 @@ zero failed assertions, zero unexpected errors.
 Fresh isolated instrumented runs observed:
 
 ```text
-covered=3320
-total=3687
+covered=3702
+total=4113
 complete=true
 inventory=gcov-production-lines-v2
 excluded_ada_quality_coverage=coverage-driver
@@ -17,7 +17,7 @@ source_fingerprint=<matched reviewed tree>
 toolchain_fingerprint=<matched selected GNAT toolchain>
 ```
 
-This is 90.04%. Two unchanged complete runs produced identical aggregate and per-production-unit counts. The driver
+This is 90.00%. Unchanged complete runs produced identical aggregate and per-production-unit counts. The driver
 stores an independent stability artifact and rejects drift for the same source and toolchain. It seeds its temporary
 self-assessment evidence with the current fingerprint, eliminating the former first-run/second-run path difference.
 The v2 inventory independently enumerates eligible production units and rejects missing instrumentation. AQ9-002 is

@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Build, test, and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out Ada Quality
+        uses: actions/checkout@v7
+        with:
+          path: ada_quality
+
+      - name: Check out database
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/database
+          path: database
+
+      - name: Check out project_tools
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/project_tools
+          path: project_tools
+
+      - name: Check out jsonlib
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/jsonlib
+          path: jsonlib
+
+      - name: Check out terminal_styles
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/terminal_styles
+          path: terminal_styles
+
+      - name: Check out messages
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/messages
+          path: messages
+
+      - name: Check out regexp
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/regexp
+          path: regexp
+
+      - name: Check out i18n
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/i18n
+          path: i18n
+
+      - name: Check out cryptolib
+        uses: actions/checkout@v7
+        with:
+          repository: bracke/cryptolib
+          path: cryptolib
+
+      - name: Set up Alire
+        uses: alire-project/setup-alire@v6
+        with:
+          version: 2.1.0
+
+      - name: Resolve sibling crates
+        working-directory: ada_quality
+        shell: bash
+        run: |
+          cp alire.toml "${RUNNER_TEMP}/ada_quality-alire.toml"
+          restore_manifest() {
+            cp "${RUNNER_TEMP}/ada_quality-alire.toml" alire.toml
+          }
+          trap restore_manifest EXIT
+          cat >> alire.toml <<'TOML'
+
+          [[pins]]
+          database = { path = "../database" }
+          project_tools = { path = "../project_tools" }
+          jsonlib = { path = "../jsonlib" }
+          terminal_styles = { path = "../terminal_styles" }
+          messages = { path = "../messages" }
+          regexp = { path = "../regexp" }
+          TOML
+          alr -n update
+          restore_manifest
+          trap - EXIT
+
+      - name: Show selected toolchain
+        working-directory: ada_quality
+        run: alr -n exec -- gnatls --version
+
+      - name: Validation build
+        working-directory: ada_quality
+        run: alr -n build --validation -- -f
+
+      - name: AUnit tests
+        working-directory: ada_quality
+        run: alr -n test
+
+      - name: Complete coverage gate
+        working-directory: ada_quality
+        run: alr -n exec -- ./bin/coverage
+
+      - name: Release structure gate
+        working-directory: ada_quality
+        run: ./bin/check_all
+
+      - name: Verify tracked evidence is current
+        working-directory: ada_quality
+        run: git diff --exit-code

@@ -11,7 +11,7 @@ Verified against the local workspace on 2026-11-01:
 - The AUnit child crate contains 21 test cases covering the registry/tool graph, coverage boundaries, status and
   evaluator invariants, policy, UTF-8 JSON/schemas, persistent storage/migrations/faults, bounded hostile execution,
   SPARK applicability, native analysis, isolated workspaces, link safety, history/regressions, and stress paths.
-- Instrumented production coverage is 3,320/3,687 executable lines (90.04%).
+- Instrumented production coverage is 3,702/4,113 executable lines (90.00%).
 
 The verification commands are:
 
@@ -23,5 +23,6 @@ alr exec -- ./bin/coverage
 ./bin/check_all
 ```
 
-Network-dependent Alire resolution is environment-dependent. Existing lockfiles and cached dependencies are used for
-offline rebuilds; a clean machine must fetch AUnit and the pinned GNAT toolchain once.
+Network-dependent Alire resolution is environment-dependent. Generated workspace locks and cached dependencies are
+used for offline rebuilds; a clean machine must fetch AUnit and the pinned GNAT toolchain once. GitHub Actions checks
+out the sibling repositories, recreates the workspace links, and runs all release gates on a clean hosted runner.

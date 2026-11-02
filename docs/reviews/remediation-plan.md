@@ -12,7 +12,7 @@ Status: **complete**, verified 2026-11-01.
 
 ## Before relying on a narrow coverage ratchet
 
-1. [x] Add deterministic branch tests until stable production coverage meets the 90% policy (measured 90.04%).
+1. [x] Add deterministic branch tests until stable production coverage meets the 90% policy (measured 90.00%).
 2. [x] Run the coverage gate repeatedly in clean disposable workspaces and fail a new stability test when covered-line
    counts vary for the same source fingerprint and toolchain.
 3. [x] Record and enforce the toolchain fingerprint in the coverage artifact.

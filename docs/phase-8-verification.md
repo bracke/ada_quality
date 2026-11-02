@@ -10,14 +10,14 @@ AUnit suite.
 |---|---:|---|
 | `alr build --validation -- -f` | 0 | Ada Quality sources compile under the validation profile |
 | `alr test` | 0 | 21 run, 21 successful, 0 failed assertions, 0 unexpected errors |
-| `alr exec -- ./bin/coverage` | 0 | 3,320/3,687 production lines, 90.04%; full CLI E2E completed |
+| `alr exec -- ./bin/coverage` | 0 | 3,702/4,113 production lines, 90.00%; full CLI E2E completed |
 | `alr exec -- gnatdoc -P ada_quality.gpr -O /tmp/ada-quality-phase8-gnatdoc --warnings` | 0 | generated docs; warnings retained as DOC-01 evidence |
 | `./bin/check_all` | 0 | 21 AUnit cases and the complete AQ-000..AQ-008 release structure pass |
 
 Failures encountered and resolved during hardening:
 
 - the expanded implementation first measured 88.22%; descriptor, typed JSON, malformed-history, and other real
-  branch fixtures raised it above policy; the current expanded source measures 90.04%;
+  branch fixtures raised it to policy; the current post-review source measures 90.00%;
 - the first rerun exposed missing `messages`/`regexp` imports in the coverage GPR; the instrumented project now mirrors
   production dependencies;
 - an aborted E2E run left WAL/full-text sidecars after deleting only the main temporary database; cleanup now removes

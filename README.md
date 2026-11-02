@@ -1,5 +1,7 @@
 # Ada Quality
 
+[![CI](https://github.com/bracke/ada_quality/actions/workflows/ci.yml/badge.svg)](https://github.com/bracke/ada_quality/actions/workflows/ci.yml)
+
 `ada-quality` is an Ada 2022 command-line assessor for registered local Alire projects. It records immutable,
 versioned assessments in the sibling `database` engine and reports all 33 indicators defined in
 [`quality-indicator-catalog.md`](quality-indicator-catalog.md).
@@ -17,8 +19,11 @@ alr exec -- ./bin/coverage
 ./bin/check_all
 ```
 
-GNAT 15.2.1 is pinned through Alire. The committed lockfile retains the resolved sibling-crate workspace links;
-the release manifest itself contains no local path pins.
+GNAT 15.2.1 is pinned through Alire. Local development and CI resolve the sibling crates into Alire's generated
+workspace lock; the release manifest itself contains no local path pins.
+
+GitHub Actions recreates the sibling-crate layout and runs the validation build, AUnit suite, complete coverage gate,
+and release checker on pushes to `main` and on pull requests. See [`docs/continuous-integration.md`](docs/continuous-integration.md).
 
 ## Quick start
 

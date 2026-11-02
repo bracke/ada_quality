@@ -6,7 +6,7 @@ Decision: **ready**.
 |---|---:|---|
 | `alr build --validation -- -f` | 0 | disposable workspace, GNAT 15.2.1 |
 | `alr test` | 0 | 21/21 tests; no failures or unexpected errors |
-| `alr exec -- ./bin/coverage` | 0 | 3,320/3,687, 90.04%, repeated identically, complete/source/toolchain-bound |
+| `alr exec -- ./bin/coverage` | 0 | 3,702/4,113, 90.00%, repeated identically, complete/source/toolchain-bound |
 | `gnatdoc ... --warnings` | 0 | documentation generated; zero warnings |
 | `./bin/check_all` | 0 | AUnit and release structure pass |
 | full 33-indicator assessment | 0 | 32 pass, PRF-01 N/A, terminal status completed |
@@ -15,7 +15,7 @@ Decision: **ready**.
 
 The first live-workspace Alire attempts could not use the network or update read-only caches and sibling crates. They
 did not reach product compilation. The mandatory commands were therefore rerun in a writable disposable copy using
-the committed lock topology and existing cached toolchains. Those environmental attempts are not product failures.
+the generated workspace-lock topology and existing cached toolchains. Those environmental attempts are not product failures.
 
 No AQ-009 defect is open. AQ9-001 and AQ9-002 are resolved by private temporary namespaces, coverage serialization,
 deterministic evidence seeding, and a per-unit stability check. AQ9-003 is resolved by dependency-project filtering

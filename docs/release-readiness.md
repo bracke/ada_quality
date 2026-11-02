@@ -17,8 +17,8 @@ Known non-blocking limitations:
   fail closed;
 - PRF-01 is not applicable to Ada Quality itself because its sources do not declare `SPARK_Mode`;
 - AQ-000 through AQ-007 reports are current reconstruction records, explicitly not fabricated historical logs;
-- the release manifest contains no local workspace pins; deterministic development links remain in the committed
-  lockfile and are staged recursively without weakening DEP-02.
+- the release manifest contains no local workspace pins; deterministic development links remain in Alire's generated
+  workspace lock and are staged recursively without weakening DEP-02. CI recreates those links from sibling checkouts.
 
 AQ-009 must remain read-only and independently confirm requirement coverage, database safety, CLI/JSON behavior,
 and release evidence.
