@@ -15,7 +15,7 @@
 | Source identity stability | `Checks.Source_Fingerprint` | deterministic and link-target isolation assertions |
 | Exact coverage gate | `Types.Coverage_Passes`, `Checks` | boundary/overflow test; instrumented production coverage |
 | Coverage/source compatibility | coverage tool and TST-03 adapter | fingerprint field required and compared |
-| GNATprove applicability | `Checks.Declares_SPARK`, PRF-01 branch | `APPLICABILITY_TEST` |
+| GNATprove applicability | `Checks.Declares_SPARK`, `Checks.Dedicated_Proof_Projects`, PRF-01 branch | `APPLICABILITY_TEST` |
 | Release checker execution | REL-01 adapter and `bin/check_all` | full assessment E2E; final release gate |
 | Clean staged source | REL-04 Git and fingerprint checks | negative semantics reviewed; full assessment E2E |
 | Deterministic RFC 8259 JSON | `Ada_Quality.JSON` | strict jsonlib parse and 33-result assertions |

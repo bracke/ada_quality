@@ -2,10 +2,10 @@ with Ada.Characters.Handling;
 with Ada.Characters.Latin_1;
 with Ada.Containers.Vectors;
 with Ada.Directories;
+with Ada.Exceptions;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Interfaces;
-with Project_Tools.Files;
 with Project_Tools.Gcov;
 with Project_Tools.Links;
 with Project_Tools.Processes;
@@ -161,10 +161,11 @@ package body Ada_Quality.Checks is
 
    function Has_Suffix (Text, Suffix : String) return Boolean;
 
-   function Manifest_Project_Files (Root, Text : String) return Text_Vectors.Vector is
+   --  Return the string elements of the top-level array Key in an Alire manifest, or an empty vector when Key is
+   --  absent or its array is malformed.
+   function Manifest_Strings (Text, Key : String) return Text_Vectors.Vector is
       Clean  : constant String := Without_TOML_Comments (Text);
       Result : Text_Vectors.Vector;
-      Key    : constant String := "project-files";
       Start  : Natural := Clean'First;
       Key_At : Natural := 0;
    begin
@@ -214,23 +215,92 @@ package body Ada_Quality.Checks is
                      Position := Position + 1;
                   end loop;
                   if Position > Clean'Last then return Text_Vectors.Empty_Vector; end if;
-                  declare
-                     Relative_Path : constant String := Clean (First .. Position - 1);
-                     Full_Path : constant String := Project_Tools.Files.Join (Root, Relative_Path);
-                  begin
-                     if Relative_Path'Length > 0 and then Has_Suffix (Lower (Relative_Path), ".gpr") and then
-                       Project_Tools.Files.File_Exists (Full_Path)
-                     then
-                        Result.Append (To_Unbounded_String (Full_Path));
-                     end if;
-                  end;
+                  Result.Append (To_Unbounded_String (Clean (First .. Position - 1)));
                end;
             end if;
             Position := Position + 1;
          end loop;
       end;
       return Result;
+   end Manifest_Strings;
+
+   function Manifest_Project_Files (Root, Text : String) return Text_Vectors.Vector is
+      Result : Text_Vectors.Vector;
+   begin
+      for Item of Manifest_Strings (Text, "project-files") loop
+         declare
+            Relative_Path : constant String := To_String (Item);
+            Full_Path     : constant String := Project_Tools.Files.Join (Root, Relative_Path);
+         begin
+            if Relative_Path'Length > 0 and then Has_Suffix (Lower (Relative_Path), ".gpr") and then
+              Project_Tools.Files.File_Exists (Full_Path)
+            then
+               Result.Append (To_Unbounded_String (Full_Path));
+            end if;
+         end;
+      end loop;
+      return Result;
    end Manifest_Project_Files;
+
+   function Test_Manifest_Text (Root : String) return String is
+      Manifest : constant String := Project_Tools.Files.Join (Root, "tests/alire.toml");
+   begin
+      return (if Project_Tools.Files.File_Exists (Manifest) then Project_Tools.Files.Read_Raw_File (Manifest) else "");
+   end Test_Manifest_Text;
+
+   function Test_Project_File (Root : String) return String is
+      Text  : constant String := Test_Manifest_Text (Root);
+      Tests : constant String := Project_Tools.Files.Join (Root, "tests");
+   begin
+      if Text'Length = 0 then
+         return "";
+      end if;
+      declare
+         Listed : constant Text_Vectors.Vector := Manifest_Project_Files (Tests, Text);
+      begin
+         return
+           (if not Listed.Is_Empty then To_String (Listed.First_Element)
+            else Project_Tools.Files.Join (Tests, Project_Tools.TOML.String_Value_After (Text, "name", Text'First)
+                                                  & ".gpr"));
+      end;
+   end Test_Project_File;
+
+   function Test_Suite_Executable (Root : String) return String is
+      Text : constant String := Test_Manifest_Text (Root);
+   begin
+      if Text'Length = 0 then
+         return "";
+      end if;
+      declare
+         Listed : constant Text_Vectors.Vector := Manifest_Strings (Text, "executables");
+      begin
+         return Project_Tools.Files.Join
+           (Root, "tests/bin/" & (if not Listed.Is_Empty then To_String (Listed.First_Element)
+                                  else Project_Tools.TOML.String_Value_After (Text, "name", Text'First)));
+      end;
+   end Test_Suite_Executable;
+
+   function Dedicated_Proof_Projects (Root : String) return Project_Tools.Files.Path_List is
+      Names  : Text_Vectors.Vector;
+      Search : Ada.Directories.Search_Type;
+      Item   : Ada.Directories.Directory_Entry_Type;
+   begin
+      if Ada.Directories.Exists (Root) then
+         Ada.Directories.Start_Search
+           (Search, Root, "spark*.gpr", [Ada.Directories.Ordinary_File => True, others => False]);
+         while Ada.Directories.More_Entries (Search) loop
+            Ada.Directories.Get_Next_Entry (Search, Item);
+            Names.Append (To_Unbounded_String (Ada.Directories.Full_Name (Item)));
+         end loop;
+         Ada.Directories.End_Search (Search);
+         Text_Sorting.Sort (Names);
+      end if;
+      return Result : Project_Tools.Files.Path_List (1 .. Natural (Names.Length)) do
+         for Index in Result'Range loop
+            Result (Index) := Names (Index);
+         end loop;
+      end return;
+   end Dedicated_Proof_Projects;
 
    function Is_Skipped (Name : String) return Boolean is
    begin
@@ -511,7 +581,9 @@ package body Ada_Quality.Checks is
                   declare
                      Size : constant Ada.Directories.File_Size := Ada.Directories.Size (To_String (Path));
                   begin
-                     if Size > Ada.Directories.File_Size (Maximum_File_Bytes) then
+                     --  Source files are read whole; artifact files are hashed as a stream, so only the aggregate
+                     --  limit bounds them.
+                     if Ignore_Generated and then Size > Ada.Directories.File_Size (Maximum_File_Bytes) then
                         raise Constraint_Error with "project file exceeds fingerprint size limit: " & Name;
                      elsif Natural (Size) > Maximum_Fingerprint_Bytes - Total_Bytes then
                         raise Constraint_Error with "project exceeds aggregate fingerprint size limit";
@@ -1286,10 +1358,29 @@ package body Ada_Quality.Checks is
       procedure Measure_Tests is
          Test_Directory : constant String := Project_Tools.Files.Join
            (To_String (Execution_Root), "tests");
-         Test_Binary : constant String := Project_Tools.Files.Join
-           (Test_Directory, "bin/ada_quality_tests");
+         Test_Project : constant String := Test_Project_File (To_String (Execution_Root));
+         Test_Binary : constant String := Test_Suite_Executable (To_String (Execution_Root));
          Baseline_Directory : constant String :=
            Ada_Quality.Workspaces.Scratch_Path (Stage, "determinism-baseline");
+         Artifact_Error : Ada.Strings.Unbounded.Unbounded_String;
+
+         --  Fingerprint the project state after a test run. A project whose artifacts exceed the fingerprint limits
+         --  cannot show deterministic artifacts; that blocks TST-04 instead of aborting the assessment.
+         function State_After_Run return Ada.Strings.Unbounded.Unbounded_String is
+         begin
+            return To_Unbounded_String (Project_State_Fingerprint (To_String (Execution_Root)));
+         exception
+            when Error : Constraint_Error =>
+               declare
+                  Message : constant String := Ada.Exceptions.Exception_Message (Error);
+               begin
+                  if Message'Length < 8 or else Message (Message'First .. Message'First + 7) /= "project " then
+                     raise;
+                  end if;
+                  Artifact_Error := To_Unbounded_String (Message);
+                  return Null_Unbounded_String;
+               end;
+         end State_After_Run;
       begin
       if Project_Tools.Files.File_Exists (Test_Manifest) and then
         Build_Run.Status = Ada_Quality.Execution.Completed and then Build_Run.Exit_Code = 0
@@ -1300,19 +1391,19 @@ package body Ada_Quality.Checks is
             Project_Tools.Processes.Argument ("--"),
             Project_Tools.Processes.Argument ("gprbuild"),
             Project_Tools.Processes.Argument ("-P"),
-            Project_Tools.Processes.Argument ("ada_quality_tests.gpr"),
+            Project_Tools.Processes.Argument (Test_Project),
             Project_Tools.Processes.Argument ("-p"),
             Project_Tools.Processes.Argument ("-j0")]));
          if Test_Build_Run.Status = Ada_Quality.Execution.Completed and then Test_Build_Run.Exit_Code = 0 then
             Copy_State_Tree (To_String (Execution_Root), Baseline_Directory);
             Test_Run_1 := Execute
               ("aunit-first", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
-            Test_Artifact_1 := To_Unbounded_String (Project_State_Fingerprint (To_String (Execution_Root)));
+            Test_Artifact_1 := State_After_Run;
             Project_Tools.Files.Delete_Tree (To_String (Execution_Root));
             Copy_State_Tree (Baseline_Directory, To_String (Execution_Root));
             Test_Run_2 := Execute
               ("aunit-second", Test_Directory, Test_Binary, Project_Tools.Processes.No_Arguments);
-            Test_Artifact_2 := To_Unbounded_String (Project_State_Fingerprint (To_String (Execution_Root)));
+            Test_Artifact_2 := State_After_Run;
             Add (Tool_Result (TST_01, Test_Run_1, "AUnit suite passes", "AUnit suite failed"));
          else
             Test_Run_1 := Test_Build_Run;
@@ -1322,14 +1413,18 @@ package body Ada_Quality.Checks is
          Add (Integer_Result (Metrics.Test_Registrations > 0, TST_02,
            "registered tests found", "no AUnit registrations found", "Register_Routine scan",
            Metrics.Test_Registrations));
-         Add (Present (Test_Run_1.Status = Ada_Quality.Execution.Completed and then Test_Run_1.Exit_Code = 0 and then
-           Test_Run_2.Status = Ada_Quality.Execution.Completed and then Test_Run_2.Exit_Code = 0 and then
-           Normalize_Test_Output (To_String (Test_Run_1.Output)) =
-             Normalize_Test_Output (To_String (Test_Run_2.Output)) and then
-           Test_Artifact_1 = Test_Artifact_2, TST_04,
-           "test execution, normalized output, and artifacts are deterministic across two runs",
-           "test runs differed in execution, normalized output, or project artifacts",
-           "two AUnit runs restored from one post-build baseline with normalized output and state fingerprints"));
+         if Length (Artifact_Error) > 0 then
+            Add (Blocked_Result (TST_04, "project artifacts could not be fingerprinted", To_String (Artifact_Error)));
+         else
+            Add (Present (Test_Run_1.Status = Ada_Quality.Execution.Completed and then Test_Run_1.Exit_Code = 0 and then
+              Test_Run_2.Status = Ada_Quality.Execution.Completed and then Test_Run_2.Exit_Code = 0 and then
+              Normalize_Test_Output (To_String (Test_Run_1.Output)) =
+                Normalize_Test_Output (To_String (Test_Run_2.Output)) and then
+              Test_Artifact_1 = Test_Artifact_2, TST_04,
+              "test execution, normalized output, and artifacts are deterministic across two runs",
+              "test runs differed in execution, normalized output, or project artifacts",
+              "two AUnit runs restored from one post-build baseline with normalized output and state fingerprints"));
+         end if;
       else
          Add (Blocked_Result (TST_01, "test subcrate unavailable", Test_Manifest));
          Add (Blocked_Result (TST_02, "test subcrate unavailable", Test_Manifest));
@@ -1547,22 +1642,34 @@ package body Ada_Quality.Checks is
       end Measure_Release;
 
       procedure Measure_Proof is
+         Dedicated : constant Project_Tools.Files.Path_List := Dedicated_Proof_Projects (Root);
+
+         function Prove (Project_File : String) return Ada_Quality.Execution.Run_Result is
+           (Execute
+              ("gnatprove", To_String (Execution_Root), Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
+               Args ([Project_Tools.Processes.Argument ("exec"),
+               Project_Tools.Processes.Argument ("--"), Project_Tools.Processes.Argument ("gnatprove"),
+               Project_Tools.Processes.Argument ("-P"), Project_Tools.Processes.Argument (Project_File),
+               Project_Tools.Processes.Argument ("--mode=prove"),
+               Project_Tools.Processes.Argument ("--level=2")])));
       begin
       Has_SPARK := Declares_SPARK (Root);
-      if Has_SPARK and then Any_GPR'Length > 0 then
+      if Has_SPARK and then Dedicated'Length > 0 then
+         --  Dedicated proof projects name exactly the SPARK units; each must prove.
+         for Project of Dedicated loop
+            Proof_Run := Prove
+              (Project_Tools.Files.Join (To_String (Execution_Root), Relative (Root, To_String (Project))));
+            exit when Proof_Run.Status /= Ada_Quality.Execution.Completed or else Proof_Run.Exit_Code /= 0;
+         end loop;
+         Add (Tool_Result (PRF_01, Proof_Run, "declared SPARK units proved", "SPARK proof failed or is incomplete"));
+      elsif Has_SPARK and then Any_GPR'Length > 0 then
          declare
             Project_File : constant String :=
               Project_Tools.Files.Join
                 (To_String (Execution_Root), Relative
                    (Root, (if GPR'Length > 0 then GPR else To_String (Any_GPR (Any_GPR'First)))));
          begin
-            Proof_Run := Execute
-              ("gnatprove", To_String (Execution_Root), Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire),
-               Args ([Project_Tools.Processes.Argument ("exec"),
-               Project_Tools.Processes.Argument ("--"), Project_Tools.Processes.Argument ("gnatprove"),
-               Project_Tools.Processes.Argument ("-P"), Project_Tools.Processes.Argument (Project_File),
-               Project_Tools.Processes.Argument ("--mode=prove"),
-               Project_Tools.Processes.Argument ("--level=2")]));
+            Proof_Run := Prove (Project_File);
             Add (Tool_Result (PRF_01, Proof_Run, "declared SPARK units proved", "SPARK proof failed or is incomplete"));
          end;
       else

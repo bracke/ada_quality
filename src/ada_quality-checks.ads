@@ -1,5 +1,6 @@
 with Ada_Quality.Policy;
 with Ada_Quality.Types;
+with Project_Tools.Files;
 
 --  Native and external quality measurements for one isolated project assessment.
 package Ada_Quality.Checks is
@@ -61,6 +62,24 @@ package Ada_Quality.Checks is
    --  Hash source state and conventional generated artifact directories.
    --  @param Root Canonical project root.
    --  @return Stable source and artifact fingerprint for determinism comparisons.
+
+   function Test_Project_File (Root : String) return String;
+   --  Locate the project file of a project's AUnit tests crate from Root/tests/alire.toml.
+   --  @param Root Canonical project root.
+   --  @return The manifest's first existing `project-files` entry, or Root/tests/`<name>.gpr` for the tests crate's
+   --  `name`; an empty string when the tests crate has no manifest.
+
+   function Test_Suite_Executable (Root : String) return String;
+   --  Locate the AUnit suite executable of a project's tests crate from Root/tests/alire.toml.
+   --  @param Root Canonical project root.
+   --  @return Root/tests/bin/ followed by the manifest's first `executables` entry, or by the tests crate's `name`;
+   --  an empty string when the tests crate has no manifest.
+
+   function Dedicated_Proof_Projects (Root : String) return Project_Tools.Files.Path_List;
+   --  List the dedicated proof projects of a project: `spark*.gpr` files directly in Root, which name only the SPARK
+   --  units to prove. PRF-01 proves these instead of the main project when there are any.
+   --  @param Root Canonical project root.
+   --  @return Project file paths in name order; empty when the project has no dedicated proof project.
 
    function Declares_SPARK (Root : String) return Boolean;
    --  Determine whether any project source declares `SPARK_Mode` outside comments and strings.

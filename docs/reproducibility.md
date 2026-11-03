@@ -7,4 +7,7 @@ and requires both executions to have equal normalized output and equal project-s
 lines whose normalized text begins with an elapsed-time, duration, timestamp, or `time:` presentation label are
 omitted from output comparison; assertions that merely mention those words remain exact. The state fingerprint
 combines source files with conventional `bin`, `obj`, coverage, library, and proof artifact trees, so runtime
-artifact changes are visible. JSON member order is deterministic.
+artifact changes are visible. Artifact files are hashed as a stream, so large executables count only toward the
+1 GiB aggregate fingerprint limit; source files, which are read whole, are also limited to 64 MiB each. When the
+artifacts cannot be fingerprinted within those limits, TST-04 is blocked with the reason and the assessment
+continues. JSON member order is deterministic.

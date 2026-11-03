@@ -755,6 +755,56 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/spark.adc", "pragma SPARK_Mode (On);" & ASCII.LF);
                Assert (Ada_Quality.Checks.Declares_SPARK (Root),
                  "project configuration pragmas make SPARK proof applicable");
+               Assert (Ada_Quality.Checks.Test_Project_File (Root) = "" and then
+                 Ada_Quality.Checks.Test_Suite_Executable (Root) = "",
+                 "a project without a tests crate has no test suite");
+               Ada.Directories.Create_Path (Root & "/tests");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/tests/alire.toml",
+                  "name = ""example_tests""" & ASCII.LF &
+                  "executables = [""example_suite"", ""example_tool""]  # the suite comes first" & ASCII.LF);
+               Assert (Ada_Quality.Checks.Test_Project_File (Root) = Root & "/tests/example_tests.gpr",
+                 "the tests project defaults to the tests crate's name");
+               Assert (Ada_Quality.Checks.Test_Suite_Executable (Root) = Root & "/tests/bin/example_suite",
+                 "the suite is the tests crate's first executable");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/tests/suite.gpr", "project Suite is end Suite;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/tests/alire.toml",
+                  "name = ""example_tests""" & ASCII.LF & "project-files = [""suite.gpr""]" & ASCII.LF);
+               Assert (Ada_Quality.Checks.Test_Project_File (Root) = Root & "/tests/suite.gpr",
+                 "a listed project file names the tests project");
+               Assert (Ada_Quality.Checks.Test_Suite_Executable (Root) = Root & "/tests/bin/example_tests",
+                 "without executables the suite is named after the tests crate");
+               Assert (Ada_Quality.Checks.Dedicated_Proof_Projects (Root)'Length = 0,
+                 "a project without spark*.gpr files proves its main project");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/spark_b.gpr", "project Spark_B is end Spark_B;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/spark_a.gpr", "project Spark_A is end Spark_A;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/example.gpr", "project Example is end Example;" & ASCII.LF);
+               declare
+                  Proofs : constant Project_Tools.Files.Path_List := Ada_Quality.Checks.Dedicated_Proof_Projects (Root);
+               begin
+                  Assert (Proofs'Length = 2 and then
+                    Ada.Strings.Unbounded.To_String (Proofs (Proofs'First)) = Root & "/spark_a.gpr" and then
+                    Ada.Strings.Unbounded.To_String (Proofs (Proofs'Last)) = Root & "/spark_b.gpr",
+                    "dedicated proof projects are found in name order");
+               end;
+               Ada.Directories.Create_Path (Root & "/bin");
+               declare
+                  Chunk : constant String (1 .. 1_024 * 1_024) := [others => 'x'];
+                  Large : Ada.Text_IO.File_Type;
+               begin
+                  Ada.Text_IO.Create (Large, Ada.Text_IO.Out_File, Root & "/bin/large");
+                  for Megabyte in 1 .. 65 loop
+                     Ada.Text_IO.Put (Large, Chunk);
+                  end loop;
+                  Ada.Text_IO.Close (Large);
+               end;
+               Assert (Ada_Quality.Checks.Project_State_Fingerprint (Root)'Length = 16 + 1 + 16,
+                 "artifacts larger than the source-file limit are hashed as a stream");
                Project_Tools.Files.Delete_Tree (Root);
             end;
 
