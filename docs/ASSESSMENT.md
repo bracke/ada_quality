@@ -17,12 +17,14 @@ and its recorded source fingerprint matches the assessment. Zero eligible lines 
 overflow at `Natural'Last`.
 
 GNATdoc writes to a dedicated temporary output directory that is removed after the check, so documentation generation
-does not alter the project source tree. These conservative outcomes are part of the contract: unsupported evidence
-cannot silently become compliance.
+does not alter the project source tree. DOC-01 counts only GNATdoc's undocumented-entity diagnostics while DOC-02
+enforces the complete warning policy. Truncated diagnostic output blocks both. These conservative outcomes are part
+of the contract: unsupported evidence cannot silently become compliance.
 
 Finding fingerprints combine indicator, rule, relative semantic context, and message. Persisted assessments retain
-policy and source fingerprints for compatibility checks. The `regressions` command compares the two newest runs per
-project and reports indicators whose state changed away from pass.
+policy and source fingerprints for compatibility checks. The `regressions` command selects the newest compatible
+baseline, compares indicator state and metric direction, and reports introduced or reintroduced stable findings even
+when their enclosing indicator remains in violation.
 
 When policy requires a clean worktree, REL-04 runs Git status before and after the tools and also compares source
 fingerprints. Missing repository evidence blocks; dirty or modified source violates.

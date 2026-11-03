@@ -468,9 +468,70 @@ begin
          Allow_Two => True);
       end Exercise_Error_Paths;
 
+      procedure Exercise_Batch_Continuation is
+         Batch_Root : constant String :=
+           Ada_Quality.Temporary_Directories.Child (Scratch, "batch-projects");
+
+         procedure Create_Project (Number : Positive; Failing : Boolean := False) is
+            Directory : constant String := Project_Tools.Files.Join
+              (Batch_Root, "project-" & Ada.Strings.Fixed.Trim (Positive'Image (Number), Ada.Strings.Both));
+            Manifest : Unbounded_String := To_Unbounded_String
+              ("name = ""batch_" & Ada.Strings.Fixed.Trim (Positive'Image (Number), Ada.Strings.Both) &
+               """" & ASCII.LF & "version = ""0.1.0""" & ASCII.LF);
+         begin
+            Ada.Directories.Create_Path (Directory);
+            if Failing then
+               Append
+                 (Manifest,
+                  "[[pins]]" & ASCII.LF & "outside = { path = ""../../../etc"" }" & ASCII.LF);
+            end if;
+            Project_Tools.Files.Write_Text_File
+              (Project_Tools.Files.Join (Directory, "alire.toml"), To_String (Manifest));
+            Run_CLI
+              ("batch project add" & Positive'Image (Number),
+               Project_Tools.Processes.Arguments
+                 ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("add"),
+                   Project_Tools.Processes.Argument (Directory), Project_Tools.Processes.Argument ("--database"),
+                   Project_Tools.Processes.Argument (DB_Path)]));
+         end Create_Project;
+      begin
+         Cleanup_Database;
+         Ada.Directories.Create_Path (Batch_Root);
+         Run_CLI
+           ("batch database init",
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+                Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("init")]));
+         Create_Project (1);
+         Create_Project (2, Failing => True);
+         Create_Project (3);
+         Run_CLI
+           ("three-project assessment",
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
+                Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+                Project_Tools.Processes.Argument ("--policy"),
+                Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
+                Project_Tools.Processes.Argument ("--no-color")]),
+            Allow_Three => True);
+         Run_CLI
+           ("interrupted middle project",
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
+                Project_Tools.Processes.Argument (DB_Path)]),
+            Expected_Text => "project 2 interrupted");
+         Run_CLI
+           ("completed final project",
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
+                Project_Tools.Processes.Argument (DB_Path)]),
+            Expected_Text => "project 3 completed");
+      end Exercise_Batch_Continuation;
+
    begin
       Exercise_Happy_Path;
       Exercise_Error_Paths;
+      Exercise_Batch_Continuation;
       Cleanup_Database;
    exception
       when Program_Error =>

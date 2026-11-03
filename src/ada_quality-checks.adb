@@ -13,7 +13,6 @@ with Project_Tools.Ada_Source;
 with Project_Tools.Release_Checks;
 with Project_Tools.TOML;
 with Regexp;
-with Ada_Quality.Execution;
 with Ada_Quality.Evaluation;
 with Ada_Quality.Tools;
 with Ada_Quality.Workspaces;
@@ -95,12 +94,14 @@ package body Ada_Quality.Checks is
      (Pattern.Status = Regexp.Compile_Ok and then
       Regexp.Find_First (Pattern.Expression, Text).Status = Regexp.Match_Ok);
 
-   function Occurrences (Text, Pattern : String) return Natural is
-      Cursor : Natural := Text'First;
-      Found  : Natural;
-      Count  : Natural := 0;
+   function Documentation_Warning_Count (Output : String) return Natural is
+      Text    : constant String := Lower (Output);
+      Pattern : constant String := " is not documented";
+      Cursor  : Natural := Text'First;
+      Found   : Natural;
+      Count   : Natural := 0;
    begin
-      if Text'Length = 0 or else Pattern'Length = 0 then return 0; end if;
+      if Text'Length = 0 then return 0; end if;
       loop
          Found := Ada.Strings.Fixed.Index (Text, Pattern, From => Cursor);
          exit when Found = 0;
@@ -109,7 +110,7 @@ package body Ada_Quality.Checks is
          exit when Cursor > Text'Last;
       end loop;
       return Count;
-   end Occurrences;
+   end Documentation_Warning_Count;
 
    function Valid_Manifest (Text : String) return Boolean is
       Name : constant Project_Tools.TOML.String_Parse_Result :=
@@ -1034,6 +1035,28 @@ package body Ada_Quality.Checks is
       end case;
    end Tool_Result;
 
+   function Inspected_Output_Result
+     (Indicator       : Indicator_Id;
+      Run             : Ada_Quality.Execution.Run_Result;
+      Requirement_Met : Boolean;
+      Success          : String;
+      Violation        : String) return Indicator_Result
+   is
+      Evidence : constant String := To_String (Run.Command) & " exit=" & Integer'Image (Run.Exit_Code) &
+        (if Run.Truncated then " output-truncated" else "");
+   begin
+      if Run.Status = Ada_Quality.Execution.Completed and then Run.Exit_Code = 0 and then Run.Truncated then
+         return Blocked_Result
+           (Indicator, "tool diagnostics were truncated before the requirement could be evaluated", Evidence);
+      elsif Run.Status /= Ada_Quality.Execution.Completed or else Run.Exit_Code /= 0 then
+         return Tool_Result (Indicator, Run, Success, Violation);
+      elsif Requirement_Met then
+         return Passed (Indicator, Success, Evidence);
+      else
+         return Violated (Indicator, Violation, Evidence);
+      end if;
+   end Inspected_Output_Result;
+
    function Run_Tool
      (Root : String;
       Name : String;
@@ -1337,15 +1360,10 @@ package body Ada_Quality.Checks is
          Add (Tool_Result (BLD_01, Build_Run, "project builds", "project build failed"));
          Add (Tool_Result (BLD_02, Validation_Run, "validation build passes", "validation build failed"));
          Add (Tool_Result (BLD_03, Warning_Run, "compiler warnings gate passes", "compiler warnings gate failed"));
-         if Toolchain_Run.Status = Ada_Quality.Execution.Completed and then Toolchain_Run.Exit_Code = 0 and then
-           Contains (To_String (Toolchain_Run.Output), "GNAT")
-         then
-            Add (Passed (BLD_04, "Alire GNAT toolchain identified", To_String (Toolchain_Run.Command)));
-         elsif Toolchain_Run.Status = Ada_Quality.Execution.Completed and then Toolchain_Run.Exit_Code = 0 then
-            Add (Blocked_Result (BLD_04, "toolchain output did not identify GNAT", To_String (Toolchain_Run.Command)));
-         else
-            Add (Tool_Result (BLD_04, Toolchain_Run, "Alire toolchain available", "toolchain query failed"));
-         end if;
+         Add
+           (Inspected_Output_Result
+              (BLD_04, Toolchain_Run, Contains (To_String (Toolchain_Run.Output), "GNAT"),
+               "Alire GNAT toolchain identified", "toolchain output did not identify GNAT"));
       else
          Add (Blocked_Result (BLD_01, "build prerequisites unavailable", "requires STR-01 and STR-02"));
          Add (Blocked_Result (BLD_02, "build prerequisites unavailable", "requires BLD-01"));
@@ -1415,6 +1433,11 @@ package body Ada_Quality.Checks is
            Metrics.Test_Registrations));
          if Length (Artifact_Error) > 0 then
             Add (Blocked_Result (TST_04, "project artifacts could not be fingerprinted", To_String (Artifact_Error)));
+         elsif Test_Run_1.Truncated or else Test_Run_2.Truncated then
+            Add
+              (Blocked_Result
+                 (TST_04, "test output was truncated before determinism could be established",
+                  "both complete normalized outputs are required"));
          else
             Add (Present (Test_Run_1.Status = Ada_Quality.Execution.Completed and then Test_Run_1.Exit_Code = 0 and then
               Test_Run_2.Status = Ada_Quality.Execution.Completed and then Test_Run_2.Exit_Code = 0 and then
@@ -1541,30 +1564,33 @@ package body Ada_Quality.Checks is
                Project_Tools.Processes.Argument ("--warnings")]));
             declare
                Warning_Count : constant Natural :=
-                 Occurrences (Lower (To_String (Doc_Run.Output)), "warning:");
+                 Documentation_Warning_Count (To_String (Doc_Run.Output));
             begin
                if Doc_Run.Status /= Ada_Quality.Execution.Completed or else Doc_Run.Exit_Code /= 0 then
-                  Add (Blocked_Result
-                    (DOC_01, "public declaration documentation could not be evaluated",
-                     To_String (Doc_Run.Command)));
+                  Add
+                    (Blocked_Result
+                       (DOC_01, "public declaration documentation could not be evaluated",
+                        To_String (Doc_Run.Command)));
+               elsif Doc_Run.Truncated then
+                  Add
+                    (Blocked_Result
+                       (DOC_01, "GNATdoc diagnostics were truncated before documentation completeness was known",
+                        To_String (Doc_Run.Command) & " output-truncated"));
                elsif Metrics.Spec_Count = 0 then
                   Add (Violated (DOC_01, "no public specifications were available for documentation audit", Root));
                else
-                  Add (Integer_Result
-                    (Warning_Count = 0, DOC_01,
-                     "every public declaration passes the GNATdoc documentation audit",
-                     "GNATdoc reported undocumented or malformed public declarations",
-                     Natural'Image (Warning_Count) & " documentation warnings", Warning_Count));
+                  Add
+                    (Integer_Result
+                       (Warning_Count = 0, DOC_01,
+                        "every public declaration passes the GNATdoc documentation audit",
+                        "GNATdoc reported undocumented public declarations",
+                        Natural'Image (Warning_Count) & " undocumented declarations", Warning_Count));
                end if;
             end;
-            if Doc_Run.Status = Ada_Quality.Execution.Completed and then Doc_Run.Exit_Code = 0 and then
-              Contains (Lower (To_String (Doc_Run.Output)), "warning:") then
-               Add (Violated (DOC_02, "GNATdoc reported documentation warnings", To_String (Doc_Run.Command)));
-            else
-               Add
-                 (Tool_Result
-                    (DOC_02, Doc_Run, "GNATdoc generation passes without warnings", "GNATdoc generation failed"));
-            end if;
+            Add
+              (Inspected_Output_Result
+                 (DOC_02, Doc_Run, not Contains (Lower (To_String (Doc_Run.Output)), "warning:"),
+                  "GNATdoc generation passes without warnings", "GNATdoc reported documentation warnings"));
             if Project_Tools.Files.Exists (Output_Dir) then
                Project_Tools.Files.Delete_Tree (Output_Dir);
             end if;
@@ -1701,6 +1727,9 @@ package body Ada_Quality.Checks is
             then
                Add (Blocked_Result (REL_04, "clean worktree evidence unavailable",
                  "git status must succeed before and after assessment"));
+            elsif Git_Before.Truncated or else Git_After.Truncated then
+               Add (Blocked_Result (REL_04, "Git status output was truncated",
+                 "complete status output is required before and after assessment"));
             elsif Length (Git_Before.Output) > 0 or else Length (Git_After.Output) > 0 then
                Add (Violated (REL_04, "Git worktree is not clean",
                  "git status reported tracked or untracked changes"));

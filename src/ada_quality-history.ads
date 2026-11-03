@@ -19,13 +19,15 @@ package Ada_Quality.History is
 
    type Regression_Kind is
      (New_Violation, Worsened_Metric, Increased_Severity, Failed_Gate, Lost_Evidence,
-      Policy_Induced_Change);
+      Introduced_Finding, Reintroduced_Finding, Policy_Induced_Change);
    --  Quality regression classification.
    --  @enum New_Violation A formerly passing nongate requirement now violates policy.
    --  @enum Worsened_Metric A comparable numeric metric moved in the adverse direction.
    --  @enum Increased_Severity A stable finding has a higher severity.
    --  @enum Failed_Gate A formerly passing release gate now violates policy.
    --  @enum Lost_Evidence A formerly evidenced requirement is now blocked or unknown.
+   --  @enum Introduced_Finding A stable finding identity is absent from all comparable earlier evidence.
+   --  @enum Reintroduced_Finding A finding absent from the baseline returns from older compatible evidence.
    --  @enum Policy_Induced_Change A state changed under a different policy fingerprint.
 
    type Regression is record
@@ -94,7 +96,9 @@ package Ada_Quality.History is
      (Baseline, Current : Ada_Quality.Storage.History_Item;
       Baseline_Results, Current_Results : Ada_Quality.Storage.Detail_Vectors.Vector;
       Baseline_Measurements, Current_Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector)
+      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Older_Findings : Ada_Quality.Storage.Detail_Vectors.Vector :=
+        Ada_Quality.Storage.Detail_Vectors.Empty_Vector)
       return Regression_Vectors.Vector;
    --  Compare compatible result, measurement, and finding detail rows.
    --  @param Baseline Earlier assessment metadata.
@@ -105,6 +109,7 @@ package Ada_Quality.History is
    --  @param Current_Measurements Later typed measurements.
    --  @param Baseline_Findings Earlier finding rows.
    --  @param Current_Findings Later finding rows.
+   --  @param Older_Findings Finding rows from compatible assessments older than Baseline.
    --  @return Deterministically ordered regression collection.
 
    function Metric_Trend

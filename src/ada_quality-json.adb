@@ -116,6 +116,21 @@ package body Ada_Quality.JSON is
       procedure Append_Project_Regressions (P : Ada_Quality.Storage.Project_Info) is
          Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
            Ada_Quality.Storage.History (Store, P.Id);
+
+         function Findings_Before
+           (Baseline, Current : Ada_Quality.Storage.History_Item)
+            return Ada_Quality.Storage.Detail_Vectors.Vector
+         is
+            Result : Ada_Quality.Storage.Detail_Vectors.Vector;
+         begin
+            for Run of Runs loop
+               exit when Run.Id = Baseline.Id;
+               if Ada_Quality.History.Compatible (Run, Current) then
+                  Result.Append_Vector (Ada_Quality.Storage.Findings (Store, Run.Id));
+               end if;
+            end loop;
+            return Result;
+         end Findings_Before;
       begin
          if Runs.Length < 2 then return; end if;
          declare
@@ -142,7 +157,8 @@ package body Ada_Quality.JSON is
                     Ada_Quality.Storage.Measurements (Store, Baseline.Id),
                     Ada_Quality.Storage.Measurements (Store, Current.Id),
                     Ada_Quality.Storage.Findings (Store, Baseline.Id),
-                    Ada_Quality.Storage.Findings (Store, Current.Id));
+                    Ada_Quality.Storage.Findings (Store, Current.Id),
+                    Findings_Before (Baseline, Current));
             begin
                for Change of Changes loop
                   declare

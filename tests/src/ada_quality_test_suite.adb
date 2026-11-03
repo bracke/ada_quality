@@ -521,7 +521,7 @@ package body Ada_Quality_Test_Suite is
                    (Directory => Ada.Directories.Current_Directory,
                     Program => "printf",
                     Arguments => Project_Tools.Processes.Arguments
-                      ([Project_Tools.Processes.Argument ("0123456789")]),
+                      ([Project_Tools.Processes.Argument ("0123456789warning: late diagnostic")]),
                     Timeout_Seconds => 2,
                     Maximum_Bytes => 5);
                Flood : constant Ada_Quality.Execution.Run_Result :=
@@ -578,6 +578,25 @@ package body Ada_Quality_Test_Suite is
                Assert (Loud.Status = Ada_Quality.Execution.Completed and then Loud.Truncated,
                  "captured process output is bounded");
                Assert (Length (Loud.Output) = 5, "bounded output has the configured maximum length");
+               declare
+                  Incomplete_Diagnostics : constant Indicator_Result :=
+                    Ada_Quality.Checks.Inspected_Output_Result
+                      (DOC_02, Loud,
+                       Ada.Strings.Fixed.Index
+                         (Ada.Characters.Handling.To_Lower (To_String (Loud.Output)), "warning:") = 0,
+                       "documentation has no warnings", "documentation contains warnings");
+               begin
+                  Assert
+                    (Incomplete_Diagnostics.Execution = Blocked and then
+                     Incomplete_Diagnostics.Compliance = Unknown,
+                     "a diagnostic warning beyond the capture limit cannot produce a passing DOC-02 result");
+                  Assert
+                    (Ada_Quality.Checks.Documentation_Warning_Count
+                       ("warning: output directory already exists") = 0 and then
+                     Ada_Quality.Checks.Documentation_Warning_Count
+                       ("sample.ads:2:14: warning: entity Undocumented is not documented") = 1,
+                     "DOC-01 classifies undocumented-entity diagnostics independently of other GNATdoc warnings");
+               end;
                Assert (Flood.Status = Ada_Quality.Execution.Completed and then Flood.Truncated,
                  "output larger than the internal process buffer completes with bounded capture");
                Assert (Length (Flood.Output) = 5, "large streamed output retains only the configured byte limit");
@@ -1608,6 +1627,39 @@ package body Ada_Quality_Test_Suite is
                  (Baseline, Current, Empty, Empty, Empty, Empty, Older, Renamed);
                Assert (Has_Kind (Ada_Quality.History.Increased_Severity),
                  "severity increases retain identity across a renamed path");
+               declare
+                  Baseline_Set, Current_Set, Historical_Set : Ada_Quality.Storage.Detail_Vectors.Vector;
+                  Stable_Key : constant Ada.Strings.Unbounded.Unbounded_String :=
+                    To_Unbounded_String ("SRC-04:source-hygiene:alpha.adb:existing");
+                  Added_Key : constant Ada.Strings.Unbounded.Unbounded_String :=
+                    To_Unbounded_String ("SRC-04:source-hygiene:beta.adb:new");
+               begin
+                  Baseline_Set.Append
+                    (Ada_Quality.Storage.Detail_Info'
+                       (Id => 1, Run_Id => 1, Kind => Stable_Key, State => To_Unbounded_String ("MEDIUM"),
+                        Summary => To_Unbounded_String ("existing finding")));
+                  Current_Set.Append
+                    (Ada_Quality.Storage.Detail_Info'
+                       (Id => 2, Run_Id => 2, Kind => Stable_Key, State => To_Unbounded_String ("MEDIUM"),
+                        Summary => To_Unbounded_String ("existing finding")));
+                  Current_Set.Append
+                    (Ada_Quality.Storage.Detail_Info'
+                       (Id => 3, Run_Id => 2, Kind => Added_Key, State => To_Unbounded_String ("MEDIUM"),
+                        Summary => To_Unbounded_String ("new finding")));
+                  Changes := Ada_Quality.History.Compare
+                    (Baseline, Current, Empty, Empty, Empty, Empty, Baseline_Set, Current_Set);
+                  Assert (Has_Kind (Ada_Quality.History.Introduced_Finding),
+                    "a new finding is a regression while its indicator remains in violation");
+                  Historical_Set.Append
+                    (Ada_Quality.Storage.Detail_Info'
+                       (Id => 4, Run_Id => 1, Kind => Added_Key, State => To_Unbounded_String ("MEDIUM"),
+                        Summary => To_Unbounded_String ("older finding")));
+                  Changes := Ada_Quality.History.Compare
+                    (Baseline, Current, Empty, Empty, Empty, Empty, Baseline_Set, Current_Set, Historical_Set);
+                  Assert (Has_Kind (Ada_Quality.History.Reintroduced_Finding) and then
+                    not Has_Kind (Ada_Quality.History.Introduced_Finding),
+                    "a returning finding is distinguished from a genuinely new finding");
+               end;
                Assert
                  (Ada_Quality.History.Classify_Finding
                     (Fingerprint, Older, Older, Empty, True) = Ada_Quality.History.Persistent,

@@ -1,6 +1,6 @@
 # Verification record
 
-Verified against the local workspace on 2026-11-01:
+Verification procedure current on 2026-11-03:
 
 - Alire 2.1.0 selects GNAT 15.2.1.
 - The root project builds with Ada 2022 and 120-column checking.
@@ -11,7 +11,9 @@ Verified against the local workspace on 2026-11-01:
 - The AUnit child crate contains 21 test cases covering the registry/tool graph, coverage boundaries, status and
   evaluator invariants, policy, UTF-8 JSON/schemas, persistent storage/migrations/faults, bounded hostile execution,
   SPARK applicability, native analysis, isolated workspaces, link safety, history/regressions, and stress paths.
-- Instrumented production coverage is 3,702/4,113 executable lines (90.00%).
+- Exact source-bound production coverage counts and fingerprints are published in
+  [`coverage/gcov-summary.txt`](../coverage/gcov-summary.txt) and must meet the 90% minimum. CI regenerates the
+  artifact and rejects any difference, so this record does not duplicate revision-specific totals.
 
 The verification commands are:
 

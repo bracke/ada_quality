@@ -285,12 +285,43 @@ package body Ada_Quality.CLI is
               (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
 
             procedure Check_Project (P : Ada_Quality.Storage.Project_Info) is
-               Run_Id : constant Positive :=
-                 Ada_Quality.Storage.Start_Assessment
-                   (Store, P.Id, Ada_Quality.Checks.Source_Fingerprint (To_String (P.Path)),
-                    Ada_Quality.Policy.Fingerprint (Loaded.Value));
-               Value  : Assessment := Ada_Quality.Checks.Assess (P.Id, To_String (P.Path), Loaded.Value);
+               Run_Id : Natural := 0;
+               Value  : Assessment;
+               Source : Ada.Strings.Unbounded.Unbounded_String;
+
+               procedure Interrupt_Project (Error : Ada.Exceptions.Exception_Occurrence) is
+                  Message : constant String :=
+                    (if Ada.Exceptions.Exception_Message (Error)'Length > 0
+                     then Ada.Exceptions.Exception_Message (Error)
+                     else Ada.Exceptions.Exception_Name (Error));
+                  Reason : constant String := "project assessment failed: " & Message;
+               begin
+                  Ada_Quality.Storage.Interrupt_Assessment (Store, Positive (Run_Id), Reason);
+                  Ada.Text_IO.Put_Line
+                    (Ada.Text_IO.Standard_Error,
+                     "project" & Positive'Image (P.Id) & " assessment interrupted: " & Message);
+                  Exit_Code := Natural'Max (Exit_Code, 3);
+               end Interrupt_Project;
             begin
+               begin
+                  Source := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (To_String (P.Path)));
+               exception
+                  when Error : others =>  --  AQ: project-local fingerprint boundary
+                     Run_Id := Ada_Quality.Storage.Start_Assessment
+                       (Store, P.Id, "source-fingerprint-unavailable",
+                        Ada_Quality.Policy.Fingerprint (Loaded.Value));
+                     Interrupt_Project (Error);
+                     return;
+               end;
+               Run_Id := Ada_Quality.Storage.Start_Assessment
+                 (Store, P.Id, To_String (Source), Ada_Quality.Policy.Fingerprint (Loaded.Value));
+               begin
+                  Value := Ada_Quality.Checks.Assess (P.Id, To_String (P.Path), Loaded.Value);
+               exception
+                  when Error : others =>  --  AQ: project-local assessment boundary
+                     Interrupt_Project (Error);
+                     return;
+               end;
                Value.Id := Run_Id;
                if Ada_Quality.Storage.Publish (Store, Value) /= Run_Id then
                   raise Ada_Quality.Storage.Storage_Error with "assessment publication changed its identifier";
@@ -298,11 +329,6 @@ package body Ada_Quality.CLI is
                Exit_Code := Natural'Max (Exit_Code, Result_Exit (Value));
                if JSON_Mode then Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
                else Print_Assessment (Value); end if;
-            exception
-               when others =>  --  AQ: audited exception boundary
-                  Ada_Quality.Storage.Interrupt_Assessment
-                    (Store, Run_Id, "assessment aborted by an unexpected controller exception");
-                  raise;
             end Check_Project;
          begin
             if not Loaded.Success then
@@ -432,6 +458,22 @@ package body Ada_Quality.CLI is
                end loop;
                raise Constraint_Error with "assessment baseline not found";
             end Find_Run;
+
+            function Findings_Before
+              (Runs    : Ada_Quality.Storage.History_Vectors.Vector;
+               Baseline, Current : Ada_Quality.Storage.History_Item)
+               return Ada_Quality.Storage.Detail_Vectors.Vector
+            is
+               Result : Ada_Quality.Storage.Detail_Vectors.Vector;
+            begin
+               for Run of Runs loop
+                  exit when Run.Id = Baseline.Id;
+                  if Ada_Quality.History.Compatible (Run, Current) then
+                     Result.Append_Vector (Ada_Quality.Storage.Findings (Store, Run.Id));
+                  end if;
+               end loop;
+               return Result;
+            end Findings_Before;
          begin
             for P of Ada_Quality.Storage.Projects (Store) loop
                Projects_Seen := Projects_Seen + 1;
@@ -475,7 +517,8 @@ package body Ada_Quality.CLI is
                                    Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
                                    Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
                                    Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
-                                   Ada_Quality.Storage.Findings (Store, Current_Run.Id));
+                                   Ada_Quality.Storage.Findings (Store, Current_Run.Id),
+                                   Findings_Before (Runs, Baseline_Run, Current_Run));
                            begin
                               if Changes.Is_Empty then
                                  Ada.Text_IO.Put_Line

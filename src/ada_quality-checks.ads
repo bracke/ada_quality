@@ -1,4 +1,5 @@
 with Ada_Quality.Policy;
+with Ada_Quality.Execution;
 with Ada_Quality.Types;
 with Project_Tools.Files;
 
@@ -93,4 +94,23 @@ package Ada_Quality.Checks is
    --  @param Root Canonical project root.
    --  @param Policy Validated source limits.
    --  @return Aggregate metrics and findings.
+
+   function Inspected_Output_Result
+     (Indicator       : Ada_Quality.Types.Indicator_Id;
+      Run             : Ada_Quality.Execution.Run_Result;
+      Requirement_Met : Boolean;
+      Success          : String;
+      Violation        : String) return Ada_Quality.Types.Indicator_Result;
+   --  Evaluate a tool result whose captured diagnostics are part of the requirement evidence.
+   --  @param Indicator Indicator being evaluated.
+   --  @param Run Completed external-tool execution and bounded captured output.
+   --  @param Requirement_Met Whether the complete captured diagnostics satisfy the requirement.
+   --  @param Success Summary used when the complete diagnostics pass.
+   --  @param Violation Summary used when complete diagnostics violate the requirement.
+   --  @return Blocked evidence when output is truncated, otherwise the normal tool/requirement result.
+
+   function Documentation_Warning_Count (Output : String) return Natural;
+   --  Count GNATdoc's declaration-level "entity ... is not documented" diagnostics.
+   --  @param Output Complete combined GNATdoc output.
+   --  @return Number of diagnostics specifically reporting undocumented entities.
 end Ada_Quality.Checks;

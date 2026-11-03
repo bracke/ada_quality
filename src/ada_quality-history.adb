@@ -186,7 +186,9 @@ package body Ada_Quality.History is
      (Baseline, Current : Ada_Quality.Storage.History_Item;
       Baseline_Results, Current_Results : Ada_Quality.Storage.Detail_Vectors.Vector;
       Baseline_Measurements, Current_Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector)
+      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Older_Findings : Ada_Quality.Storage.Detail_Vectors.Vector :=
+        Ada_Quality.Storage.Detail_Vectors.Empty_Vector)
       return Regression_Vectors.Vector
    is
       Result : Regression_Vectors.Vector;
@@ -254,10 +256,17 @@ package body Ada_Quality.History is
          Colon       : constant Natural := Ada.Strings.Fixed.Index (To_String (New_Finding.Kind), ":");
          Id          : Indicator_Id;
       begin
-         if Old_Found and then Severity_Rank (To_String (New_Finding.State)) >
-           Severity_Rank (To_String (Old_Finding.State)) and then Colon > 1 and then
-           Ada_Quality.Indicators.Parse (To_String (New_Finding.Kind) (1 .. Colon - 1), Id)
-         then
+         if Colon <= 1 then
+            return;
+         elsif not Ada_Quality.Indicators.Parse (To_String (New_Finding.Kind) (1 .. Colon - 1), Id) then
+            return;
+         elsif not Old_Found then
+            Add
+              (Id,
+               (if Has_Finding (Older_Findings, New_Finding.Kind)
+                then Reintroduced_Finding else Introduced_Finding),
+               "absent", To_String (New_Finding.Kind) & " " & To_String (New_Finding.Summary));
+         elsif Severity_Rank (To_String (New_Finding.State)) > Severity_Rank (To_String (Old_Finding.State)) then
             Add (Id, Increased_Severity, To_String (Old_Finding.State), To_String (New_Finding.State));
          end if;
       end Compare_Finding;
