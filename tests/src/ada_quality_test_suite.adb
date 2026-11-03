@@ -888,12 +888,26 @@ package body Ada_Quality_Test_Suite is
                  "broad handlers and test registrations use Ada-aware source scans");
                Assert (Metrics.Findings.Length >= 7, "native violations carry structured findings");
                Policy.Require_Clean_Worktree := False;
+               --  A SPARK unit with a dedicated proof project: PRF-01 proves that project, which cannot pass here.
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/src/proved.ads",
+                  "pragma SPARK_Mode (On);" & ASCII.LF & "package Proved is end Proved;" & ASCII.LF);
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/spark_example.gpr", "project Spark_Example is end Spark_Example;" & ASCII.LF);
                declare
                   Incomplete : constant Assessment := Ada_Quality.Checks.Assess (98_765, Root, Policy);
+                  Proof      : Indicator_Result;
                begin
                   Assert (Incomplete.Results.Length = 33 and then
                     Incomplete.Status = Assessment_Completed,
                     "an incomplete project still produces all 33 explicit pass, violation, or blocked results");
+                  for Item of Incomplete.Results loop
+                     if Item.Indicator = PRF_01 then
+                        Proof := Item;
+                     end if;
+                  end loop;
+                  Assert (Proof.Indicator = PRF_01 and then Proof.Applicable and then Proof.Compliance /= Pass,
+                    "a dedicated proof project is proved, and a failed proof cannot pass");
                end;
                Project_Tools.Files.Delete_Tree (Root);
             end;

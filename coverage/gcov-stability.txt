@@ -1,14 +1,14 @@
-covered=3702
-total=4113
+covered=3785
+total=4188
 complete=true
 inventory=gcov-production-lines-v2
 excluded_ada_quality_coverage=coverage-driver
-source_fingerprint=9a1863eb2163494b
+source_fingerprint=2fa646d6c867eeff
 toolchain_fingerprint=8aa63f395f967d43
 file_ada_quality_covered=0
 file_ada_quality_total=0
-file_ada_quality-checks_covered=971
-file_ada_quality-checks_total=1116
+file_ada_quality-checks_covered=1054
+file_ada_quality-checks_total=1191
 file_ada_quality-cli_covered=307
 file_ada_quality-cli_total=361
 file_ada_quality-coverage_covered=101
@@ -45,3 +45,4 @@ file_ada_quality_check_all_covered=40
 file_ada_quality_check_all_total=44
 file_ada_quality_cli_covered=4
 file_ada_quality_cli_total=4
+

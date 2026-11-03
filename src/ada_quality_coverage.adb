@@ -203,8 +203,9 @@ begin
                Project_Tools.Processes.Argument
                  ("--relocate-build-tree=" &
                   Ada_Quality.Temporary_Directories.Child (Scratch, "relocated")),
-               Project_Tools.Processes.Argument
-                 ("--root-dir=" & Ada.Directories.Containing_Directory (Root)),
+               --  Relocate from the file-system root so that every project, including dependencies outside the
+               --  workspace such as Alire's build cache, maps to its full path inside the scratch tree.
+               Project_Tools.Processes.Argument ("--root-dir=/"),
                Project_Tools.Processes.Argument ("-j0")]),
            Quiet => True);
    begin
