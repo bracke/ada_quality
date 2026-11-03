@@ -18,7 +18,7 @@ The required gates are:
 1. `alr -n build --validation -- -f`
 2. `alr -n test`
 3. `alr -n exec -- ./bin/coverage`
-4. `./bin/check_all`
+4. `alr -n exec -- ./bin/check_all`
 5. `git diff --exit-code`
 
 The final check proves that generated coverage and stability evidence already matches the reviewed source and selected

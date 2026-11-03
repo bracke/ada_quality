@@ -138,8 +138,9 @@ jobs:
         run: alr -n exec -- ./bin/coverage
 
       - name: Release structure gate
+        # Inside the Alire environment, like the coverage gate: the AUnit suite spawns gprbuild.
         working-directory: ada_quality
-        run: ./bin/check_all
+        run: alr -n exec -- ./bin/check_all
 
       - name: Verify tracked evidence is current
         working-directory: ada_quality

@@ -16,7 +16,7 @@ argument vectors, output is bounded, and the source fingerprint is checked after
 alr build
 (cd tests && alr build && alr exec -- ./bin/ada_quality_tests)
 alr exec -- ./bin/coverage
-./bin/check_all
+alr exec -- ./bin/check_all
 ```
 
 GNAT 15.2.1 is pinned through Alire. Local development and CI resolve the sibling crates into Alire's generated
