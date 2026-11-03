@@ -14,7 +14,7 @@ argument vectors, output is bounded, and the source fingerprint is checked after
 
 ```sh
 alr build
-(cd tests && alr build && ./bin/ada_quality_tests)
+(cd tests && alr build && alr exec -- ./bin/ada_quality_tests)
 alr exec -- ./bin/coverage
 ./bin/check_all
 ```

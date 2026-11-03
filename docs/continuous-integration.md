@@ -9,7 +9,9 @@ It asks Alire to resolve the six direct dependencies through those paths, then r
 building. The AUnit child crate receives its own generated lock containing AUnit and the same transitive overrides.
 Automatic re-resolution is disabled locally after each generated lock is complete, so restoring the two tracked
 manifests does not discard those links. `database` and `messages` resolve their transitive sibling pins to `cryptolib`
-and `i18n` respectively. If the AUnit action fails, CI prints Alire's otherwise private local-test log.
+and `i18n` respectively. The test action launches its binary through the child crate's `alr exec` environment, so
+the exact selected compiler and GPRbuild remain available to process-level fixtures. If the AUnit action fails, CI
+prints Alire's otherwise private local-test log.
 
 The required gates are:
 

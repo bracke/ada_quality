@@ -34,4 +34,4 @@ regexp = "*"
 
 [[actions]]
 type = "test"
-command = ["sh", "-c", "cd tests && alr build && ./bin/ada_quality_tests"]
+command = ["sh", "-c", "cd tests && alr build && alr exec -- ./bin/ada_quality_tests"]
