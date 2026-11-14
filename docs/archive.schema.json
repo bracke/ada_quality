@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.invalid/ada-quality/archive-v1.schema.json",
-  "title": "Ada Quality persistent archive v1",
+  "$id": "https://example.invalid/ada-quality/archive-v2.schema.json",
+  "title": "Ada Quality persistent archive v2",
   "type": "object",
   "required": [
     "schema_version",
@@ -12,10 +12,11 @@
     "findings",
     "executions",
     "events",
+    "comparisons",
     "regressions"
   ],
   "properties": {
-    "schema_version": { "const": 1 },
+    "schema_version": { "const": 2 },
     "projects": { "type": "array" },
     "assessments": { "type": "array" },
     "results": { "type": "array" },
@@ -23,6 +24,31 @@
     "findings": { "type": "array" },
     "executions": { "type": "array" },
     "events": { "type": "array" },
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project_id", "status", "current_id", "baseline_id", "policy_changed"],
+        "properties": {
+          "project_id": { "type": "integer", "minimum": 1 },
+          "status": {
+            "enum": [
+              "comparison-available",
+              "no-assessments",
+              "no-baseline",
+              "current-incomplete",
+              "no-completed-baseline",
+              "toolchain-changed",
+              "no-compatible-baseline"
+            ]
+          },
+          "current_id": { "type": "integer", "minimum": 0 },
+          "baseline_id": { "type": "integer", "minimum": 0 },
+          "policy_changed": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "regressions": {
       "type": "array",
       "items": {

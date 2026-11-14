@@ -1,3 +1,7 @@
 # JSON schemas
 
-`assessment.schema.json` constrains report identity, fingerprints, terminal state, exactly 33 results, measurements, findings, and executions. `archive.schema.json` requires all eight persisted logical collections plus derived regressions with project/baseline/current IDs. Both declare JSON Schema draft 2020-12 and disallow unknown top-level members.
+`assessment.schema.json` constrains a single report's identity, fingerprints, terminal state, exactly 33 results,
+measurements, findings, and executions. `assessment-batch.schema.json` defines the single-document result of
+`check --all --json`, including completed and interrupted project outcomes. Archive v2 requires all persisted logical
+collections, an explicit typed comparison-selection result for every project, and derived regressions with
+project/baseline/current IDs. The schemas declare JSON Schema draft 2020-12 and reject unknown top-level members.

@@ -159,4 +159,32 @@ package body Ada_Quality.Coverage is
       end loop;
       return False;
    end Has_Source_Record;
+
+   function Has_Complete_Source_Records
+     (Output, Notes : String; Unit : Production_Unit) return Boolean
+   is
+      function Complete (Source : Unbounded_String) return Boolean is
+         Path : constant String := To_String (Source);
+      begin
+         if Length (Source) = 0 then
+            return True;
+         end if;
+         declare
+            Header : constant String := "File '" & Path & "'";
+            Has_Note : constant Boolean :=
+              Ada.Strings.Fixed.Index (Notes, Path) > 0 or else
+              Ada.Strings.Fixed.Index (Notes, Ada.Directories.Simple_Name (Path)) > 0;
+         begin
+            if Has_Source_Record (Output, Path) then
+               return True;
+            elsif Ada.Strings.Fixed.Index (Output, Header) > 0 or else Has_Note then
+               return False;
+            else
+               return True;
+            end if;
+         end;
+      end Complete;
+   begin
+      return Notes'Length > 0 and then Complete (Unit.Body_Path) and then Complete (Unit.Spec_Path);
+   end Has_Complete_Source_Records;
 end Ada_Quality.Coverage;

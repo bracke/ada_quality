@@ -20,6 +20,8 @@ package Ada_Quality.Checks is
       Undocumented_Specs  : Natural := 0;
       Broad_Handlers      : Natural := 0;
       Maximum_Complexity  : Natural := 0;
+      Complexity_Violations : Natural := 0;
+      Review_Waivers      : Natural := 0;
       Secret_Matches      : Natural := 0;
       Unsafe_Processes    : Natural := 0;
       Test_Registrations  : Natural := 0;
@@ -39,10 +41,24 @@ package Ada_Quality.Checks is
    --  @field Undocumented_Specs Public specifications without package documentation.
    --  @field Broad_Handlers Broad exception handlers lacking an audited-boundary marker.
    --  @field Maximum_Complexity Highest measured subprogram decision complexity.
+   --  @field Complexity_Violations Over-limit subprogram maxima without a matching structured waiver.
+   --  @field Review_Waivers Valid structured SRC-03/SRC-06 waivers retained as findings.
    --  @field Secret_Matches Possible embedded credential assignments.
    --  @field Unsafe_Processes Possible shell-based process execution patterns.
    --  @field Test_Registrations Registered test routines found in test sources.
    --  @field Findings Structured source findings produced during traversal.
+
+   type Metadata_Evidence_Status is
+     (Metadata_Matches, Metadata_Mismatch, Metadata_Missing, Metadata_Unsupported);
+   --  Native release-metadata evidence classification.
+
+   type Proof_Applicability_Status is
+     (Proof_Not_Applicable, Proof_Blocked, Proof_Ready);
+   --  Applicability of proof execution after source and project-file discovery.
+
+   type Dependency_Evidence_Status is
+     (Dependency_Consistent, Dependency_Inconsistent, Dependency_Unavailable);
+   --  Consistency of declared direct dependencies and the solved Alire lock state.
 
    function Assess
      (Project_Id : Natural;
@@ -86,6 +102,21 @@ package Ada_Quality.Checks is
    --  Determine whether any project source declares `SPARK_Mode` outside comments and strings.
    --  @param Root Canonical project root.
    --  @return True when proof checks are applicable.
+
+   function Classify_Proof_Applicability
+     (SPARK_Declared, Project_Available : Boolean) return Proof_Applicability_Status;
+   --  Distinguish no proof obligation from an applicable obligation lacking a usable project file.
+
+   function License_Evidence
+     (Root, Manifest_Text : String) return Metadata_Evidence_Status;
+   --  Compare the Alire SPDX declaration with the repository LICENSE or LICENSE.md contents.
+
+   function Valid_Release_Manifest (Manifest_Text : String) return Boolean;
+   --  Validate the canonical Alire release-manifest fields used by REL-03.
+
+   function Dependency_Consistency
+     (Manifest_Text, Lock_Text : String) return Dependency_Evidence_Status;
+   --  Reconcile direct `[[depends-on]]` requirements with the solved Alire lock state.
 
    function Analyze_Source
      (Root   : String;

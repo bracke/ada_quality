@@ -8,7 +8,8 @@ shell patterns, release metadata, and source-tree artifacts. Source checks exclu
 `lib`, and `gnatprove` trees.
 
 External checks run Alire build and validation gates, query the selected toolchain, run a test action twice, execute
-the standard release checker, and run GNATprove for projects declaring `SPARK_Mode`. Proof uses `--mode=prove`; a
+the standard release checker, and run GNATprove for projects declaring `SPARK_Mode`. A SPARK declaration without a
+usable GPR is blocked rather than made inapplicable. Proof uses `--mode=prove`; a
 legality-only result is not accepted as proof discharge.
 
 Coverage is intentionally blocked unless a complete instrumented production executable-line inventory is available

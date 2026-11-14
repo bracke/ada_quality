@@ -58,6 +58,19 @@ package Ada_Quality.History is
      (Index_Type => Positive, Element_Type => Trend_Point);
    --  Ordered collection of trend points.
 
+   type Comparison_Status is
+     (Comparison_Available, No_Assessments, No_Baseline, Current_Incomplete,
+      No_Completed_Baseline, Toolchain_Changed, No_Compatible_Baseline);
+   --  Availability of a historical comparison.
+
+   type Comparison_Selection is record
+      Status         : Comparison_Status := No_Assessments;
+      Current_Id     : Natural := 0;
+      Baseline_Id    : Natural := 0;
+      Policy_Changed : Boolean := False;
+   end record;
+   --  One centralized baseline-selection decision shared by every renderer.
+
    function Compatible
      (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean;
    --  Test whether two completed assessments may be compared directly.
@@ -79,6 +92,12 @@ package Ada_Quality.History is
    --  @param Runs Ordered project history.
    --  @param Current_Id Assessment for which a baseline is required.
    --  @return Compatible assessment identity, or zero when none exists.
+
+   function Select_Comparison
+     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Comparison_Selection;
+   --  Select a baseline and preserve the reason when comparison is unavailable.
+   --  @param Runs Ordered history for one project.
+   --  @return Typed comparison decision for the latest assessment.
 
    function Classify_Finding
      (Fingerprint      : Unbounded_String;
@@ -131,4 +150,7 @@ package Ada_Quality.History is
    --  Return the stable external spelling of a regression classification.
    --  @param Value Regression value.
    --  @return Lowercase hyphenated image.
+
+   function Image (Value : Comparison_Status) return String;
+   --  Return the stable external spelling of a comparison-selection state.
 end Ada_Quality.History;

@@ -25,5 +25,9 @@ Version 3 records run timestamps and uses escaped, named fields for result and f
 newlines and source locations without changing the eight-table catalog. Migrated legacy rows remain readable and
 are explicitly distinguishable from lossless version-3 evidence.
 
+Measurement state records include the value kind, indicator-contract version, and measurement-method version. This
+is an evidence-format extension within schema 3 rather than a table-layout change; existing rows retain explicit
+legacy v1/v1 interpretation for trend compatibility.
+
 Opening a persistent database acquires the storage engine's process lock. `database check` verifies the open handle,
 the eight-table catalog, and schema metadata version.

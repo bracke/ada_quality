@@ -1,3 +1,4 @@
+with Ada.Containers;
 with Ada.Characters.Handling;
 with Ada.Strings.Fixed;
 with Ada_Quality.Indicators;
@@ -6,6 +7,7 @@ package body Ada_Quality.History is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Storage;
    use Ada_Quality.Types;
+   use type Ada.Containers.Count_Type;
 
    function Contains (Text, Pattern : String) return Boolean is
      (Ada.Strings.Fixed.Index (Text, Pattern) > 0);
@@ -55,26 +57,55 @@ package body Ada_Quality.History is
       return 0;
    end Baseline_Id;
 
-   function Semantic_Key (Key : Unbounded_String) return String is
-      Text   : constant String := To_String (Key);
-      First  : constant Natural := Ada.Strings.Fixed.Index (Text, ":");
-      Second : constant Natural :=
-        (if First = 0 then 0 else Ada.Strings.Fixed.Index (Text, ":", From => First + 1));
-      Third  : constant Natural :=
-        (if Second = 0 then 0 else Ada.Strings.Fixed.Index (Text, ":", From => Second + 1));
+   function Select_Comparison
+     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Comparison_Selection
+   is
+      Result : Comparison_Selection;
    begin
-      if Third = 0 then return Text; end if;
-      return Text (Text'First .. Second) & Text (Third .. Text'Last);
-   end Semantic_Key;
+      if Runs.Is_Empty then
+         return Result;
+      end if;
+      declare
+         Current : constant History_Item := Runs.Last_Element;
+      begin
+         Result.Current_Id := Current.Id;
+         if To_String (Current.Status) /= "completed" then
+            Result.Status := Current_Incomplete;
+         elsif Runs.Length < 2 then
+            Result.Status := No_Baseline;
+         else
+            Result.Baseline_Id := Baseline_Id (Runs, Current.Id);
+            if Result.Baseline_Id > 0 then
+               Result.Status := Comparison_Available;
+            else
+               declare
+                  Previous : constant History_Item := Runs (Runs.Last_Index - 1);
+               begin
+                  if Policy_Comparable (Previous, Current) then
+                     Result.Status := Comparison_Available;
+                     Result.Baseline_Id := Previous.Id;
+                     Result.Policy_Changed := True;
+                  elsif To_String (Previous.Status) /= "completed" then
+                     Result.Status := No_Completed_Baseline;
+                  elsif Previous.Toolchain_Fingerprint /= Current.Toolchain_Fingerprint then
+                     Result.Status := Toolchain_Changed;
+                  else
+                     Result.Status := No_Compatible_Baseline;
+                  end if;
+               end;
+            end if;
+         end if;
+      end;
+      return Result;
+   end Select_Comparison;
 
    function Has_Finding
      (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
       Key   : Unbounded_String) return Boolean
    is
-      Semantic : constant String := Semantic_Key (Key);
    begin
       for Item of Items loop
-         if Item.Kind = Key or else Semantic_Key (Item.Kind) = Semantic then return True; end if;
+         if Item.Kind = Key then return True; end if;
       end loop;
       return False;
    end Has_Finding;
@@ -116,10 +147,9 @@ package body Ada_Quality.History is
       Key   : Unbounded_String;
       Found : out Boolean) return Ada_Quality.Storage.Detail_Info
    is
-      Semantic : constant String := Semantic_Key (Key);
    begin
       for Item of Items loop
-         if Item.Kind = Key or else Semantic_Key (Item.Kind) = Semantic then
+         if Item.Kind = Key then
             Found := True;
             return Item;
          end if;
@@ -291,6 +321,83 @@ package body Ada_Quality.History is
       return Result;
    end Compare;
 
+   function Semantic_Identity (State : Unbounded_String) return Unbounded_String is
+      Text : constant String := To_String (State);
+      Indicator_Tag : constant String := ";indicator_version=";
+      Method_Tag    : constant String := ";method_version=";
+      Indicator_At  : constant Natural := Ada.Strings.Fixed.Index (Text, Indicator_Tag);
+      Method_At     : constant Natural := Ada.Strings.Fixed.Index (Text, Method_Tag);
+   begin
+      if Ada.Strings.Fixed.Index (Text, ";") = 0 then
+         return To_Unbounded_String (Text & Indicator_Tag & "1" & Method_Tag & "1");
+      elsif Indicator_At = 0 or else Method_At <= Indicator_At + Indicator_Tag'Length then
+         return Null_Unbounded_String;
+      end if;
+      declare
+         Indicator_Text : constant String := Text (Indicator_At + Indicator_Tag'Length .. Method_At - 1);
+         Method_Text : constant String := Text (Method_At + Method_Tag'Length .. Text'Last);
+         Indicator_Version : constant Positive := Positive'Value (Indicator_Text);
+         Method_Version : constant Positive := Positive'Value (Method_Text);
+         pragma Unreferenced (Indicator_Version, Method_Version);
+      begin
+         return State;
+      end;
+   exception
+      when Constraint_Error => return Null_Unbounded_String;
+   end Semantic_Identity;
+
+   function Latest_Completed
+     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Natural
+   is
+   begin
+      if Runs.Is_Empty then return 0; end if;
+      for Index in reverse Runs.First_Index .. Runs.Last_Index loop
+         if To_String (Runs (Index).Status) = "completed" then
+            return Index;
+         end if;
+      end loop;
+      return 0;
+   end Latest_Completed;
+
+   function Semantics_For
+     (Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Run_Id       : Positive;
+      Key          : Unbounded_String) return Unbounded_String
+   is
+   begin
+      for Item of Measurements loop
+         if Item.Run_Id = Run_Id and then Item.Kind = Key then
+            return Semantic_Identity (Item.State);
+         end if;
+      end loop;
+      return Null_Unbounded_String;
+   end Semantics_For;
+
+   procedure Append_Trend_Point
+     (Result       : in out Trend_Vectors.Vector;
+      Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Run           : History_Item;
+      Key, Reference_Semantics : Unbounded_String)
+   is
+   begin
+      for Item of Measurements loop
+         if Item.Run_Id = Run.Id and then Item.Kind = Key and then
+           Semantic_Identity (Item.State) = Reference_Semantics
+         then
+            declare
+               One : Detail_Vectors.Vector;
+               Found : Boolean;
+               Value : Long_Long_Integer;
+            begin
+               One.Append (Item);
+               Value := Number (One, Key, Found);
+               if Found then Result.Append (Trend_Point'(Run_Id => Run.Id, Value => Value)); end if;
+            end;
+            return;
+         end if;
+      end loop;
+   end Append_Trend_Point;
+
    function Metric_Trend
      (Runs         : Ada_Quality.Storage.History_Vectors.Vector;
       Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
@@ -298,29 +405,18 @@ package body Ada_Quality.History is
    is
       Result : Trend_Vectors.Vector;
       Key    : constant Unbounded_String := To_Unbounded_String (Image (Indicator));
+      Reference_Index : constant Natural := Latest_Completed (Runs);
    begin
-      if Runs.Is_Empty then return Result; end if;
+      if Reference_Index = 0 then return Result; end if;
       declare
-         Reference : constant History_Item := Runs.Last_Element;
+         Reference : constant History_Item := Runs (Reference_Index);
+         Reference_Semantics : constant Unbounded_String :=
+           Semantics_For (Measurements, Reference.Id, Key);
       begin
+         if Length (Reference_Semantics) = 0 then return Result; end if;
          for Run of Runs loop
             if Compatible (Run, Reference) then
-               for Item of Measurements loop
-                  if Item.Run_Id = Run.Id and then Item.Kind = Key then
-                     declare
-                        One : Detail_Vectors.Vector;
-                        Found : Boolean;
-                        Value : Long_Long_Integer;
-                     begin
-                        One.Append (Item);
-                        Value := Number (One, Key, Found);
-                        if Found then
-                           Result.Append (Trend_Point'(Run_Id => Run.Id, Value => Value));
-                        end if;
-                     end;
-                     exit;
-                  end if;
-               end loop;
+               Append_Trend_Point (Result, Measurements, Run, Key, Reference_Semantics);
             end if;
          end loop;
       end;
@@ -341,4 +437,7 @@ package body Ada_Quality.History is
 
    function Image (Value : Regression_Kind) return String is
      (Normalized (Regression_Kind'Image (Value)));
+
+   function Image (Value : Comparison_Status) return String is
+     (Normalized (Comparison_Status'Image (Value)));
 end Ada_Quality.History;

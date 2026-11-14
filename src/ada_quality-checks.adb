@@ -17,8 +17,8 @@ with Ada_Quality.Evaluation;
 with Ada_Quality.Tools;
 with Ada_Quality.Workspaces;
 
---  AQ: complexity-reviewed -- assessment orchestration is decomposed into indicator groups.
---  AQ: size-reviewed -- native analysis and external assessment remain one cohesive implementation boundary.
+--  AQ-WAIVER: SRC-03 target=canonical justification=lexical scanner helpers share one bounded source pass
+--  AQ-WAIVER: SRC-06 target=file justification=native and external checks share one evidence boundary
 package body Ada_Quality.Checks is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
@@ -42,6 +42,13 @@ package body Ada_Quality.Checks is
      (Index_Type => Positive, Element_Type => Ada.Strings.Unbounded.Unbounded_String);
    package Text_Sorting is new Text_Vectors.Generic_Sorting
      ("<" => Ada.Strings.Unbounded."<");
+
+   type Dependency_Entry is record
+      Name       : Ada.Strings.Unbounded.Unbounded_String;
+      Constraint : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
+   package Dependency_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Dependency_Entry);
 
    Skip_Names : constant Project_Tools.Files.Name_List :=
      [To_Unbounded_String (".git"), To_Unbounded_String (".alire"),
@@ -160,6 +167,33 @@ package body Ada_Quality.Checks is
       return Result;
    end Without_TOML_Comments;
 
+   function TOML_Structure (Text : String) return String is
+      Result    : String := Without_TOML_Comments (Text);
+      In_String : Boolean := False;
+      Quote     : Character := Character'Val (0);
+      Escaped   : Boolean := False;
+   begin
+      for J in Result'Range loop
+         if Result (J) = Ada.Characters.Latin_1.LF then
+            In_String := False;
+            Escaped := False;
+         elsif In_String then
+            declare
+               Current : constant Character := Result (J);
+            begin
+               Result (J) := ' ';
+               if Current = Quote and then not Escaped then In_String := False; end if;
+               Escaped := Current = '\' and then not Escaped;
+            end;
+         elsif Result (J) in ''' | '"' then
+            In_String := True;
+            Quote := Result (J);
+            Result (J) := ' ';
+         end if;
+      end loop;
+      return Result;
+   end TOML_Structure;
+
    function Has_Suffix (Text, Suffix : String) return Boolean;
 
    --  Return the string elements of the top-level array Key in an Alire manifest, or an empty vector when Key is
@@ -175,15 +209,21 @@ package body Ada_Quality.Checks is
          declare
             Stop : Natural := Ada.Strings.Fixed.Index (Clean, [ASCII.LF], From => Start);
             First : Natural := Start;
+            Equals_At : Natural;
          begin
             if Stop = 0 then Stop := Clean'Last + 1; end if;
             while First < Stop and then Clean (First) in ' ' | Character'Val (9) | ASCII.CR loop
                First := First + 1;
             end loop;
-            if Stop - First >= Key'Length and then
+            if First < Stop and then Clean (First) = '[' then
+               exit;
+            end if;
+            Equals_At := Ada.Strings.Fixed.Index (Clean, "=", From => First);
+            if Stop - First >= Key'Length and then Equals_At > First and then Equals_At < Stop and then
               Clean (First .. First + Key'Length - 1) = Key and then
-              (First + Key'Length = Stop or else
-               Clean (First + Key'Length) in ' ' | Character'Val (9) | '=')
+              (First + Key'Length = Equals_At or else
+               Ada.Strings.Fixed.Trim
+                 (Clean (First + Key'Length .. Equals_At - 1), Ada.Strings.Both)'Length = 0)
             then
                Key_At := First;
                exit;
@@ -196,9 +236,10 @@ package body Ada_Quality.Checks is
       declare
          Open_At : constant Natural := Ada.Strings.Fixed.Index
            (Clean, "[", From => Key_At + Key'Length);
+         Assignment_End : constant Natural := Ada.Strings.Fixed.Index (Clean, [ASCII.LF], From => Key_At);
          Position : Natural := Open_At + 1;
       begin
-         if Open_At = 0 then return Result; end if;
+         if Open_At = 0 or else (Assignment_End > 0 and then Open_At > Assignment_End) then return Result; end if;
          while Position <= Clean'Last loop
             exit when Clean (Position) = ']';
             if Clean (Position) in ''' | '"' then
@@ -224,6 +265,333 @@ package body Ada_Quality.Checks is
       end;
       return Result;
    end Manifest_Strings;
+
+   function Dependency_Consistency
+     (Manifest_Text, Lock_Text : String) return Dependency_Evidence_Status
+   is
+      Declared, Resolved : Dependency_Vectors.Vector;
+      Manifest_Valid : Boolean := True;
+      Lock_Valid     : Boolean := True;
+      Clean_Manifest : constant String := Without_TOML_Comments (Manifest_Text);
+      Clean_Lock     : constant String := Without_TOML_Comments (Lock_Text);
+      Manifest_Structure : constant String := TOML_Structure (Manifest_Text);
+      Lock_Structure     : constant String := TOML_Structure (Lock_Text);
+
+      function Section_End (Text : String; Start : Positive) return Natural is
+         Cursor : Natural := Ada.Strings.Fixed.Index (Text, [ASCII.LF], From => Start);
+      begin
+         if Cursor = 0 then return Text'Last; end if;
+         Cursor := Cursor + 1;
+         while Cursor <= Text'Last loop
+            declare
+               Stop : Natural := Ada.Strings.Fixed.Index (Text, [ASCII.LF], From => Cursor);
+               First : Natural := Cursor;
+            begin
+               if Stop = 0 then Stop := Text'Last + 1; end if;
+               while First < Stop and then Text (First) in ' ' | Character'Val (9) | ASCII.CR loop
+                  First := First + 1;
+               end loop;
+               if First < Stop and then Text (First) = '[' then return Cursor - 1; end if;
+               exit when Stop > Text'Last;
+               Cursor := Stop + 1;
+            end;
+         end loop;
+         return Text'Last;
+      end Section_End;
+
+      procedure Read_Manifest_Entry (Entry_Pos : Positive) is
+         Last  : constant Natural := Section_End (Clean_Manifest, Entry_Pos);
+         Cursor : Natural := Ada.Strings.Fixed.Index (Clean_Manifest, [ASCII.LF], From => Entry_Pos);
+      begin
+         if Cursor = 0 then Manifest_Valid := False; return; end if;
+         Cursor := Cursor + 1;
+         while Cursor <= Last loop
+            declare
+               Stop : Natural := Ada.Strings.Fixed.Index (Clean_Manifest, [ASCII.LF], From => Cursor);
+               Equals_At : Natural;
+            begin
+               if Stop = 0 or else Stop > Last + 1 then Stop := Last + 1; end if;
+               Equals_At := Ada.Strings.Fixed.Index (Clean_Manifest, "=", From => Cursor);
+               if Equals_At > Cursor and then Equals_At < Stop then
+                  declare
+                     Name : constant String := Ada.Strings.Fixed.Trim
+                       (Clean_Manifest (Cursor .. Equals_At - 1), Ada.Strings.Both);
+                     Parsed : constant Project_Tools.TOML.String_Parse_Result :=
+                       Project_Tools.TOML.Parse_String_After
+                         (Clean_Manifest (Cursor .. Stop - 1), Name, Cursor);
+                  begin
+                     if Name'Length = 0 or else Parsed.Status /= Project_Tools.TOML.Parsed_String or else
+                       Length (Parsed.Value) = 0
+                     then
+                        Manifest_Valid := False;
+                     else
+                        Declared.Append
+                          (Dependency_Entry'
+                             (To_Unbounded_String (Name), Parsed.Value));
+                     end if;
+                  end;
+               end if;
+               exit when Stop > Last;
+               Cursor := Stop + 1;
+            end;
+         end loop;
+      end Read_Manifest_Entry;
+
+      procedure Iterate_Manifest is new Project_Tools.TOML.Iterate_Section (Read_Manifest_Entry);
+
+      procedure Read_Lock_Entry (Entry_Pos : Positive) is
+         Last : constant Natural := Section_End (Clean_Lock, Entry_Pos);
+         Block : constant String := Clean_Lock (Entry_Pos .. Last);
+         Crate : constant Project_Tools.TOML.String_Parse_Result :=
+           Project_Tools.TOML.Parse_String_After (Block, "crate", Block'First);
+         Versions : constant Project_Tools.TOML.String_Parse_Result :=
+           Project_Tools.TOML.Parse_String_After (Block, "versions", Block'First);
+         Transitivity : constant Project_Tools.TOML.String_Parse_Result :=
+           Project_Tools.TOML.Parse_String_After (Block, "transitivity", Block'First);
+      begin
+         if Crate.Status /= Project_Tools.TOML.Parsed_String or else
+           Versions.Status /= Project_Tools.TOML.Parsed_String or else
+           Transitivity.Status /= Project_Tools.TOML.Parsed_String
+         then
+            Lock_Valid := False;
+         elsif To_String (Transitivity.Value) = "direct" then
+            Resolved.Append
+              (Dependency_Entry'(Crate.Value, Versions.Value));
+         end if;
+      end Read_Lock_Entry;
+
+      procedure Iterate_Lock is new Project_Tools.TOML.Iterate_Section (Read_Lock_Entry);
+
+      function Unique (Items : Dependency_Vectors.Vector) return Boolean is
+      begin
+         for Left in Items.First_Index .. Items.Last_Index loop
+            for Right in Left + 1 .. Items.Last_Index loop
+               if Items (Left).Name = Items (Right).Name then return False; end if;
+            end loop;
+         end loop;
+         return True;
+      end Unique;
+
+      function Equivalent return Boolean is
+      begin
+         for Requirement of Declared loop
+            if not (for some Solution of Resolved =>
+              Solution.Name = Requirement.Name and then Solution.Constraint = Requirement.Constraint)
+            then
+               return False;
+            end if;
+         end loop;
+         return True;
+      end Equivalent;
+   begin
+      if Manifest_Text'Length = 0 or else Lock_Text'Length = 0 then return Dependency_Unavailable; end if;
+      Iterate_Manifest (Manifest_Structure, "depends-on");
+      Iterate_Lock (Lock_Structure, "solution.state");
+      declare
+         use type Project_Tools.TOML.Boolean_Parse_Status;
+         Context_At : constant Natural := Ada.Strings.Fixed.Index (Lock_Structure, "[solution.context]");
+         Solved : Project_Tools.TOML.Boolean_Parse_Result;
+      begin
+         if Context_At = 0 then return Dependency_Unavailable; end if;
+         declare
+            Last : constant Natural := Section_End (Clean_Lock, Positive (Context_At));
+            Block : constant String := Clean_Lock (Context_At .. Last);
+         begin
+            Solved := Project_Tools.TOML.Parse_Boolean_After (Block, "solved", Block'First);
+         end;
+         if not Manifest_Valid or else not Lock_Valid or else
+           Solved.Status /= Project_Tools.TOML.Parsed_Boolean
+         then
+            return Dependency_Unavailable;
+         elsif not Solved.Value or else not Unique (Declared) or else not Unique (Resolved) or else not Equivalent then
+            return Dependency_Inconsistent;
+         else
+            return Dependency_Consistent;
+         end if;
+      end;
+   end Dependency_Consistency;
+
+   procedure Parse_SPDX
+     (Text : String;
+      Valid, Supported : out Boolean;
+      Licenses, Exceptions : out Text_Vectors.Vector)
+   is
+      Tokens  : Text_Vectors.Vector;
+      Current : Ada.Strings.Unbounded.Unbounded_String;
+      Position : Natural := 1;
+
+      procedure Flush is
+      begin
+         if Length (Current) > 0 then
+            Tokens.Append (Current);
+            Current := Null_Unbounded_String;
+         end if;
+      end Flush;
+
+      function Token return String is (To_String (Tokens (Positive (Position))));
+      function Available return Boolean is (Position <= Natural (Tokens.Length));
+      function Supported_License (Value : String) return Boolean is
+        (Value in "MIT" | "Apache-2.0" | "BSD-3-Clause" | "CC0-1.0");
+      function Supported_Exception (Value : String) return Boolean is
+        (Value = "LLVM-exception");
+
+      procedure Parse_Or;
+
+      procedure Parse_Primary is
+      begin
+         if not Available then
+            Valid := False;
+         elsif Token = "(" then
+            Position := Position + 1;
+            Parse_Or;
+            if not Available or else Token /= ")" then
+               Valid := False;
+            else
+               Position := Position + 1;
+            end if;
+         elsif Token in ")" | "AND" | "OR" | "WITH" then
+            Valid := False;
+         else
+            Supported := Supported and then Supported_License (Token);
+            Licenses.Append (To_Unbounded_String (Token));
+            Position := Position + 1;
+         end if;
+      end Parse_Primary;
+
+      procedure Parse_With is
+      begin
+         Parse_Primary;
+         if Valid and then Available and then Token = "WITH" then
+            Position := Position + 1;
+            if not Available or else Token in "(" | ")" | "AND" | "OR" | "WITH" then
+               Valid := False;
+            else
+               Supported := Supported and then Supported_Exception (Token);
+               Exceptions.Append (To_Unbounded_String (Token));
+               Position := Position + 1;
+            end if;
+         end if;
+      end Parse_With;
+
+      procedure Parse_And is
+      begin
+         Parse_With;
+         while Valid and then Available and then Token = "AND" loop
+            Position := Position + 1;
+            Parse_With;
+         end loop;
+      end Parse_And;
+
+      procedure Parse_Or is
+      begin
+         Parse_And;
+         while Valid and then Available and then Token = "OR" loop
+            Position := Position + 1;
+            Parse_And;
+         end loop;
+      end Parse_Or;
+   begin
+      for C of Text loop
+         if C in ' ' | Character'Val (9) | ASCII.CR | ASCII.LF then
+            Flush;
+         elsif C in '(' | ')' then
+            Flush;
+            Tokens.Append (To_Unbounded_String ([C]));
+         else
+            Append (Current, C);
+         end if;
+      end loop;
+      Flush;
+      Valid := not Tokens.Is_Empty;
+      Supported := True;
+      if Valid then Parse_Or; end if;
+      Valid := Valid and then not Available;
+   end Parse_SPDX;
+
+   function License_Evidence
+     (Root, Manifest_Text : String) return Metadata_Evidence_Status
+   is
+      Declared : constant Project_Tools.TOML.String_Parse_Result :=
+        Project_Tools.TOML.Parse_String_After (Manifest_Text, "licenses", Manifest_Text'First);
+      Plain_Path : constant String := Project_Tools.Files.Join (Root, "LICENSE");
+      Markdown_Path : constant String := Project_Tools.Files.Join (Root, "LICENSE.md");
+      License_Path : constant String :=
+        (if Project_Tools.Files.File_Exists (Plain_Path) then Plain_Path
+         elsif Project_Tools.Files.File_Exists (Markdown_Path) then Markdown_Path else "");
+      Licenses, Exceptions : Text_Vectors.Vector;
+      Valid, Supported : Boolean;
+
+      function Evidence_For (Id, Content : String) return Boolean is
+         Data : constant String := Lower (Content);
+      begin
+         if Id = "MIT" then
+            return Contains (Data, "mit license") and then Contains (Data, "permission is hereby granted");
+         elsif Id = "Apache-2.0" then
+            return Contains (Data, "apache license") and then Contains (Data, "version 2.0");
+         elsif Id = "BSD-3-Clause" then
+            return Contains (Data, "redistribution and use in source and binary forms") and then
+              Contains (Data, "neither the name");
+         elsif Id = "CC0-1.0" then
+            return Contains (Data, "cc0 1.0 universal") or else
+              (Contains (Data, "creative commons") and then Contains (Data, "cc0"));
+         elsif Id = "LLVM-exception" then
+            return Contains (Data, "llvm exception") or else Contains (Data, "llvm-exception");
+         end if;
+         return False;
+      end Evidence_For;
+
+      function Any_Known_Evidence (Content : String) return Boolean is
+         Known : constant array (Positive range 1 .. 4) of Ada.Strings.Unbounded.Unbounded_String :=
+           [To_Unbounded_String ("MIT"), To_Unbounded_String ("Apache-2.0"),
+            To_Unbounded_String ("BSD-3-Clause"), To_Unbounded_String ("CC0-1.0")];
+      begin
+         for Id of Known loop
+            if Evidence_For (To_String (Id), Content) then return True; end if;
+         end loop;
+         return False;
+      end Any_Known_Evidence;
+   begin
+      if Declared.Status /= Project_Tools.TOML.Parsed_String or else Length (Declared.Value) = 0 or else
+        License_Path'Length = 0
+      then
+         return Metadata_Missing;
+      end if;
+      Parse_SPDX (To_String (Declared.Value), Valid, Supported, Licenses, Exceptions);
+      if not Valid or else not Supported then return Metadata_Unsupported; end if;
+      declare
+         Content : constant String := Project_Tools.Files.Read_Raw_File (License_Path);
+         Declaration : constant String := Lower (To_String (Declared.Value));
+         First_End : constant Natural := Ada.Strings.Fixed.Index (Content, [ASCII.LF]);
+         First_Line : constant String := Lower (Ada.Strings.Fixed.Trim
+           ((if First_End = 0 then Content else Content (Content'First .. First_End - 1)), Ada.Strings.Both));
+         Explicit : constant Boolean := First_Line = Declaration or else
+           Contains (Lower (Content), "spdx-license-identifier: " & Declaration);
+         Complete : Boolean := True;
+      begin
+         for Id of Licenses loop
+            Complete := Complete and then Evidence_For (To_String (Id), Content);
+         end loop;
+         for Id of Exceptions loop
+            Complete := Complete and then Evidence_For (To_String (Id), Content);
+         end loop;
+         if Explicit or else Complete then return Metadata_Matches;
+         elsif Any_Known_Evidence (Content) then return Metadata_Mismatch;
+         else return Metadata_Unsupported;
+         end if;
+      end;
+   end License_Evidence;
+
+   function Valid_Release_Manifest (Manifest_Text : String) return Boolean is
+     (Valid_Manifest (Manifest_Text) and then
+      Has_Manifest_String (Manifest_Text, "licenses") and then
+      Has_Manifest_String (Manifest_Text, "description") and then
+      not Manifest_Strings (Manifest_Text, "authors").Is_Empty and then
+      not Manifest_Strings (Manifest_Text, "maintainers").Is_Empty);
+
+   function Classify_Proof_Applicability
+     (SPARK_Declared, Project_Available : Boolean) return Proof_Applicability_Status is
+     (if not SPARK_Declared then Proof_Not_Applicable
+      elsif Project_Available then Proof_Ready else Proof_Blocked);
 
    function Manifest_Project_Files (Root, Text : String) return Text_Vectors.Vector is
       Result : Text_Vectors.Vector;
@@ -710,6 +1078,61 @@ package body Ada_Quality.Checks is
      (Ada_Quality.Evaluation.Evaluate
         (Id, Not_Applicable, False, False, "not applicable", "not applicable", Evidence));
 
+   type Review_Waiver is record
+      Valid         : Boolean := False;
+      Target        : Ada.Strings.Unbounded.Unbounded_String;
+      Justification : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
+
+   function Find_Review_Waiver (Data, Rule : String) return Review_Waiver is
+      Prefix : constant String := "aq-waiver: " & Lower (Rule) & " target=";
+      Justification_Tag : constant String := " justification=";
+      Cursor : Natural := Data'First;
+   begin
+      if Data'Length = 0 then return (others => <>); end if;
+      while Cursor <= Data'Last loop
+         declare
+            Stop : Natural := Ada.Strings.Fixed.Index (Data, [ASCII.LF], From => Cursor);
+         begin
+            if Stop = 0 then Stop := Data'Last + 1; end if;
+            declare
+               Line : constant String := Lower (Ada.Strings.Fixed.Trim
+                 (Data (Cursor .. Stop - 1), Ada.Strings.Both));
+            begin
+               if Line'Length > 2 and then Line (Line'First .. Line'First + 1) = "--"
+               then
+                  declare
+                     Payload : constant String := Ada.Strings.Fixed.Trim
+                       (Line (Line'First + 2 .. Line'Last), Ada.Strings.Both);
+                     Justification_At : constant Natural := Ada.Strings.Fixed.Index (Payload, Justification_Tag);
+                  begin
+                     if Payload'Length > Prefix'Length and then
+                       Payload (Payload'First .. Payload'First + Prefix'Length - 1) = Prefix and then
+                       Justification_At > Payload'First + Prefix'Length
+                     then
+                        declare
+                           Target : constant String := Ada.Strings.Fixed.Trim
+                             (Payload (Payload'First + Prefix'Length .. Justification_At - 1), Ada.Strings.Both);
+                           Justification : constant String := Ada.Strings.Fixed.Trim
+                             (Payload (Justification_At + Justification_Tag'Length .. Payload'Last), Ada.Strings.Both);
+                        begin
+                           if Target'Length > 0 and then Justification'Length > 0 then
+                              return
+                                (Valid => True, Target => To_Unbounded_String (Target),
+                                 Justification => To_Unbounded_String (Justification));
+                           end if;
+                        end;
+                     end if;
+                  end;
+               end if;
+            end;
+            exit when Stop > Data'Last;
+            Cursor := Stop + 1;
+         end;
+      end loop;
+      return (others => <>);
+   end Find_Review_Waiver;
+
    procedure Scan_Source
      (Root   : String;
       Policy : Ada_Quality.Policy.Quality_Policy;
@@ -740,13 +1163,15 @@ package body Ada_Quality.Checks is
             Is_Test    : constant Boolean :=
               Contains (Rel_Path, "/tests/") or else Contains (Rel_Path, "/test/");
             Data       : constant String := Project_Tools.Files.Read_Raw_File (Path);
-            Complexity_Reviewed : constant Boolean :=
-              Contains (Lower (Data), "aq: complexity-reviewed");
-            Size_Reviewed : constant Boolean := Contains (Lower (Data), "aq: size-reviewed");
+            Complexity_Waiver : constant Review_Waiver := Find_Review_Waiver (Data, "SRC-03");
+            Size_Waiver : constant Review_Waiver := Find_Review_Waiver (Data, "SRC-06");
             Start      : Positive := 1;
             File_Lines : Natural := 0;
             Complexity : Natural := 1;
             File_Max_Complexity : Natural := 1;
+            Current_Subprogram : Ada.Strings.Unbounded.Unbounded_String :=
+              To_Unbounded_String ("file-elaboration");
+            File_Max_Subprogram : Ada.Strings.Unbounded.Unbounded_String := Current_Subprogram;
             Has_Docs   : Boolean := False;
             Pending_Doc : Boolean := False;
             Unit_Name_Checked : Boolean := False;
@@ -766,6 +1191,14 @@ package body Ada_Quality.Checks is
                   Line => Line, Fingerprint => To_Unbounded_String
                     (Image (Indicator) & ":" & Rule & ":" & Rel & ":" & Message)));
             end Note;
+
+            procedure Record_Complexity is
+            begin
+               if Complexity > File_Max_Complexity then
+                  File_Max_Complexity := Complexity;
+                  File_Max_Subprogram := Current_Subprogram;
+               end if;
+            end Record_Complexity;
 
             procedure Scan_Line (Line : String) is
                function Code_Only return String is
@@ -887,8 +1320,11 @@ package body Ada_Quality.Checks is
                           (if J = Words.Last_Index then "" else To_String (Words (J + 1)));
                      begin
                         if Word in "procedure" | "function" and then Previous /= "end" then
-                           File_Max_Complexity := Natural'Max (File_Max_Complexity, Complexity);
+                           Record_Complexity;
                            Complexity := 1;
+                           if Following'Length > 0 then
+                              Current_Subprogram := To_Unbounded_String (Following);
+                           end if;
                         elsif Word = "if" and then Previous not in "end" | "elsif" then
                            Decisions := Decisions + 1;
                         elsif Word in "elsif" | "when" then
@@ -915,7 +1351,7 @@ package body Ada_Quality.Checks is
                end if;
                if Decisions > 0 then
                   Complexity := Complexity + Decisions;
-                  File_Max_Complexity := Natural'Max (File_Max_Complexity, Complexity);
+                  Record_Complexity;
                end if;
                if Contains (Clean, "register_routine") or else Contains (Clean, ".add_test") then
                   Result.Test_Registrations := Result.Test_Registrations + 1;
@@ -970,16 +1406,34 @@ package body Ada_Quality.Checks is
                if Start <= Data'Last then Scan_Line (Data (Start .. Data'Last)); end if;
             end if;
             Result.Lines := Result.Lines + File_Lines;
-            if File_Lines > Policy.Maximum_Source_Lines and then not Size_Reviewed then
-               Result.Oversized_Files := Result.Oversized_Files + 1;
-               Note (SRC_06, "source-size", "source file exceeds configured line limit");
+            if File_Lines > Policy.Maximum_Source_Lines then
+               if Size_Waiver.Valid and then To_String (Size_Waiver.Target) = "file" then
+                  Result.Review_Waivers := Result.Review_Waivers + 1;
+                  Note
+                    (SRC_06, "review-waiver",
+                     "SRC-06 target=file justification=" & To_String (Size_Waiver.Justification), Level => Low);
+               else
+                  Result.Oversized_Files := Result.Oversized_Files + 1;
+                  Note (SRC_06, "source-size", "source file exceeds configured line limit");
+               end if;
             end if;
-            File_Max_Complexity := Natural'Max (File_Max_Complexity, Complexity);
-            if not Complexity_Reviewed and then File_Max_Complexity > Result.Maximum_Complexity then
-               Result.Maximum_Complexity := File_Max_Complexity;
-            end if;
-            if File_Max_Complexity > Policy.Maximum_Complexity and then not Complexity_Reviewed then
-               Note (SRC_03, "complexity", "source complexity exceeds configured limit");
+            Record_Complexity;
+            Result.Maximum_Complexity := Natural'Max (Result.Maximum_Complexity, File_Max_Complexity);
+            if File_Max_Complexity > Policy.Maximum_Complexity then
+               if Complexity_Waiver.Valid and then
+                 To_String (Complexity_Waiver.Target) = To_String (File_Max_Subprogram)
+               then
+                  Result.Review_Waivers := Result.Review_Waivers + 1;
+                  Note
+                    (SRC_03, "review-waiver",
+                     "SRC-03 target=" & To_String (File_Max_Subprogram) & " justification=" &
+                       To_String (Complexity_Waiver.Justification), Level => Low);
+               else
+                  Result.Complexity_Violations := Result.Complexity_Violations + 1;
+                  Note
+                    (SRC_03, "complexity",
+                     "source complexity exceeds configured limit in " & To_String (File_Max_Subprogram));
+               end if;
             end if;
             if Is_Spec and then not Is_Test and then not Has_Docs then
                Result.Undocumented_Specs := Result.Undocumented_Specs + 1;
@@ -1227,18 +1681,20 @@ package body Ada_Quality.Checks is
       begin
          Item.Measurement :=
            (Kind => Integer_Value, Integer_Data => Long_Long_Integer (Value));
-         if not Condition then
-            for Finding of Metrics.Findings loop
-               if Finding.Indicator = Id then
+         for Finding of Metrics.Findings loop
+            if Finding.Indicator = Id and then
+              (not Condition or else To_String (Finding.Rule) = "review-waiver")
+            then
+               if not Condition then
                   if Item.Findings.Length = 1 and then
                     Length (Item.Findings.First_Element.Relative_Path) = 0
                   then
                      Item.Findings.Clear;
                   end if;
-                  Item.Findings.Append (Finding);
                end if;
-            end loop;
-         end if;
+               Item.Findings.Append (Finding);
+            end if;
+         end loop;
          return Item;
       end Integer_Result;
 
@@ -1482,9 +1938,9 @@ package body Ada_Quality.Checks is
               (if Total_Text'Length > 0 then Natural'Value (Total_Text)
                else Project_Tools.Gcov.Total_Lines (Summary));
          begin
-            if Coverage_Complete /= "true" or else Coverage_Inventory /= "gcov-production-lines-v2" then
+            if Coverage_Complete /= "true" or else Coverage_Inventory /= "gcov-production-lines-v3" then
                Add (Blocked_Result (TST_03, "coverage evidence does not claim a complete production inventory",
-                 "complete=true and inventory=gcov-production-lines-v2 are required"));
+                 "complete=true and inventory=gcov-production-lines-v3 are required"));
             elsif Coverage_Fingerprint'Length = 0 or else Coverage_Fingerprint /= Before then
                Add (Blocked_Result (TST_03, "coverage evidence does not match the assessed source",
                  "expected=" & Before & " recorded=" & Coverage_Fingerprint));
@@ -1527,7 +1983,7 @@ package body Ada_Quality.Checks is
       Add (Integer_Result (Metrics.Naming_Errors = 0, SRC_02,
         "source file naming passes", "source file naming violations",
         Natural'Image (Metrics.Naming_Errors) & " files", Metrics.Naming_Errors));
-      Add (Integer_Result (Metrics.Maximum_Complexity <= Policy.Maximum_Complexity, SRC_03,
+      Add (Integer_Result (Metrics.Complexity_Violations = 0, SRC_03,
         "complexity within policy", "complexity exceeds policy", Natural'Image (Metrics.Maximum_Complexity),
         Metrics.Maximum_Complexity));
       Add (Integer_Result (Metrics.Hygiene_Errors = 0, SRC_04,
@@ -1609,7 +2065,31 @@ package body Ada_Quality.Checks is
       Add (Tool_Result (DEP_01, Build_Run, "dependencies resolve", "dependency resolution/build failed"));
       Add (Present (not Matches (Local_Pin_Pattern, Without_TOML_Comments (Manifest_Data)), DEP_02,
         "manifest contains no local path pins", "manifest contains local path pins", Manifest));
-      Add (Tool_Result (DEP_03, Build_Run, "dependency solution is buildable", "dependency solution inconsistent"));
+      if Build_Run.Status /= Ada_Quality.Execution.Completed or else Build_Run.Exit_Code /= 0 then
+         Add (Blocked_Result
+           (DEP_03, "dependency consistency requires a resolved solution", "DEP-01 did not resolve successfully"));
+      else
+         declare
+            Lock_Path : constant String := Project_Tools.Files.Join
+              (To_String (Execution_Root), "alire/alire.lock");
+            Status : constant Dependency_Evidence_Status :=
+              (if Project_Tools.Files.File_Exists (Lock_Path)
+               then Dependency_Consistency (Manifest_Data, Project_Tools.Files.Read_Raw_File (Lock_Path))
+               else Dependency_Unavailable);
+         begin
+            case Status is
+               when Dependency_Consistent =>
+                  Add (Passed
+                    (DEP_03, "declared dependencies match the solved Alire direct-dependency state", Lock_Path));
+               when Dependency_Inconsistent =>
+                  Add (Violated
+                    (DEP_03, "declared and solved direct dependencies are inconsistent", Lock_Path));
+               when Dependency_Unavailable =>
+                  Add (Blocked_Result
+                    (DEP_03, "resolved dependency consistency evidence is unavailable", Lock_Path));
+            end case;
+         end;
+      end if;
 
       Add (Integer_Result (Metrics.Secret_Matches = 0, SEC_01, "no embedded secret patterns found",
         "possible embedded secrets found", Natural'Image (Metrics.Secret_Matches) & " matches",
@@ -1657,13 +2137,19 @@ package body Ada_Quality.Checks is
       else
          Add (Blocked_Result (REL_01, "release checker missing", Root));
       end if;
-      Add (Present (Has_Manifest_String (Manifest_Data, "licenses") and then
-        (Project_Tools.Files.File_Exists (Project_Tools.Files.Join (Root, "LICENSE")) or else
-         Project_Tools.Files.File_Exists (Project_Tools.Files.Join (Root, "LICENSE.md"))), REL_02,
-        "license metadata and file present", "license metadata/file inconsistent", Manifest));
-      Add (Present (Valid_Manifest (Manifest_Data) and then Has_Manifest_String (Manifest_Data, "licenses"),
-        REL_03, "release manifest fields present",
-        "release manifest fields missing", Manifest));
+      case License_Evidence (Root, Manifest_Data) is
+         when Metadata_Matches =>
+            Add (Passed (REL_02, "declared SPDX license matches repository license", Manifest));
+         when Metadata_Mismatch =>
+            Add (Violated (REL_02, "declared SPDX license conflicts with repository license", Manifest));
+         when Metadata_Missing =>
+            Add (Violated (REL_02, "license declaration or license file is missing", Manifest));
+         when Metadata_Unsupported =>
+            Add (Blocked_Result (REL_02, "license evidence is unrecognized or unsupported", Manifest));
+      end case;
+      Add (Present (Valid_Release_Manifest (Manifest_Data), REL_03,
+        "canonical Alire release manifest is complete",
+        "canonical Alire release manifest fields are missing or invalid", Manifest));
 
       end Measure_Release;
 
@@ -1698,6 +2184,10 @@ package body Ada_Quality.Checks is
             Proof_Run := Prove (Project_File);
             Add (Tool_Result (PRF_01, Proof_Run, "declared SPARK units proved", "SPARK proof failed or is incomplete"));
          end;
+      elsif Classify_Proof_Applicability (Has_SPARK, Project_Available => False) = Proof_Blocked then
+         Add (Blocked_Result
+           (PRF_01, "SPARK is declared but no usable GPR project exists",
+            "GNATprove requires a selected project file"));
       else
          Add (Not_Applicable_Result (PRF_01, "no source unit declares SPARK_Mode"));
       end if;

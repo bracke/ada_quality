@@ -76,7 +76,8 @@ package body Ada_Quality.Indicators is
    begin
       for Id in Indicator_Id loop
          Result (Id) :=
-           (Id => Id, Version => 1, Category => Category_Of (Id), Name => Names (Id),
+           (Id => Id, Version => 1, Measurement_Version => 1,
+            Category => Category_Of (Id), Name => Names (Id),
             Prerequisites => Dependencies (Id));
       end loop;
       return Result;

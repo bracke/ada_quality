@@ -6,7 +6,7 @@ with Project_Tools.Files;
 with Project_Tools.Links;
 
 package body Ada_Quality.Workspaces is
-   --  AQ: complexity-reviewed -- bounded Alire pin parsing is decomposed and fixture-covered.
+   --  AQ-WAIVER: SRC-03 target=prepare justification=workspace staging keeps one cleanup boundary
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
 

@@ -64,7 +64,7 @@ procedure Ada_Quality_Coverage is
          "covered=" & (if Covered'Length = 0 then "0" else Covered) & ASCII.LF &
          "total=" & (if Total'Length = 0 then "1" else Total) & ASCII.LF &
          "complete=true" & ASCII.LF &
-         "inventory=gcov-production-lines-v2" & ASCII.LF &
+         "inventory=gcov-production-lines-v3" & ASCII.LF &
          "excluded_ada_quality_coverage=coverage-driver" & ASCII.LF &
          "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
          "toolchain_fingerprint=" & Selected_Toolchain & ASCII.LF);
@@ -509,11 +509,12 @@ begin
            ("three-project assessment",
             Project_Tools.Processes.Arguments
               ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
+                Project_Tools.Processes.Argument ("--json"),
                 Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
                 Project_Tools.Processes.Argument ("--policy"),
                 Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
                 Project_Tools.Processes.Argument ("--no-color")]),
-            Allow_Three => True);
+            Allow_Three => True, Expected_Text => """kind"": ""assessment-batch""");
          Run_CLI
            ("interrupted middle project",
             Project_Tools.Processes.Arguments
@@ -569,35 +570,57 @@ begin
                   Project_Tools.Processes.Argument (Project_Tools.Files.Join (Object_Dir, Object_Name))]);
             Run : constant Project_Tools.Processes.Captured_Process :=
               Project_Tools.Processes.Capture ("gcov", Tests_Dir, Alr, Args, Quiet => True);
+            Notes_Run : constant Project_Tools.Processes.Captured_Process :=
+              Project_Tools.Processes.Capture
+                ("gcov notes", Tests_Dir, Alr,
+                 Project_Tools.Processes.Arguments
+                   ([Project_Tools.Processes.Argument ("exec"), Project_Tools.Processes.Argument ("--"),
+                     Project_Tools.Processes.Argument ("bash"), Project_Tools.Processes.Argument ("-o"),
+                     Project_Tools.Processes.Argument ("pipefail"), Project_Tools.Processes.Argument ("-c"),
+                     Project_Tools.Processes.Argument
+                       ("gcov-dump ""$1"" | sed -n -e '1p' -e '/FUNCTION/p'"),
+                     Project_Tools.Processes.Argument ("coverage-note-inventory"),
+                     Project_Tools.Processes.Argument
+                       (Project_Tools.Files.Join (Object_Dir, Object_Name))]),
+                 Quiet => True);
             Gcov_Output : constant String := Per_File_Gcov_Output (To_String (Run.Output));
-            No_Functions : constant Boolean :=
-              Ada.Strings.Fixed.Index (Gcov_Output, "File '") = 0 and
-              Ada.Strings.Fixed.Index (Gcov_Output, "No executable lines") /= 0;
             Unit_Covered : Natural := 0;
             Unit_Total   : Natural := 0;
-            Has_Unit_Record : Boolean := False;
+            Runs_Succeeded : Boolean;
+
+            procedure Check_Tool_Runs is
+            begin
+               Runs_Succeeded := False;
+               if Run.Status /= 0 then
+                  Fail ("gcov failed for " & Object_Name);
+               elsif Notes_Run.Status /= 0 then
+                  Fail ("gcov-dump failed for " & Object_Name);
+               else
+                  Runs_Succeeded := True;
+               end if;
+            end Check_Tool_Runs;
 
             procedure Include_Source (Source : Unbounded_String) is
                One : Project_Tools.Gcov.Coverage_Summary;
             begin
                if Length (Source) = 0 then return; end if;
-               if not Ada_Quality.Coverage.Has_Source_Record (Gcov_Output, To_String (Source)) then
-                  return;
-               end if;
-               Has_Unit_Record := True;
+               if not Ada_Quality.Coverage.Has_Source_Record (Gcov_Output, To_String (Source)) then return; end if;
                One := Project_Tools.Gcov.Parse_Lines_Executed_Output
                  (Gcov_Output, To_String (Source));
                Unit_Covered := Unit_Covered + Project_Tools.Gcov.Covered_Lines (One);
                Unit_Total := Unit_Total + Project_Tools.Gcov.Total_Lines (One);
             end Include_Source;
          begin
-            if Run.Status /= 0 then Fail ("gcov failed for " & Object_Name); return; end if;
-            Include_Source (Unit.Body_Path);
-            Include_Source (Unit.Spec_Path);
-            if not (Has_Unit_Record or No_Functions) then
-               Fail ("gcov output is missing production unit " & Stem);
+            Check_Tool_Runs;
+            if not Runs_Succeeded then return; end if;
+            if not Ada_Quality.Coverage.Has_Complete_Source_Records
+              (Gcov_Output, To_String (Notes_Run.Output), Unit)
+            then
+               Fail ("gcov output is missing a production source in unit " & Stem);
                return;
             end if;
+            Include_Source (Unit.Body_Path);
+            Include_Source (Unit.Spec_Path);
             Covered := Covered + Unit_Covered;
             Total := Total + Unit_Total;
             Files.Append
@@ -668,7 +691,7 @@ begin
            ("covered=" & Trim (Natural'Image (Covered)) & ASCII.LF &
             "total=" & Trim (Natural'Image (Total)) & ASCII.LF &
             "complete=true" & ASCII.LF &
-            "inventory=gcov-production-lines-v2" & ASCII.LF &
+            "inventory=gcov-production-lines-v3" & ASCII.LF &
             "excluded_ada_quality_coverage=coverage-driver" & ASCII.LF &
             "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
             "toolchain_fingerprint=" & To_String (Toolchain_Fingerprint) & ASCII.LF &

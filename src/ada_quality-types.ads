@@ -42,13 +42,13 @@ package Ada_Quality.Types is
    --  @enum DOC_03 Required project documentation is present.
    --  @enum DEP_01 Dependencies resolve.
    --  @enum DEP_02 Manifest contains no local path pins.
-   --  @enum DEP_03 Resolved dependency solution builds.
+   --  @enum DEP_03 Declared direct dependencies match the solved Alire lock state.
    --  @enum SEC_01 No embedded secret assignment is found.
    --  @enum SEC_02 No shell process execution is found.
    --  @enum SEC_03 No forbidden artifact or symbolic link is found.
    --  @enum REL_01 Release checker succeeds.
-   --  @enum REL_02 License metadata and file are present.
-   --  @enum REL_03 Release manifest fields are present.
+   --  @enum REL_02 Alire SPDX metadata and repository license contents are consistent.
+   --  @enum REL_03 Canonical Alire release-manifest metadata is complete.
    --  @enum REL_04 Source fingerprint remains unchanged during assessment.
    --  @enum PRF_01 SPARK proof succeeds when proof is applicable.
 
@@ -127,7 +127,7 @@ package Ada_Quality.Types is
    --  @field Message Human-readable diagnostic.
    --  @field Relative_Path Project-relative source path when applicable.
    --  @field Line One-based line number, or zero when not applicable.
-   --  @field Fingerprint Stable finding identity across path and line movement.
+   --  @field Fingerprint Stable finding identity across line movement; the source path remains significant.
 
    package Finding_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Finding);

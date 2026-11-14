@@ -43,6 +43,8 @@ the metadata row, so existing evidence stays byte-identical. From version 3 on:
   (UTC, `YYYY-MM-DDTHH:MM:SSZ`);
 - `Publish` marks the run `evidence_format=3` and writes results as escaped `applicable`, `summary`, `evidence`
   fields and findings as escaped `indicator`, `rule`, `message`, `path`, `line` fields.
+- New measurement states append indicator-contract and measurement-method versions to the value kind. Reporting
+  decodes the kind independently and preserves the complete semantic identity for historical trend filtering.
 
 Runs without the marker are legacy evidence: results split summary and evidence at the first line feed, applicability
 follows the not-applicable execution state, finding locations are absent, and the finding indicator comes from the

@@ -14,11 +14,12 @@ with Ada_Quality.Presentation;
 with Ada_Quality.Storage;
 with Ada_Quality.Types;
 
---  AQ: complexity-reviewed -- the centralized dispatcher preserves one strict command grammar and exit contract.
+--  AQ-WAIVER: SRC-03 target=id_argument justification=command parsing and dispatch share one bounded pass
 package body Ada_Quality.CLI is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
    use type Ada.Containers.Count_Type;
+   use type Ada_Quality.History.Comparison_Status;
 
    function Argument (Index : Positive) return String is
      (if Index <= Ada.Command_Line.Argument_Count then Ada.Command_Line.Argument (Index) else "");
@@ -283,6 +284,10 @@ package body Ada_Quality.CLI is
             Exit_Code : Natural := 0;
             JSON_Mode : constant Boolean :=
               (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
+            All_Mode : constant Boolean :=
+              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all");
+            Batch_Mode : constant Boolean := JSON_Mode and then All_Mode;
+            Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
 
             procedure Check_Project (P : Ada_Quality.Storage.Project_Info) is
                Run_Id : Natural := 0;
@@ -300,6 +305,13 @@ package body Ada_Quality.CLI is
                   Ada.Text_IO.Put_Line
                     (Ada.Text_IO.Standard_Error,
                      "project" & Positive'Image (P.Id) & " assessment interrupted: " & Message);
+                  if Batch_Mode then
+                     Outcomes.Append
+                       (Ada_Quality.JSON.Batch_Outcome'
+                          (Project_Id => P.Id, Assessment_Id => Run_Id,
+                           Status => Ada_Quality.JSON.Batch_Interrupted,
+                           Diagnostic => To_Unbounded_String (Reason), Value => <>));
+                  end if;
                   Exit_Code := Natural'Max (Exit_Code, 3);
                end Interrupt_Project;
             begin
@@ -327,7 +339,13 @@ package body Ada_Quality.CLI is
                   raise Ada_Quality.Storage.Storage_Error with "assessment publication changed its identifier";
                end if;
                Exit_Code := Natural'Max (Exit_Code, Result_Exit (Value));
-               if JSON_Mode then Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
+               if Batch_Mode then
+                  Outcomes.Append
+                    (Ada_Quality.JSON.Batch_Outcome'
+                       (Project_Id => P.Id, Assessment_Id => Run_Id,
+                        Status => Ada_Quality.JSON.Batch_Completed,
+                        Diagnostic => Null_Unbounded_String, Value => Value));
+               elsif JSON_Mode then Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
                else Print_Assessment (Value); end if;
             end Check_Project;
          begin
@@ -342,10 +360,13 @@ package body Ada_Quality.CLI is
                   if P.Removed or else not P.Enabled then raise Constraint_Error with "project is not enabled"; end if;
                   Check_Project (P);
                end;
-            elsif (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all") then
+            elsif All_Mode then
                for P of Ada_Quality.Storage.Projects (Store) loop
                   if P.Enabled and then not P.Removed then Check_Project (P); end if;
                end loop;
+               if Batch_Mode then
+                  Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Batch (Outcomes, Pretty => True));
+               end if;
             else
                raise Constraint_Error with "check requires --all or --project ID";
             end if;
@@ -480,69 +501,55 @@ package body Ada_Quality.CLI is
                declare
                   Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
                     Ada_Quality.Storage.History (Store, P.Id);
+                  Selection : constant Ada_Quality.History.Comparison_Selection :=
+                    Ada_Quality.History.Select_Comparison (Runs);
                begin
-                  if Runs.Length >= 2 then
+                  if Selection.Status = Ada_Quality.History.Comparison_Available then
                      declare
-                        Current_Run : constant Ada_Quality.Storage.History_Item := Runs.Last_Element;
-                        Compatible_Id : constant Natural :=
-                          Ada_Quality.History.Baseline_Id (Runs, Current_Run.Id);
-                        Previous_Run : constant Ada_Quality.Storage.History_Item :=
-                          Runs (Runs.Last_Index - 1);
-                        Policy_Comparison : constant Boolean :=
-                          Compatible_Id = 0 and then
-                          Ada_Quality.History.Policy_Comparable (Previous_Run, Current_Run);
+                        Current_Run : constant Ada_Quality.Storage.History_Item :=
+                          Find_Run (Runs, Positive (Selection.Current_Id));
                         Baseline_Run : constant Ada_Quality.Storage.History_Item :=
-                          (if Compatible_Id > 0 then Find_Run (Runs, Compatible_Id)
-                           else Previous_Run);
+                          Find_Run (Runs, Positive (Selection.Baseline_Id));
+                        Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
+                          Ada_Quality.History.Compare
+                            (Baseline_Run, Current_Run,
+                             Ada_Quality.Storage.Results (Store, Baseline_Run.Id),
+                             Ada_Quality.Storage.Results (Store, Current_Run.Id),
+                             Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
+                             Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
+                             Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
+                             Ada_Quality.Storage.Findings (Store, Current_Run.Id),
+                             Findings_Before (Runs, Baseline_Run, Current_Run));
                      begin
-                        if To_String (Current_Run.Status) /= "completed" then
+                        if Changes.Is_Empty then
                            Ada.Text_IO.Put_Line
                              ("project" & Positive'Image (P.Id) &
-                              ": comparison unavailable: current assessment is not completed");
-                        elsif Compatible_Id = 0 and then not Policy_Comparison then
-                           Ada.Text_IO.Put_Line
-                             ("project" & Positive'Image (P.Id) &
-                              (if To_String (Previous_Run.Status) /= "completed" then
-                                  ": comparison unavailable: no completed baseline exists"
-                               elsif Previous_Run.Toolchain_Fingerprint /= Current_Run.Toolchain_Fingerprint then
-                                  ": comparison unavailable: toolchain fingerprint changed"
-                               else ": comparison unavailable: no compatible baseline exists"));
+                              ": no regressions in comparable assessments");
                         else
-                           declare
-                              Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
-                                Ada_Quality.History.Compare
-                                  (Baseline_Run, Current_Run,
-                                   Ada_Quality.Storage.Results (Store, Baseline_Run.Id),
-                                   Ada_Quality.Storage.Results (Store, Current_Run.Id),
-                                   Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
-                                   Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
-                                   Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
-                                   Ada_Quality.Storage.Findings (Store, Current_Run.Id),
-                                   Findings_Before (Runs, Baseline_Run, Current_Run));
-                           begin
-                              if Changes.Is_Empty then
-                                 Ada.Text_IO.Put_Line
-                                   ("project" & Positive'Image (P.Id) &
-                                    ": no regressions in comparable assessments");
-                              else
-                                 for Change of Changes loop
-                                    Ada.Text_IO.Put_Line
-                                      ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
-                                       Ada_Quality.History.Image (Change.Kind) & ": " &
-                                       To_String (Change.Before) & " -> " & To_String (Change.After));
-                                 end loop;
-                              end if;
-                           end;
+                           for Change of Changes loop
+                              Ada.Text_IO.Put_Line
+                                ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
+                                 Ada_Quality.History.Image (Change.Kind) & ": " &
+                                 To_String (Change.Before) & " -> " & To_String (Change.After));
+                           end loop;
                         end if;
                      end;
-                  elsif Runs.Is_Empty then
-                     Ada.Text_IO.Put_Line
-                       ("project" & Positive'Image (P.Id) &
-                        ": comparison unavailable: no assessments exist");
                   else
                      Ada.Text_IO.Put_Line
                        ("project" & Positive'Image (P.Id) &
-                        ": comparison unavailable: no baseline assessment exists");
+                        ": comparison unavailable: " &
+                        (case Selection.Status is
+                           when Ada_Quality.History.No_Assessments => "no assessments exist",
+                           when Ada_Quality.History.No_Baseline => "no baseline assessment exists",
+                           when Ada_Quality.History.Current_Incomplete =>
+                             "current assessment is not completed",
+                           when Ada_Quality.History.No_Completed_Baseline =>
+                             "no completed baseline exists",
+                           when Ada_Quality.History.Toolchain_Changed =>
+                             "toolchain fingerprint changed",
+                           when Ada_Quality.History.No_Compatible_Baseline =>
+                             "no compatible baseline exists",
+                           when Ada_Quality.History.Comparison_Available => "comparison is available"));
                   end if;
                end;
             end loop;

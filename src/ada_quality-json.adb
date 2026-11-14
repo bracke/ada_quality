@@ -1,5 +1,4 @@
-with Ada.Containers;
-with Ada.Strings.Unbounded;
+with Ada.Strings.Fixed;
 with Ada_Quality.History;
 with Jsonlib.Documents;
 with Jsonlib.Serializers;
@@ -8,11 +7,11 @@ package body Ada_Quality.JSON is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
    use Jsonlib.Documents;
-   use type Ada.Containers.Count_Type;
+   use type Ada_Quality.History.Comparison_Status;
 
-   function Render (Item : Assessment; Pretty : Boolean := False) return String is
-      Doc     : Document;
-      Root    : constant Node := Doc.New_Object;
+   procedure Populate_Assessment
+     (Doc : in out Document; Root : Node; Item : Assessment)
+   is
       Results : constant Node := Doc.New_Array;
       Executions : constant Node := Doc.New_Array;
 
@@ -89,12 +88,60 @@ package body Ada_Quality.JSON is
       end loop;
       Doc.Insert (Root, "results", Results);
       Doc.Insert (Root, "executions", Executions);
-      Doc.Set_Root (Root);
-      return Jsonlib.Serializers.To_String
+   end Populate_Assessment;
+
+   function Serialize
+     (Doc : Document; Pretty : Boolean) return String is
+     (Jsonlib.Serializers.To_String
         (Doc,
          (Form => (if Pretty then Jsonlib.Serializers.Pretty else Jsonlib.Serializers.Compact),
-          Indent => 2, Escape_Non_Ascii => False, Sort_Members => True));
+          Indent => 2, Escape_Non_Ascii => False, Sort_Members => True)));
+
+   function Render (Item : Assessment; Pretty : Boolean := False) return String is
+      Doc  : Document;
+      Root : constant Node := Doc.New_Object;
+   begin
+      Populate_Assessment (Doc, Root, Item);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
    end Render;
+
+   function Render_Batch
+     (Items : Batch_Outcome_Vectors.Vector; Pretty : Boolean := False) return String
+   is
+      Doc      : Document;
+      Root     : constant Node := Doc.New_Object;
+      Outcomes : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("assessment-batch"));
+      for Item of Items loop
+         declare
+            Outcome : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Outcome, "project_id", Doc.New_Integer (Long_Long_Integer (Item.Project_Id)));
+            Doc.Insert
+              (Outcome, "assessment_id", Doc.New_Integer (Long_Long_Integer (Item.Assessment_Id)));
+            Doc.Insert
+              (Outcome, "status",
+               Doc.New_String
+                 ((if Item.Status = Batch_Completed then "completed" else "interrupted")));
+            Doc.Insert (Outcome, "diagnostic", Doc.New_String (To_String (Item.Diagnostic)));
+            if Item.Status = Batch_Completed then
+               declare
+                  Assessment_Object : constant Node := Doc.New_Object;
+               begin
+                  Populate_Assessment (Doc, Assessment_Object, Item.Value);
+                  Doc.Insert (Outcome, "assessment", Assessment_Object);
+               end;
+            end if;
+            Doc.Append (Outcomes, Outcome);
+         end;
+      end loop;
+      Doc.Insert (Root, "outcomes", Outcomes);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Batch;
 
    function Render_Archive
      (Store : in out Ada_Quality.Storage.Store; Pretty : Boolean := False) return String
@@ -108,14 +155,25 @@ package body Ada_Quality.JSON is
       Measurements : constant Node := Doc.New_Array;
       Executions   : constant Node := Doc.New_Array;
       Events       : constant Node := Doc.New_Array;
+      Comparisons  : constant Node := Doc.New_Array;
       Regressions  : constant Node := Doc.New_Array;
       Settings    : constant Jsonlib.Serializers.Options :=
         (Form => (if Pretty then Jsonlib.Serializers.Pretty else Jsonlib.Serializers.Compact),
          Indent => 2, Escape_Non_Ascii => False, Sort_Members => True);
 
-      procedure Append_Project_Regressions (P : Ada_Quality.Storage.Project_Info) is
+      procedure Append_Project_Comparison (P : Ada_Quality.Storage.Project_Info) is
          Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
            Ada_Quality.Storage.History (Store, P.Id);
+         Selection : constant Ada_Quality.History.Comparison_Selection :=
+           Ada_Quality.History.Select_Comparison (Runs);
+
+         function Find_Run (Id : Positive) return Ada_Quality.Storage.History_Item is
+         begin
+            for Run of Runs loop
+               if Run.Id = Id then return Run; end if;
+            end loop;
+            raise Constraint_Error with "selected assessment is absent from project history";
+         end Find_Run;
 
          function Findings_Before
            (Baseline, Current : Ada_Quality.Storage.History_Item)
@@ -132,22 +190,26 @@ package body Ada_Quality.JSON is
             return Result;
          end Findings_Before;
       begin
-         if Runs.Length < 2 then return; end if;
          declare
-            Current : constant Ada_Quality.Storage.History_Item := Runs.Last_Element;
-            Compatible_Id : constant Natural := Ada_Quality.History.Baseline_Id (Runs, Current.Id);
-            Previous : constant Ada_Quality.Storage.History_Item := Runs (Runs.Last_Index - 1);
-            Compare_Policy : constant Boolean :=
-              Compatible_Id = 0 and then Previous.Policy_Fingerprint /= Current.Policy_Fingerprint and then
-              Previous.Toolchain_Fingerprint = Current.Toolchain_Fingerprint;
-            Baseline : Ada_Quality.Storage.History_Item := Previous;
+            Object : constant Node := Doc.New_Object;
          begin
-            if Compatible_Id > 0 then
-               for Run of Runs loop
-                  if Run.Id = Compatible_Id then Baseline := Run; exit; end if;
-               end loop;
-            end if;
-            if Compatible_Id = 0 and then not Compare_Policy then return; end if;
+            Doc.Insert (Object, "project_id", Doc.New_Integer (Long_Long_Integer (P.Id)));
+            Doc.Insert
+              (Object, "status", Doc.New_String (Ada_Quality.History.Image (Selection.Status)));
+            Doc.Insert
+              (Object, "current_id", Doc.New_Integer (Long_Long_Integer (Selection.Current_Id)));
+            Doc.Insert
+              (Object, "baseline_id", Doc.New_Integer (Long_Long_Integer (Selection.Baseline_Id)));
+            Doc.Insert (Object, "policy_changed", Doc.New_Boolean (Selection.Policy_Changed));
+            Doc.Append (Comparisons, Object);
+         end;
+         if Selection.Status /= Ada_Quality.History.Comparison_Available then return; end if;
+         declare
+            Current : constant Ada_Quality.Storage.History_Item :=
+              Find_Run (Positive (Selection.Current_Id));
+            Baseline : constant Ada_Quality.Storage.History_Item :=
+              Find_Run (Positive (Selection.Baseline_Id));
+         begin
             declare
                Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
                  Ada_Quality.History.Compare
@@ -176,16 +238,16 @@ package body Ada_Quality.JSON is
                end loop;
             end;
          end;
-      end Append_Project_Regressions;
+      end Append_Project_Comparison;
 
-      procedure Append_All_Regressions is
+      procedure Append_All_Comparisons is
       begin
          for P of Ada_Quality.Storage.Projects (Store, Include_Removed => True) loop
-            Append_Project_Regressions (P);
+            Append_Project_Comparison (P);
          end loop;
-      end Append_All_Regressions;
+      end Append_All_Comparisons;
    begin
-      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (2));
       for P of Ada_Quality.Storage.Projects (Store, Include_Removed => True) loop
          declare
             Object : constant Node := Doc.New_Object;
@@ -215,11 +277,16 @@ package body Ada_Quality.JSON is
       for M of Ada_Quality.Storage.Measurements (Store) loop
          declare
             Object : constant Node := Doc.New_Object;
+            State : constant String := To_String (M.State);
+            Separator : constant Natural := Ada.Strings.Fixed.Index (State, ";");
+            Kind : constant String :=
+              (if Separator = 0 then State else State (State'First .. Separator - 1));
          begin
             Doc.Insert (Object, "id", Doc.New_Integer (Long_Long_Integer (M.Id)));
             Doc.Insert (Object, "assessment_id", Doc.New_Integer (Long_Long_Integer (M.Run_Id)));
             Doc.Insert (Object, "indicator", Doc.New_String (To_String (M.Kind)));
-            Doc.Insert (Object, "kind", Doc.New_String (To_String (M.State)));
+            Doc.Insert (Object, "kind", Doc.New_String (Kind));
+            Doc.Insert (Object, "semantics", Doc.New_String (State));
             Doc.Insert (Object, "value", Doc.New_String (To_String (M.Summary)));
             Doc.Append (Measurements, Object);
          end;
@@ -272,7 +339,7 @@ package body Ada_Quality.JSON is
             Doc.Append (Findings, Object);
          end;
       end loop;
-      Append_All_Regressions;
+      Append_All_Comparisons;
       Doc.Insert (Root, "projects", Projects);
       Doc.Insert (Root, "assessments", Assessments);
       Doc.Insert (Root, "results", Results);
@@ -280,6 +347,7 @@ package body Ada_Quality.JSON is
       Doc.Insert (Root, "findings", Findings);
       Doc.Insert (Root, "executions", Executions);
       Doc.Insert (Root, "events", Events);
+      Doc.Insert (Root, "comparisons", Comparisons);
       Doc.Insert (Root, "regressions", Regressions);
       Doc.Set_Root (Root);
       return Jsonlib.Serializers.To_String (Doc, Settings);

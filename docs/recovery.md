@@ -1,3 +1,3 @@
 # Recovery
 
-Startup or explicit `database recover` scans running assessments. Each is atomically changed to interrupted with one recovery event. Repeating recovery makes no further changes. Controller failures can interrupt a known run immediately. Injected commit failure proves state and event roll back together.
+Startup or explicit `database recover` scans running assessments. Each is atomically changed to interrupted with one recovery event. Repeating recovery makes no further changes. Controller failures can interrupt a known run immediately. Injected commit failure proves state and event roll back together. The integrated recovery fixture publishes three completed numerical assessments, abandons a fourth run, reopens and recovers the database, and verifies that chronological trends and completed baseline selection remain intact while comparison against the interrupted latest run is explicitly unavailable.

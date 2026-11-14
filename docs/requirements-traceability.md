@@ -16,6 +16,10 @@
 | Exact coverage gate | `Types.Coverage_Passes`, `Checks` | boundary/overflow test; instrumented production coverage |
 | Coverage/source compatibility | coverage tool and TST-03 adapter | fingerprint field required and compared |
 | GNATprove applicability | `Checks.Declares_SPARK`, `Checks.Dedicated_Proof_Projects`, PRF-01 branch | `APPLICABILITY_TEST` |
+| Distinct dependency resolution and consistency | DEP-01 adapter, `Checks.Dependency_Consistency` | `APPLICABILITY_TEST` solved, mismatched, and unavailable lock fixtures |
+| Top-level Alire arrays | `Checks.Manifest_Strings` | `APPLICABILITY_TEST` top-level, nested-shadow, and nested-only fixtures |
+| Traceable source waivers | `Checks.Find_Review_Waiver`, SRC-03/06 source analysis | `SOURCE_ANALYSIS_TEST` legacy, mismatched, accepted, and visible-waiver fixtures |
+| Release license/manifest consistency | `Checks.License_Evidence`, `Checks.Valid_Release_Manifest`, REL-02/03 | `APPLICABILITY_TEST` matching, mismatch, missing, unsupported, and SPDX-expression fixtures |
 | Release checker execution | REL-01 adapter and `bin/check_all` | full assessment E2E; final release gate |
 | Clean staged source | REL-04 Git and fingerprint checks | negative semantics reviewed; full assessment E2E |
 | Deterministic RFC 8259 JSON | `Ada_Quality.JSON` | strict jsonlib parse and 33-result assertions |

@@ -1,6 +1,7 @@
 with Ada.Directories;
 with Ada.Strings.Fixed;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Ada_Quality.Indicators;
 with Ada_Quality.Persistence;
 with Database.Catalog;
 with Database.Predicates;
@@ -21,6 +22,17 @@ package body Ada_Quality.Storage is
      Ada.Strings.Fixed.Trim (Positive'Image (Ada_Quality.Persistence.Current_Schema_Version), Ada.Strings.Both);
    Next_Testing_Fault      : Testing_Fault_Point := No_Testing_Fault;
    Legacy_Testing_Evidence : Boolean := False;
+
+   function Measurement_State (Id : Indicator_Id; Kind : Value_Kind) return String is
+      Registry : constant Ada_Quality.Indicators.Descriptor_Array := Ada_Quality.Indicators.Registry;
+      Descriptor : constant Ada_Quality.Indicators.Indicator_Descriptor :=
+        Registry (Id);
+      function Trimmed (Value : Positive) return String is
+        (Ada.Strings.Fixed.Trim (Positive'Image (Value), Ada.Strings.Both));
+   begin
+      return Value_Kind'Image (Kind) & ";indicator_version=" & Trimmed (Descriptor.Version) &
+        ";method_version=" & Trimmed (Descriptor.Measurement_Version);
+   end Measurement_State;
 
    procedure Trigger_Testing_Fault (Point : Testing_Fault_Point) is
    begin
@@ -449,7 +461,7 @@ package body Ada_Quality.Storage is
             Insert
               (Measurements_Table,
                (Id => Positive (Measure_Id), Parent_Id => Run_Id, Kind => WW (Image (R.Indicator)),
-                State => WW (Value_Kind'Image (R.Measurement.Kind)),
+                State => WW (Measurement_State (R.Indicator, R.Measurement.Kind)),
                 Payload => WW (Image (R.Measurement)), Active => R.Execution = Succeeded), "insert measurement");
             Measure_Id := Measure_Id + 1;
             for F of R.Findings loop

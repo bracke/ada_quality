@@ -141,9 +141,12 @@ package body Ada_Quality.Reporting is
    end Parse_Severity;
 
    function Parse_Value_Kind (Text, Context : String) return Value_Kind is
+      Separator : constant Natural := Ada.Strings.Fixed.Index (Text, ";");
+      Kind_Text : constant String :=
+        (if Separator = 0 then Text else Text (Text'First .. Separator - 1));
    begin
       for Value in Value_Kind loop
-         if Value_Kind'Image (Value) = Text then return Value; end if;
+         if Value_Kind'Image (Value) = Kind_Text then return Value; end if;
       end loop;
       raise Integrity_Error with Context & ": unknown measurement kind " & Text;
    end Parse_Value_Kind;

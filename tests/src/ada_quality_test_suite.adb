@@ -28,15 +28,19 @@ with Ada_Quality.Types;
 with Ada_Quality.Tools;
 with Ada_Quality.Workspaces;
 
---  AQ: complexity-reviewed -- one registry intentionally presents the complete cross-component test matrix.
---  AQ: size-reviewed -- keeping the test registry together makes coverage and fixture ownership auditable.
+--  AQ-WAIVER: SRC-03 target=restore_environment justification=one registry presents the cross-component test matrix
+--  AQ-WAIVER: SRC-06 target=file justification=one registry keeps fixture ownership auditable
 package body Ada_Quality_Test_Suite is
    use Ada.Strings.Unbounded;
    use AUnit.Assertions;
    use Ada_Quality.Types;
    use type Ada.Containers.Count_Type;
    use type Ada_Quality.Execution.Run_Status;
+   use type Ada_Quality.Checks.Metadata_Evidence_Status;
+   use type Ada_Quality.Checks.Proof_Applicability_Status;
+   use type Ada_Quality.Checks.Dependency_Evidence_Status;
    use type Ada_Quality.History.Finding_Lifecycle;
+   use type Ada_Quality.History.Comparison_Status;
    use type Ada_Quality.History.Regression_Kind;
    use type Ada_Quality.Tools.Tool_Id;
 
@@ -63,7 +67,8 @@ package body Ada_Quality_Test_Suite is
                Tool_Registry : constant Ada_Quality.Tools.Tool_Descriptor_Array := Ada_Quality.Tools.Registry;
             begin
                for Expected in Indicator_Id loop
-                  Assert (Registry (Expected).Id = Expected and then Registry (Expected).Version = 1,
+                  Assert (Registry (Expected).Id = Expected and then Registry (Expected).Version = 1 and then
+                    Registry (Expected).Measurement_Version = 1,
                     "registry descriptors preserve strong IDs and versions");
                end loop;
                for Tool in Ada_Quality.Tools.Tool_Id loop
@@ -151,6 +156,29 @@ package body Ada_Quality_Test_Suite is
                         "Lines executed:100.00% of 0" & ASCII.LF,
                         Root & "/src/alpha.ads"),
                      "coverage completeness requires a parsed summary and distinguishes zero-line evidence");
+                  declare
+                     Alpha : constant Ada_Quality.Coverage.Production_Unit := Units.First_Element;
+                     Body_Only : constant String :=
+                       "File '" & Root & "/src/alpha.adb'" & ASCII.LF &
+                       "Lines executed:100.00% of 1" & ASCII.LF;
+                     Both : constant String :=
+                       Body_Only & "File '" & Root & "/src/alpha.ads'" & ASCII.LF &
+                       "No executable lines" & ASCII.LF;
+                     Both_Notes : constant String :=
+                       "block 2:`" & Root & "/src/alpha.adb':1" & ASCII.LF &
+                       "block 3:`" & Root & "/src/alpha.ads':1" & ASCII.LF;
+                  begin
+                     Assert
+                       (not Ada_Quality.Coverage.Has_Complete_Source_Records
+                          (Body_Only, Both_Notes, Alpha),
+                       "one combined-unit source record cannot stand in for a missing specification");
+                     Assert (Ada_Quality.Coverage.Has_Complete_Source_Records (Both, Both_Notes, Alpha),
+                       "combined-unit coverage is complete only when body and specification are represented");
+                     Assert
+                       (Ada_Quality.Coverage.Has_Complete_Source_Records
+                          (Body_Only, "block 2:`alpha.adb':1" & ASCII.LF, Alpha),
+                        "a source absent from compiler notes is recognized as having no executable lines");
+                  end;
                end;
                Ada.Directories.Create_Path (Root & "/src/nested");
                declare
@@ -196,15 +224,18 @@ package body Ada_Quality_Test_Suite is
                   function Complexity_Evidence return String is
                   begin
                      for Finding of Project_Metrics.Findings loop
-                        if Finding.Indicator = SRC_03 then
+                        if Finding.Indicator = SRC_03 and then
+                          To_String (Finding.Rule) /= "review-waiver"
+                        then
                            return " in " & To_String (Finding.Relative_Path) &
-                             ":" & Natural'Image (Finding.Line);
+                             ":" & Natural'Image (Finding.Line) & " (" &
+                             To_String (Finding.Message) & ")";
                         end if;
                      end loop;
                      return "";
                   end Complexity_Evidence;
                begin
-                  Assert (Project_Metrics.Maximum_Complexity <= Project_Policy.Maximum_Complexity,
+                  Assert (Project_Metrics.Complexity_Violations = 0,
                     "the integrated source tree remains within the declared complexity contract; measured" &
                     Natural'Image (Project_Metrics.Maximum_Complexity) & Complexity_Evidence);
                   Assert (Ada_Quality.Checks.Project_State_Fingerprint (Project_Root)'Length > 0,
@@ -379,6 +410,34 @@ package body Ada_Quality_Test_Suite is
                     (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "results")) = 33,
                   "parsed JSON contains every result");
                declare
+                  Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
+                  Batch    : Ada.Strings.Unbounded.Unbounded_String;
+               begin
+                  Outcomes.Append
+                    (Ada_Quality.JSON.Batch_Outcome'
+                       (Project_Id => 1, Assessment_Id => 1,
+                        Status => Ada_Quality.JSON.Batch_Completed,
+                        Diagnostic => Null_Unbounded_String, Value => Value));
+                  Outcomes.Append
+                    (Ada_Quality.JSON.Batch_Outcome'
+                       (Project_Id => 2, Assessment_Id => 2,
+                        Status => Ada_Quality.JSON.Batch_Interrupted,
+                        Diagnostic => To_Unbounded_String ("fixture interruption"), Value => <>));
+                  Outcomes.Append
+                    (Ada_Quality.JSON.Batch_Outcome'
+                       (Project_Id => 3, Assessment_Id => 3,
+                        Status => Ada_Quality.JSON.Batch_Completed,
+                        Diagnostic => Null_Unbounded_String, Value => Value));
+                  Batch := To_Unbounded_String (Ada_Quality.JSON.Render_Batch (Outcomes));
+                  Jsonlib.Parsers.Parse (To_String (Batch), Doc, Error);
+                  Assert (not Jsonlib.Errors.Failed (Error),
+                    "a multi-project assessment is one strict JSON document");
+                  Assert
+                    (Jsonlib.Documents.Length
+                       (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "outcomes")) = 3,
+                     "batch JSON retains completed and interrupted project outcomes");
+               end;
+               declare
                   Root : constant String :=
                     Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
                begin
@@ -388,6 +447,9 @@ package body Ada_Quality_Test_Suite is
                   Jsonlib.Parsers.Parse
                     (Project_Tools.Files.Read_Raw_File (Root & "/docs/archive.schema.json"), Doc, Error);
                   Assert (not Jsonlib.Errors.Failed (Error), "archive JSON schema is valid JSON");
+                  Jsonlib.Parsers.Parse
+                    (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-batch.schema.json"), Doc, Error);
+                  Assert (not Jsonlib.Errors.Failed (Error), "batch assessment JSON schema is valid JSON");
                end;
             end;
 
@@ -402,6 +464,23 @@ package body Ada_Quality_Test_Suite is
                Count  : Natural;
                Value  : Assessment;
                Raised : Boolean := False;
+
+               procedure Set_Coverage (Basis_Points : Long_Long_Integer) is
+               begin
+                  for Index in Value.Results.First_Index .. Value.Results.Last_Index loop
+                     if Value.Results (Index).Indicator = TST_03 then
+                        declare
+                           Result : Indicator_Result := Value.Results (Index);
+                        begin
+                           Result.Measurement :=
+                             (Kind => Decimal_Value, Basis_Points => Basis_Points);
+                           Value.Results.Replace_Element (Index, Result);
+                           return;
+                        end;
+                     end if;
+                  end loop;
+                  raise Program_Error with "TST-03 fixture result is absent";
+               end Set_Coverage;
             begin
                if Ada.Directories.Exists (Path) then Ada.Directories.Delete_File (Path); end if;
                Ada_Quality.Storage.Open (Store, Path);
@@ -440,6 +519,7 @@ package body Ada_Quality_Test_Suite is
                       Evidence => To_Unbounded_String ("test"),
                       Measurement => (Kind => Boolean_Value, Boolean_Data => True), Findings => <>));
                end loop;
+               Set_Coverage (9_100);
                declare
                   First_Result : Indicator_Result := Value.Results.First_Element;
                begin
@@ -458,6 +538,7 @@ package body Ada_Quality_Test_Suite is
                  "individual tool execution rows are persisted");
                Value.Id := 0;
                Value.Status := Assessment_Completed;
+               Set_Coverage (9_200);
                declare
                   Regressed : Indicator_Result := Value.Results.First_Element;
                   Escalated : Finding := Regressed.Findings.First_Element;
@@ -475,9 +556,40 @@ package body Ada_Quality_Test_Suite is
                begin
                   Assert (Ada.Strings.Fixed.Index (Archive, """new-violation""") > 0 and then
                     Ada.Strings.Fixed.Index (Archive, """increased-severity""") > 0 and then
+                    Ada.Strings.Fixed.Index (Archive, """schema_version"":2") > 0 and then
+                    Ada.Strings.Fixed.Index (Archive, """comparisons""") > 0 and then
+                    Ada.Strings.Fixed.Index (Archive, """comparison-available""") > 0 and then
                     Ada.Strings.Fixed.Index (Archive, """measurements""") > 0 and then
                     Ada.Strings.Fixed.Index (Archive, """executions""") > 0,
                     "archive JSON exports persisted evidence and derived regressions");
+               end;
+               Set_Coverage (9_400);
+               Assert (Ada_Quality.Storage.Publish (Store, Value) = 4,
+                 "a third completed assessment is available for recovery-history integration");
+               Run_Id := Ada_Quality.Storage.Start_Assessment
+                 (Store, Pid, "recovery-source", "policy");
+               Assert (Run_Id = 5, "the recovery fixture leaves the newest assessment running");
+               Ada_Quality.Storage.Close (Store);
+               Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
+               Ada_Quality.Storage.Recover (Store, Count);
+               declare
+                  Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
+                    Ada_Quality.Storage.History (Store, Pid);
+                  Trend : constant Ada_Quality.History.Trend_Vectors.Vector :=
+                    Ada_Quality.History.Metric_Trend
+                      (Runs, Ada_Quality.Storage.Measurements (Store), TST_03);
+                  Selection : constant Ada_Quality.History.Comparison_Selection :=
+                    Ada_Quality.History.Select_Comparison (Runs);
+               begin
+                  Assert (Count = 1 and then To_String (Runs.Last_Element.Status) = "interrupted",
+                    "recovery interrupts the abandoned latest assessment");
+                  Assert (Trend.Length = 3 and then Trend (Trend.First_Index).Value = 9_100 and then
+                    Trend (Trend.First_Index + 1).Value = 9_200 and then
+                    Trend (Trend.Last_Index).Value = 9_400,
+                    "recovery preserves three compatible completed metric points in chronological order");
+                  Assert (Ada_Quality.History.Baseline_Id (Runs, 4) = 3 and then
+                    Selection.Status = Ada_Quality.History.Current_Incomplete,
+                    "recovery preserves completed baseline selection and names latest comparison unavailability");
                end;
                Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "interrupt-source", "policy");
                Ada_Quality.Storage.Testing_Inject_Next_Fault
@@ -746,9 +858,71 @@ package body Ada_Quality_Test_Suite is
             declare
                Root : constant String := "/tmp/ada_quality_spark_test";
                Path : constant String := Root & "/src/example.ads";
+               Release_Manifest : constant String :=
+                 "name = ""example""" & ASCII.LF & "version = ""1.0.0""" & ASCII.LF &
+                 "description = ""fixture""" & ASCII.LF & "licenses = ""MIT""" & ASCII.LF &
+                 "authors = [""Example Author""]" & ASCII.LF &
+                 "maintainers = [""Example <example@example.invalid>""]" & ASCII.LF;
+               Dependency_Manifest : constant String :=
+                 "# [[depends-on]] in a comment is not structure" & ASCII.LF &
+                 "description = ""[[depends-on]] in a string is not structure""" & ASCII.LF &
+                 "[[depends-on]]" & ASCII.LF & "fixture_dependency = ""^1.0""" & ASCII.LF;
+               Consistent_Lock : constant String :=
+                 "[solution.context]" & ASCII.LF & "solved = true" & ASCII.LF &
+                 "note = ""[[solution.state]] is not a section""" & ASCII.LF &
+                 "[[solution.state]]" & ASCII.LF & "crate = ""fixture_dependency""" & ASCII.LF &
+                 "versions = ""^1.0""" & ASCII.LF & "transitivity = ""direct""" & ASCII.LF &
+                 "[[solution.state]]" & ASCII.LF & "crate = ""transitive_dependency""" & ASCII.LF &
+                 "versions = ""~2.0""" & ASCII.LF & "transitivity = ""direct""" & ASCII.LF;
+               Inconsistent_Lock : constant String :=
+                 "[solution.context]" & ASCII.LF & "solved = true" & ASCII.LF &
+                 "[[solution.state]]" & ASCII.LF & "crate = ""fixture_dependency""" & ASCII.LF &
+                 "versions = ""^2.0""" & ASCII.LF & "transitivity = ""direct""" & ASCII.LF;
             begin
                if Project_Tools.Files.Exists (Root) then Project_Tools.Files.Delete_Tree (Root); end if;
                Ada.Directories.Create_Path (Root & "/src");
+               Assert (Ada_Quality.Checks.Valid_Release_Manifest (Release_Manifest) and then
+                 not Ada_Quality.Checks.Valid_Release_Manifest
+                   ("name = ""example""" & ASCII.LF & "version = ""1.0.0""" & ASCII.LF &
+                    "description = ""fixture""" & ASCII.LF & "licenses = ""MIT""" & ASCII.LF),
+                 "REL-03 explicitly validates the canonical Alire release metadata contract");
+               Assert (Ada_Quality.Checks.License_Evidence (Root, Release_Manifest) =
+                 Ada_Quality.Checks.Metadata_Missing,
+                 "REL-02 distinguishes a missing license file from inconsistent evidence");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/LICENSE",
+                  "MIT License" & ASCII.LF & "Permission is hereby granted, free of charge" & ASCII.LF);
+               Assert (Ada_Quality.Checks.License_Evidence (Root, Release_Manifest) =
+                 Ada_Quality.Checks.Metadata_Matches,
+                 "matching Alire SPDX metadata and license text pass REL-02");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/LICENSE", "Apache License" & ASCII.LF & "Version 2.0" & ASCII.LF);
+               Assert (Ada_Quality.Checks.License_Evidence (Root, Release_Manifest) =
+                 Ada_Quality.Checks.Metadata_Mismatch,
+                 "a declared MIT license with Apache-2.0 contents is inconsistent");
+               Project_Tools.Files.Write_Text_File (Root & "/LICENSE", "unrecognized license evidence" & ASCII.LF);
+               Assert (Ada_Quality.Checks.License_Evidence (Root, Release_Manifest) =
+                 Ada_Quality.Checks.Metadata_Unsupported,
+                 "unrecognized license contents block rather than pass consistency");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/LICENSE", "MIT OR Apache-2.0 WITH LLVM-exception" & ASCII.LF);
+               Assert
+                 (Ada_Quality.Checks.License_Evidence
+                    (Root,
+                     Ada.Strings.Fixed.Replace_Slice
+                       (Release_Manifest,
+                        Ada.Strings.Fixed.Index (Release_Manifest, "MIT"),
+                        Ada.Strings.Fixed.Index (Release_Manifest, "MIT") + 2,
+                        "MIT OR Apache-2.0 WITH LLVM-exception")) = Ada_Quality.Checks.Metadata_Matches,
+                  "supported SPDX OR/WITH expressions match explicit repository license evidence");
+               Assert
+                 (Ada_Quality.Checks.Dependency_Consistency
+                    (Dependency_Manifest, Consistent_Lock) = Ada_Quality.Checks.Dependency_Consistent and then
+                  Ada_Quality.Checks.Dependency_Consistency
+                    (Dependency_Manifest, Inconsistent_Lock) = Ada_Quality.Checks.Dependency_Inconsistent and then
+                  Ada_Quality.Checks.Dependency_Consistency
+                    (Dependency_Manifest, "") = Ada_Quality.Checks.Dependency_Unavailable,
+                  "DEP-03 independently detects a solved lock whose direct constraint differs from the manifest");
                Project_Tools.Files.Write_Text_File
                  (Path,
                   "--  SPARK_Mode in a comment" & ASCII.LF &
@@ -774,6 +948,16 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/spark.adc", "pragma SPARK_Mode (On);" & ASCII.LF);
                Assert (Ada_Quality.Checks.Declares_SPARK (Root),
                  "project configuration pragmas make SPARK proof applicable");
+               Assert
+                 (Ada_Quality.Checks.Classify_Proof_Applicability
+                    (SPARK_Declared => True, Project_Available => False) =
+                    Ada_Quality.Checks.Proof_Blocked and then
+                  Ada_Quality.Checks.Classify_Proof_Applicability
+                    (SPARK_Declared => False, Project_Available => False) =
+                    Ada_Quality.Checks.Proof_Not_Applicable and then
+                  Ada_Quality.Checks.Classify_Proof_Applicability
+                    (SPARK_Declared => True, Project_Available => True) = Ada_Quality.Checks.Proof_Ready,
+                  "SPARK without a usable GPR is blocked, not classified as inapplicable");
                Assert (Ada_Quality.Checks.Test_Project_File (Root) = "" and then
                  Ada_Quality.Checks.Test_Suite_Executable (Root) = "",
                  "a project without a tests crate has no test suite");
@@ -790,11 +974,22 @@ package body Ada_Quality_Test_Suite is
                  (Root & "/tests/suite.gpr", "project Suite is end Suite;" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Root & "/tests/alire.toml",
-                  "name = ""example_tests""" & ASCII.LF & "project-files = [""suite.gpr""]" & ASCII.LF);
+                  "name = ""example_tests""" & ASCII.LF & "project-files = [""suite.gpr""]" & ASCII.LF &
+                  "executables = [""top_level_suite""]" & ASCII.LF &
+                  "[tool.fixture]" & ASCII.LF & "project-files = [""wrong.gpr""]" & ASCII.LF &
+                  "executables = [""wrong_suite""]" & ASCII.LF);
                Assert (Ada_Quality.Checks.Test_Project_File (Root) = Root & "/tests/suite.gpr",
-                 "a listed project file names the tests project");
-               Assert (Ada_Quality.Checks.Test_Suite_Executable (Root) = Root & "/tests/bin/example_tests",
-                 "without executables the suite is named after the tests crate");
+                 "only the top-level project-files array names the tests project");
+               Assert (Ada_Quality.Checks.Test_Suite_Executable (Root) = Root & "/tests/bin/top_level_suite",
+                 "only the top-level executables array names the test suite");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/tests/alire.toml",
+                  "name = ""example_tests""" & ASCII.LF & "[tool.fixture]" & ASCII.LF &
+                  "project-files = [""wrong.gpr""]" & ASCII.LF &
+                  "executables = [""wrong_suite""]" & ASCII.LF);
+               Assert (Ada_Quality.Checks.Test_Project_File (Root) = Root & "/tests/example_tests.gpr" and then
+                 Ada_Quality.Checks.Test_Suite_Executable (Root) = Root & "/tests/bin/example_tests",
+                 "nested arrays cannot impersonate absent top-level project and executable declarations");
                Assert (Ada_Quality.Checks.Dedicated_Proof_Projects (Root)'Length = 0,
                  "a project without spark*.gpr files proves its main project");
                Project_Tools.Files.Write_Text_File
@@ -834,13 +1029,30 @@ package body Ada_Quality_Test_Suite is
                Metrics : Ada_Quality.Checks.Source_Analysis;
                Long_Line : constant String := "   Value : constant String := """ &
                  [1 .. 121 => 'x'] & """;";
+               Example_Body : constant String :=
+                 "procedure Example is" & ASCII.LF &
+                 "begin" & ASCII.LF &
+                 "   if Ready and then Enabled then" & ASCII.LF &
+                 "      null;" & ASCII.LF &
+                 "   elsif Waiting then" & ASCII.LF &
+                 "      null;" & ASCII.LF &
+                 "   end if;" & ASCII.LF &
+                 "   Label := ""password := Run_Shell"";" & ASCII.LF &
+                 "   -- Password := and Run_Shell are inert in comments." & ASCII.LF &
+                 "   Password := ""redacted"";" & ASCII.LF &
+                 "   Run_Shell;" & ASCII.LF &
+                 "   Register_Routine;" & ASCII.LF &
+                 Long_Line & ASCII.LF &
+                 "exception" & ASCII.LF &
+                 "   when others => null;" & ASCII.LF &
+                 "end Example;" & ASCII.LF;
             begin
                Project_Tools.Files.Delete_Tree (Root);
                Ada.Directories.Create_Path (Root & "/src");
                Ada.Directories.Create_Path (Root & "/tests/src");
                Ada.Directories.Create_Path (Root & "/config");
                Policy.Maximum_Source_Lines := 5;
-               Policy.Maximum_Complexity := 3;
+               Policy.Maximum_Complexity := 4;
                Project_Tools.Files.Write_Text_File
                  (Root & "/src/Documented.ads",
                   "--  Public package documentation." & ASCII.LF &
@@ -852,28 +1064,17 @@ package body Ada_Quality_Test_Suite is
                   "end Undocumented;" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Root & "/src/example.adb",
-                  "procedure Example is" & ASCII.LF &
-                  "begin" & ASCII.LF &
-                  "   if Ready and then Enabled then" & ASCII.LF &
-                  "      null;" & ASCII.LF &
-                  "   elsif Waiting then" & ASCII.LF &
-                  "      null;" & ASCII.LF &
-                  "   end if;" & ASCII.LF &
-                  "   Label := ""password := Run_Shell"";" & ASCII.LF &
-                  "   -- Password := and Run_Shell are inert in comments." & ASCII.LF &
-                  "   Password := ""redacted"";" & ASCII.LF &
-                  "   Run_Shell;" & ASCII.LF &
-                  "   Register_Routine;" & ASCII.LF &
-                  Long_Line & ASCII.LF &
-                  "exception" & ASCII.LF &
-                  "   when others => null;" & ASCII.LF &
-                  "end Example;" & ASCII.LF);
+                  "--  AQ: complexity-reviewed" & ASCII.LF &
+                  "--  AQ-WAIVER: SRC-03 target=wrong justification=fixture rejects broad targeting" & ASCII.LF &
+                  Example_Body);
                Project_Tools.Files.Write_Text_File
                  (Root & "/tests/src/example_tests.adb",
                   "procedure Example_Tests is begin Register_Routine; end Example_Tests;" & ASCII.LF);
                Project_Tools.Files.Write_Text_File
                  (Root & "/src/nested.adb",
-                  "--  AQ: size-reviewed" & ASCII.LF &
+                  "--  AQ-WAIVER: SRC-06 target=file justification=fixture exercises reviewed source size" & ASCII.LF &
+                  "--  AQ-WAIVER: SRC-03 target=inner justification=fixture reviews the measured nested segment" &
+                  ASCII.LF &
                   "procedure Nested is" & ASCII.LF &
                   "   function Expression (Flag : Boolean) return Boolean is (Flag and then Ready);" & ASCII.LF &
                   "   procedure Inner is" & ASCII.LF &
@@ -899,6 +1100,8 @@ package body Ada_Quality_Test_Suite is
                Assert (Metrics.Maximum_Complexity = 5,
                  "defined complexity covers conditionals, short circuits, alternatives, loops, " &
                  "nested declarations, and expression functions");
+               Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 2,
+                 "legacy and mismatched complexity markers do not waive a measured occurrence");
                Assert (Metrics.Long_Lines = 1 and then Metrics.Oversized_Files = 1,
                  "line and file-size policy violations are measured");
                Assert (Metrics.Secret_Matches = 1 and then Metrics.Unsafe_Processes = 1,
@@ -906,6 +1109,26 @@ package body Ada_Quality_Test_Suite is
                Assert (Metrics.Broad_Handlers = 1 and then Metrics.Test_Registrations = 2,
                  "broad handlers and test registrations use Ada-aware source scans");
                Assert (Metrics.Findings.Length >= 7, "native violations carry structured findings");
+               Project_Tools.Files.Write_Text_File
+                 (Root & "/src/example.adb",
+                  "--  AQ-WAIVER: SRC-03 target=example justification=fixture reviewed this subprogram" &
+                  ASCII.LF & Example_Body);
+               Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
+               Assert (Metrics.Complexity_Violations = 0 and then Metrics.Review_Waivers = 3,
+                 "matching rule, target, and justification waive only the reviewed occurrence; violations" &
+                 Natural'Image (Metrics.Complexity_Violations) & ", waivers" &
+                 Natural'Image (Metrics.Review_Waivers));
+               declare
+                  Visible_Waivers : Natural := 0;
+               begin
+                  for Finding of Metrics.Findings loop
+                     if To_String (Finding.Rule) = "review-waiver" and then Finding.Level = Low then
+                        Visible_Waivers := Visible_Waivers + 1;
+                     end if;
+                  end loop;
+                  Assert (Visible_Waivers = 3,
+                    "accepted source-size and complexity waivers remain visible as low-severity evidence");
+               end;
                Policy.Require_Clean_Worktree := False;
                --  A SPARK unit with a dedicated proof project: PRF-01 proves that project, which cannot pass here.
                Project_Tools.Files.Write_Text_File
@@ -1466,6 +1689,11 @@ package body Ada_Quality_Test_Suite is
                    State => To_Unbounded_String ("DECIMAL_VALUE"), Summary => To_Unbounded_String ("9200")));
                Runs.Append (Baseline);
                Runs.Append (Current);
+               Assert
+                 (Ada_Quality.History.Select_Comparison (Runs).Status =
+                    Ada_Quality.History.Comparison_Available and then
+                  Ada_Quality.History.Select_Comparison (Runs).Baseline_Id = Baseline.Id,
+                  "central comparison selection returns the compatible baseline");
                Assert (Ada_Quality.History.Baseline_Id (Runs, 999) = 0,
                  "a missing current assessment has no baseline");
                declare
@@ -1477,6 +1705,44 @@ package body Ada_Quality_Test_Suite is
                   Assert (Trend.Length = 2 and then Trend.First_Element.Value = 9_600 and then
                     Trend.Last_Element.Value = 9_200,
                     "metric trends retain compatible typed measurements in run order");
+               end;
+               declare
+                  Trend_Runs : Ada_Quality.Storage.History_Vectors.Vector := Runs;
+                  Trend_Measures : Ada_Quality.Storage.Detail_Vectors.Vector := Old_Measures;
+                  Third : Ada_Quality.Storage.History_Item := Current;
+                  Failed : Ada_Quality.Storage.History_Item := Current;
+                  Third_Measure : Ada_Quality.Storage.Detail_Info := New_Measures.First_Element;
+                  Trend : Ada_Quality.History.Trend_Vectors.Vector;
+               begin
+                  Trend_Measures.Append_Vector (New_Measures);
+                  Third.Id := 3;
+                  Third.Source_Fingerprint := To_Unbounded_String ("source-c");
+                  Failed := Third;
+                  Failed.Id := 4;
+                  Failed.Status := To_Unbounded_String ("interrupted");
+                  Trend_Runs.Append (Third);
+                  Trend_Runs.Append (Failed);
+                  Third_Measure.Id := 3;
+                  Third_Measure.Run_Id := 3;
+                  Third_Measure.State := To_Unbounded_String
+                    ("DECIMAL_VALUE;indicator_version=1;method_version=1");
+                  Third_Measure.Summary := To_Unbounded_String ("9400");
+                  Trend_Measures.Append (Third_Measure);
+                  Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
+                  Assert (Trend.Length = 3 and then Trend.Last_Element.Value = 9_400,
+                    "an interrupted latest run does not hide compatible completed metric history");
+                  Third_Measure.State := To_Unbounded_String
+                    ("DECIMAL_VALUE;indicator_version=2;method_version=1");
+                  Trend_Measures.Replace_Element (Trend_Measures.Last_Index, Third_Measure);
+                  Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
+                  Assert (Trend.Length = 1 and then Trend.First_Element.Run_Id = 3,
+                    "metric trends do not mix different indicator contract versions");
+                  Third_Measure.State := To_Unbounded_String
+                    ("DECIMAL_VALUE;indicator_version=1;method_version=2");
+                  Trend_Measures.Replace_Element (Trend_Measures.Last_Index, Third_Measure);
+                  Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
+                  Assert (Trend.Length = 1 and then Trend.First_Element.Run_Id = 3,
+                    "metric trends do not mix different measurement-method versions");
                end;
                Changes := Ada_Quality.History.Compare
                  (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
@@ -1615,8 +1881,8 @@ package body Ada_Quality_Test_Suite is
                Assert
                  (Ada_Quality.History.Classify_Finding
                     (To_Unbounded_String ("SRC-01:rule:renamed:message"), Renamed, Empty, Older, True) =
-                    Ada_Quality.History.Reintroduced,
-                  "a stable finding returning after absence is reintroduced despite line shifts");
+                    Ada_Quality.History.New_Finding,
+                  "the same rule and message in a different file is a distinct finding");
                Older.Replace_Element
                  (Older.First_Index,
                   Ada_Quality.Storage.Detail_Info'
@@ -1625,8 +1891,9 @@ package body Ada_Quality_Test_Suite is
                Current.Policy_Fingerprint := Baseline.Policy_Fingerprint;
                Changes := Ada_Quality.History.Compare
                  (Baseline, Current, Empty, Empty, Empty, Empty, Older, Renamed);
-               Assert (Has_Kind (Ada_Quality.History.Increased_Severity),
-                 "severity increases retain identity across a renamed path");
+               Assert (Has_Kind (Ada_Quality.History.Introduced_Finding) and then
+                 not Has_Kind (Ada_Quality.History.Increased_Severity),
+                 "a finding in another file is introduced rather than conflated with an older occurrence");
                declare
                   Baseline_Set, Current_Set, Historical_Set : Ada_Quality.Storage.Detail_Vectors.Vector;
                   Stable_Key : constant Ada.Strings.Unbounded.Unbounded_String :=

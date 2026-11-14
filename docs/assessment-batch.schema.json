@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/assessment-batch-v1.schema.json",
+  "title": "Ada Quality multi-project assessment batch v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "outcomes"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "assessment-batch" },
+    "outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["project_id", "assessment_id", "status", "diagnostic"],
+        "properties": {
+          "project_id": { "type": "integer", "minimum": 1 },
+          "assessment_id": { "type": "integer", "minimum": 1 },
+          "status": { "enum": ["completed", "interrupted"] },
+          "diagnostic": { "type": "string" },
+          "assessment": { "$ref": "assessment.schema.json" }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "status": { "const": "completed" } } },
+            "then": { "required": ["assessment"] },
+            "else": { "not": { "required": ["assessment"] } }
+          }
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

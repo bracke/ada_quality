@@ -40,4 +40,14 @@ package Ada_Quality.Coverage is
    --  @param Output Captured per-file gcov output.
    --  @param Source Absolute inventoried source path.
    --  @return True when a matching file header has a valid line summary.
+
+   function Has_Complete_Source_Records
+     (Output, Notes : String; Unit : Production_Unit) return Boolean;
+   --  Test whether every source file belonging to a unit has coverage evidence.
+   --  Compiler coverage notes independently identify sources with executable lines; an inventoried source absent
+   --  from those notes is recognized as a zero-executable-line source.
+   --  @param Output Captured per-file gcov output.
+   --  @param Notes Captured gcov-dump output for the unit's compiler-generated notes.
+   --  @param Unit Independently inventoried body and specification paths.
+   --  @return True only when every eligible file is represented or the unit has no executable lines.
 end Ada_Quality.Coverage;

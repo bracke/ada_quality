@@ -24,6 +24,7 @@ package Ada_Quality.Indicators is
    type Indicator_Descriptor is record
       Id       : Indicator_Id;
       Version  : Positive;
+      Measurement_Version : Positive;
       Category : Indicator_Category;
       Name     : access constant String;
       Prerequisites : Indicator_Set;
@@ -31,6 +32,7 @@ package Ada_Quality.Indicators is
    --  Immutable registry metadata for one indicator.
    --  @field Id Stable indicator identifier.
    --  @field Version Indicator contract version.
+   --  @field Measurement_Version Numerical evidence-method version used for historical trend compatibility.
    --  @field Category Reporting group.
    --  @field Name Human-readable indicator name.
    --  @field Prerequisites Indicators that must produce evidence first.
