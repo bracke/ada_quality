@@ -261,7 +261,7 @@ begin
          elsif Expected_Text'Length > 0 and then
            Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Text) = 0
          then
-            raise Program_Error with Label & " did not report: " & Expected_Text;
+            raise Program_Error with Label & " did not report: " & Expected_Text & ASCII.LF & To_String (Result.Output);
          end if;
       end Run_CLI;
 
