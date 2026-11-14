@@ -1175,6 +1175,7 @@ package body Ada_Quality.Checks is
             Has_Docs   : Boolean := False;
             Pending_Doc : Boolean := False;
             Unit_Name_Checked : Boolean := False;
+            Subunit_Parent    : Ada.Strings.Unbounded.Unbounded_String;
             Is_Spec     : constant Boolean :=
               Name'Length >= 4 and then Name (Name'Last - 3 .. Name'Last) = ".ads";
 
@@ -1273,6 +1274,13 @@ package body Ada_Quality.Checks is
                         if To_String (Words (First)) = "private" and then First < Words.Last_Index then
                            First := First + 1;
                         end if;
+                        --  A subunit's file is named after its parent followed by the subunit name.
+                        if To_String (Words (First)) = "separate" then
+                           for K in First + 1 .. Words.Last_Index loop
+                              exit when To_String (Words (K)) in "package" | "procedure" | "function";
+                              Append (Subunit_Parent, To_String (Words (K)));
+                           end loop;
+                        end if;
                         if To_String (Words (First)) = "package" and then First < Words.Last_Index and then
                           To_String (Words (First + 1)) = "body"
                         then
@@ -1288,9 +1296,23 @@ package body Ada_Quality.Checks is
                               "package" | "procedure" | "function"
                         then
                            declare
-                              Unit_Name : Ada.Strings.Unbounded.Unbounded_String;
+                              Unit_Name : Ada.Strings.Unbounded.Unbounded_String := Subunit_Parent;
+                              --  The unit name ends before a parameter list.
+                              Paren     : constant Natural := Ada.Strings.Fixed.Index (Clean, "(");
+                              Name_Words : Natural := Natural (Words.Length);
                            begin
+                              if Paren > 0 then
+                                 Name_Words := 0;
+                                 for J in Clean'First .. Paren - 1 loop
+                                    if Clean (J) in 'a' .. 'z' | '0' .. '9' | '_' and then
+                                      (J = Clean'First or else Clean (J - 1) not in 'a' .. 'z' | '0' .. '9' | '_')
+                                    then
+                                       Name_Words := Name_Words + 1;
+                                    end if;
+                                 end loop;
+                              end if;
                               for K in First .. Words.Last_Index loop
+                                 exit when K - Words.First_Index >= Name_Words;
                                  exit when To_String (Words (K)) in "is" | "with" | "renames";
                                  Append (Unit_Name, To_String (Words (K)));
                               end loop;

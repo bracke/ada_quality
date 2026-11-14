@@ -1095,6 +1095,23 @@ package body Ada_Quality_Test_Suite is
                  Metrics.Generated_Files = 1,
                  "native inventory distinguishes production, test, and generated Ada sources");
                Assert (Metrics.Naming_Errors = 1, "non-lowercase Ada file names are findings");
+               declare
+                  Subunit_Root : constant String := Root & "/subunits";
+                  Subunits     : Ada_Quality.Checks.Source_Analysis;
+               begin
+                  Ada.Directories.Create_Path (Subunit_Root & "/src");
+                  Project_Tools.Files.Write_Text_File
+                    (Subunit_Root & "/src/example-part.adb",
+                     "separate (Example)" & ASCII.LF & "procedure Part (Value : Integer) is" & ASCII.LF & "begin" & ASCII.LF &
+                     "   null;" & ASCII.LF & "end Part;" & ASCII.LF);
+                  Project_Tools.Files.Write_Text_File
+                    (Subunit_Root & "/src/example-wrong.adb",
+                     "separate (Example)" & ASCII.LF & "procedure Other is" & ASCII.LF & "begin" & ASCII.LF &
+                     "   null;" & ASCII.LF & "end Other;" & ASCII.LF);
+                  Subunits := Ada_Quality.Checks.Analyze_Source (Subunit_Root, Policy);
+                  Assert (Subunits.Naming_Errors = 1,
+                    "a subunit file is named after its parent and subunit; a mismatched subunit is a finding");
+               end;
                Assert (Metrics.Undocumented_Specs = 1,
                  "a standalone package documentation comment is required");
                Assert (Metrics.Maximum_Complexity = 5,
