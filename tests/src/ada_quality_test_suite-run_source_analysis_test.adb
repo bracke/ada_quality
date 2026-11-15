@@ -129,6 +129,29 @@ begin
    Assert (Metrics.Broad_Handlers = 1 and then Metrics.Test_Registrations = 2,
      "broad handlers and test registrations use Ada-aware source scans");
    Assert (Metrics.Findings.Length >= 7, "native violations carry structured findings");
+   declare
+      Changed : constant Ada_Quality.Checks.Source_Analysis :=
+        Ada_Quality.Checks.Analyze_Changed_Sources
+          (Root,
+           [To_Unbounded_String ("src/example.adb"),
+            To_Unbounded_String ("src/example.adb")],
+           Policy);
+      Escaped : Boolean := False;
+   begin
+      Assert (Changed.File_Count = 1 and then Changed.Production_Files = 1
+              and then Changed.Long_Lines = 2 and then Changed.Broad_Handlers = 1,
+              "change-scoped source analysis measures only the normalized explicit source set");
+      Assert (Changed.Undocumented_Specs = 0 and then Changed.Test_Registrations = 1,
+              "change-scoped source analysis does not import unrelated source evidence");
+      begin
+         Metrics := Ada_Quality.Checks.Analyze_Changed_Sources
+           (Root, [To_Unbounded_String ("../outside.adb")], Policy);
+      exception
+         when Constraint_Error =>
+            Escaped := True;
+      end;
+      Assert (Escaped, "change-scoped source analysis accepted a path outside the project");
+   end;
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
       "--  AQ-WAIVER: SRC-03 target=example justification=fixture reviewed this subprogram" &

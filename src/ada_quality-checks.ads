@@ -128,6 +128,20 @@ package Ada_Quality.Checks is
    --  @param Policy Validated source limits.
    --  @return Aggregate metrics and findings.
 
+   function Analyze_Changed_Sources
+     (Root    : String;
+      Changed : Project_Tools.Files.Path_List;
+      Policy  : Ada_Quality.Policy.Quality_Policy) return Source_Analysis;
+   --  Apply the same native source rules to an explicit project-relative
+   --  source set, without traversing unrelated project sources. Paths are
+   --  normalized, deduplicated and confined beneath Root before reading.
+   --  @param Root Canonical project root.
+   --  @param Changed Project-relative ordinary .ads and .adb files.
+   --  @param Policy Validated source limits.
+   --  @return Aggregate metrics and findings for exactly Changed.
+   --  @exception Constraint_Error A path is invalid, missing, linked, outside
+   --    Root, generated configuration, or not an Ada source.
+
    function Inspected_Output_Result
      (Indicator       : Ada_Quality.Types.Indicator_Id;
       Run             : Ada_Quality.Execution.Run_Result;

@@ -593,9 +593,11 @@ package body Ada_Quality.Checks is
    end Find_Review_Waiver;
 
    procedure Scan_Source
-     (Root   : String;
-      Policy : Ada_Quality.Policy.Quality_Policy;
-      Result : out Source_Analysis) is separate;
+     (Root            : String;
+      Files           : Text_Vectors.Vector;
+      Count_Generated : Boolean;
+      Policy          : Ada_Quality.Policy.Quality_Policy;
+      Result          : out Source_Analysis) is separate;
 
    function Analyze_Source
      (Root   : String;
@@ -603,9 +605,114 @@ package body Ada_Quality.Checks is
    is
       Result : Source_Analysis;
    begin
-      Scan_Source (Root, Policy, Result);
+      Scan_Source (Root, Source_Files (Root), True, Policy, Result);
       return Result;
    end Analyze_Source;
+
+   function Safe_Changed_Relative (Path : String) return Boolean is
+      Start : Natural := Path'First;
+   begin
+      if Path = "" or else Path (Path'First) in '/' | '\' then
+         return False;
+      end if;
+      for Index in Path'Range loop
+         if Path (Index) in '/' | '\' then
+            if Path (Start .. Index - 1) in "" | "." | ".." then
+               return False;
+            end if;
+            Start := Index + 1;
+         end if;
+      end loop;
+      return Start <= Path'Last and then Path (Start .. Path'Last) not in "." | "..";
+   end Safe_Changed_Relative;
+
+   procedure Validate_Changed_Components
+     (Canonical_Root : String;
+      Relative_Path  : String)
+   is
+      Current : Ada.Strings.Unbounded.Unbounded_String := To_Unbounded_String (Canonical_Root);
+      Start   : Natural := Relative_Path'First;
+   begin
+      for Index in Relative_Path'Range loop
+         if Relative_Path (Index) in '/' | '\' then
+            Append (Current, "/" & Relative_Path (Start .. Index - 1));
+            if Project_Tools.Links.Is_Link (To_String (Current)) then
+               raise Constraint_Error with "changed source path traverses a symbolic link";
+            end if;
+            Start := Index + 1;
+         end if;
+      end loop;
+      Append (Current, "/" & Relative_Path (Start .. Relative_Path'Last));
+      if Project_Tools.Links.Is_Link (To_String (Current)) then
+         raise Constraint_Error with "changed source path is a symbolic link";
+      end if;
+   end Validate_Changed_Components;
+
+   function Validated_Changed_Source
+     (Canonical_Root : String;
+      Relative_Path  : String) return String
+   is
+      Path : constant String := Ada.Directories.Full_Name (Canonical_Root & "/" & Relative_Path);
+      Rel  : constant String := "/" & Relative_Path;
+   begin
+      if Path'Length <= Canonical_Root'Length
+        or else Path (Path'First .. Path'First + Canonical_Root'Length - 1) /= Canonical_Root
+        or else Path (Path'First + Canonical_Root'Length) not in '/' | '\'
+      then
+         raise Constraint_Error with "changed source path escapes the project root";
+      elsif not Project_Tools.Files.File_Exists (Path) then
+         raise Constraint_Error with "changed source path is not an ordinary file";
+      elsif not (Has_Suffix (Lower (Path), ".ads") or else Has_Suffix (Lower (Path), ".adb")) then
+         raise Constraint_Error with "changed source path is not Ada source";
+      elsif Contains (Rel, "/config/")
+        and then (Contains (Ada.Directories.Simple_Name (Path), "_config.ads")
+                  or else Contains (Ada.Directories.Simple_Name (Path), "_config.adb"))
+      then
+         raise Constraint_Error with "generated configuration source is not change-scoped input";
+      end if;
+      return Path;
+   end Validated_Changed_Source;
+
+   function Changed_Source_Files
+     (Root    : String;
+      Changed : Project_Tools.Files.Path_List) return Text_Vectors.Vector
+   is
+      Canonical_Root : constant String := Ada.Directories.Full_Name (Root);
+      Result         : Text_Vectors.Vector;
+   begin
+      for Value of Changed loop
+         declare
+            Relative_Path : constant String := To_String (Value);
+         begin
+            if not Safe_Changed_Relative (Relative_Path) then
+               raise Constraint_Error with "changed source path is not project-relative";
+            end if;
+            Validate_Changed_Components (Canonical_Root, Relative_Path);
+            declare
+               Path : constant String := Validated_Changed_Source (Canonical_Root, Relative_Path);
+            begin
+               if not Result.Contains (To_Unbounded_String (Path)) then
+                  Result.Append (To_Unbounded_String (Path));
+               end if;
+            end;
+         end;
+      end loop;
+      Text_Sorting.Sort (Result);
+      return Result;
+   end Changed_Source_Files;
+
+   function Analyze_Changed_Sources
+     (Root    : String;
+      Changed : Project_Tools.Files.Path_List;
+      Policy  : Ada_Quality.Policy.Quality_Policy) return Source_Analysis
+   is
+      Canonical_Root : constant String := Ada.Directories.Full_Name (Root);
+      Files          : constant Text_Vectors.Vector := Changed_Source_Files (Canonical_Root, Changed);
+      Result         : Source_Analysis;
+   begin
+      Scan_Source (Canonical_Root, Files, False, Policy, Result);
+      return Result;
+   end Analyze_Changed_Sources;
 
    function Tool_Result
      (Id      : Indicator_Id;

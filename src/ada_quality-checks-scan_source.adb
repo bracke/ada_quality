@@ -1,27 +1,30 @@
 separate (Ada_Quality.Checks)
 --  AQ-WAIVER: SRC-03 target=canonical justification=lexical-helpers-share-one-source-pass
 procedure Scan_Source
-  (Root   : String;
-   Policy : Ada_Quality.Policy.Quality_Policy;
-   Result : out Source_Analysis)
+  (Root            : String;
+   Files           : Text_Vectors.Vector;
+   Count_Generated : Boolean;
+   Policy          : Ada_Quality.Policy.Quality_Policy;
+   Result          : out Source_Analysis)
 is
-   Files : constant Text_Vectors.Vector := Source_Files (Root);
 begin
    Result := (Findings => <>, others => 0);
-   for Path_Value of All_Files (Root) loop
-      declare
-         Path : constant String := To_String (Path_Value);
-         Rel  : constant String := "/" & Relative (Root, Path);
-      begin
-         if (Has_Suffix (Path, ".ads") or else Has_Suffix (Path, ".adb")) and then
-           Contains (Rel, "/config/") and then
-           (Contains (Ada.Directories.Simple_Name (Path), "_config.ads") or else
-            Contains (Ada.Directories.Simple_Name (Path), "_config.adb"))
-         then
-            Result.Generated_Files := Result.Generated_Files + 1;
-         end if;
-      end;
-   end loop;
+   if Count_Generated then
+      for Path_Value of All_Files (Root) loop
+         declare
+            Path : constant String := To_String (Path_Value);
+            Rel  : constant String := "/" & Relative (Root, Path);
+         begin
+            if (Has_Suffix (Path, ".ads") or else Has_Suffix (Path, ".adb")) and then
+              Contains (Rel, "/config/") and then
+              (Contains (Ada.Directories.Simple_Name (Path), "_config.ads") or else
+               Contains (Ada.Directories.Simple_Name (Path), "_config.adb"))
+            then
+               Result.Generated_Files := Result.Generated_Files + 1;
+            end if;
+         end;
+      end loop;
+   end if;
    for Path_Value of Files loop
       declare
          Path       : constant String := To_String (Path_Value);
