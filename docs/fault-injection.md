@@ -12,7 +12,7 @@
 | Recovery commit | injected fault after state/event writes | state remains running and no recovery event leaks |
 | Recovery repeat | call recovery twice | first call records state/event; second reports zero |
 | Tool spawn | nonexistent executable | structured `Spawn_Error`, never pass |
-| Tool deadline | two-second child with one-second limit | timeout status and child cleanup |
+| Tool deadline | TERM-resistant descendant under a one-second limit | timeout status and complete process-group cleanup |
 | Output pressure | ten-byte output with five-byte ceiling | exact five bytes retained and truncation recorded |
 | Link/pin escape/cycle | external/ancestor links and `../../../` pin | no traversal, no hang, external content ignored |
 | Policy corruption | missing, duplicate, and excessive values | structured load failure and exit class 2 |

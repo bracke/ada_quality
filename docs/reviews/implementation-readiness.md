@@ -17,17 +17,17 @@ Verified facts:
 - a fresh full assessment completed with 32 passing indicators and PRF-01 correctly not applicable;
 - the validation build, 21-test AUnit action, coverage gate, GNATdoc generation, and release checker passed;
 - database integrity passed before and after an assessment, and exported JSON parsed with the documented structure;
-- repeated isolated coverage runs produced identical per-unit counts of 3,702/4,113 (90.00%).
+- repeated isolated coverage runs produced identical per-unit counts above the 90% policy threshold.
 
 Remediated findings:
 
 - **AQ9-001, resolved:** workspaces, GNATdoc output, coverage objects, binaries, and databases now live beneath
-  atomically created private mode-0700 invocation directories. Same-identity workspaces are isolated, and an explicit
-  coverage lock rejects overlap with a clear diagnostic.
-- **AQ9-002, resolved:** deterministic branch tests keep stable production coverage at the 90% policy at 90.00%.
+  atomically created private mode-0700 invocation directories. Same-identity workspaces are isolated, and an advisory
+  coverage lock rejects overlap with a clear diagnostic and is released automatically after process termination.
+- **AQ9-002, resolved:** deterministic branch tests keep stable production coverage above the 90% policy.
   The artifact records
-  source and toolchain fingerprints plus per-unit counts; identical runs fail if any count changes. A current-fingerprint
-  seed removes the coverage workflow's former self-reference to its preceding artifact.
+  source and toolchain fingerprints plus per-unit counts; identical runs fail if any count changes. The workflow keeps
+  canonical evidence unchanged during self-assessment and publishes stability before the summary with atomic renames.
 
 - **AQ9-003, resolved:** GNATdoc excludes dependency project files through portable Alire-prefix expressions, while
   every Ada_Quality package, type, literal, record field, subprogram parameter, return value, and executable entry

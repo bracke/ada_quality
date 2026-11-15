@@ -24,4 +24,5 @@ process, environment, coverage-artifact, database, or test state and re-raise, o
 policy, presentation, execution, or CLI boundary. No unsafe broad handler is accepted by SRC-05.
 
 DOC-01 and DOC-02 were reverified after documenting the complete project-owned API and excluding dependency project
-files from this project's GNATdoc scope. `gnatdoc --warnings` completed with no diagnostic output.
+files from this project's GNATdoc scope. `gnatdoc --warnings` completes successfully; its documentation warning
+inventory is reviewed separately from indicator applicability.

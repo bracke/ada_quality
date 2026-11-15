@@ -6,9 +6,12 @@ with AUnit;
 with AUnit.Assertions;
 with AUnit.Simple_Test_Cases;
 with Ada_Quality.History;
+with Ada_Quality.Finding_Identity;
 with Ada_Quality.Indicators;
 with Ada_Quality.Reporting;
 with Ada_Quality.Storage;
+with Ada_Quality.Storage.Testing;
+with Ada_Quality.Temporary_Directories;
 with Ada_Quality.Types;
 with Project_Tools.Files;
 
@@ -19,25 +22,43 @@ package body Ada_Quality_Reporting_Tests is
    use type Ada.Calendar.Time;
    use type Ada.Containers.Count_Type;
    use type Ada_Quality.Reporting.Evidence_Format;
+   use type Ada_Quality.History.Comparison_Selection;
 
    package Reporting renames Ada_Quality.Reporting;
    package Storage renames Ada_Quality.Storage;
-   use type Storage.Testing_Corruption;
+   package Storage_Testing renames Ada_Quality.Storage.Testing;
+   use type Storage_Testing.Corruption;
 
    type Test_Kind is
      (Missing_Database_Test, Round_Trip_Test, Lifecycle_Test, Schema_Test, Busy_Test, Legacy_Test,
-      Corruption_Test, Limit_Test, History_Adapter_Test);
+      Limit_Test, History_Adapter_Test);
 
    type Reporting_Test (Kind : Test_Kind) is new AUnit.Simple_Test_Cases.Test_Case with null record;
    overriding function Name (Item : Reporting_Test) return AUnit.Message_String;
    overriding procedure Run_Test (Item : in out Reporting_Test);
 
+   type Corruption_Test (Kind : Storage_Testing.Corruption) is
+     new AUnit.Simple_Test_Cases.Test_Case with null record;
+   overriding function Name (Item : Corruption_Test) return AUnit.Message_String;
+   overriding procedure Run_Test (Item : in out Corruption_Test);
+
    overriding function Name (Item : Reporting_Test) return AUnit.Message_String is
      (AUnit.Format ("REPORTING_" & Test_Kind'Image (Item.Kind)));
 
+   overriding function Name (Item : Corruption_Test) return AUnit.Message_String is
+     (AUnit.Format ("REPORTING_CORRUPTION_" & Storage_Testing.Corruption'Image (Item.Kind)));
+
    LF : constant Character := Character'Val (10);
 
-   Fixture_Root : constant String := "obj/reporting-fixtures";
+   Test_Area : Ada_Quality.Temporary_Directories.Temporary_Directory;
+
+   function Fixture_Root return String is
+   begin
+      if not Ada_Quality.Temporary_Directories.Is_Active (Test_Area) then
+         Ada_Quality.Temporary_Directories.Create (Test_Area, "ada-quality-reporting-tests");
+      end if;
+      return Ada_Quality.Temporary_Directories.Path (Test_Area);
+   end Fixture_Root;
 
    function Fixture (Name : String) return String is (Fixture_Root & "/" & Name);
 
@@ -88,11 +109,18 @@ package body Ada_Quality_Reporting_Tests is
                     (Finding'(Indicator => SRC_01, Rule => To_Unbounded_String ("line-length"), Level => High,
                       Message => To_Unbounded_String ("zu lang: Größe" & LF & "\n literal"),
                       Relative_Path => To_Unbounded_String ("src/ünï.adb"), Line => 42,
-                      Fingerprint => To_Unbounded_String ("SRC-01:line-length:src/ünï.adb:zu lang")));
+                      Fingerprint => To_Unbounded_String
+                        (Ada_Quality.Finding_Identity.Create
+                           (SRC_01, "line-length", "src/ünï.adb", "zu lang: Größe" & LF & "\n literal"))));
                   Item.Findings.Append
                     (Finding'(Indicator => SRC_01, Rule => To_Unbounded_String ("line-length"), Level => Low,
                       Message => To_Unbounded_String ("second"), Relative_Path => Null_Unbounded_String, Line => 0,
-                      Fingerprint => To_Unbounded_String ("SRC-01:line-length::second")));
+                      Fingerprint => To_Unbounded_String
+                        (Ada_Quality.Finding_Identity.Create (SRC_01, "line-length", "", "second"))));
+               when STR_04 =>
+                  Item.Measurement := (Kind => Text_Value, Text_Data => To_Unbounded_String ("text"));
+               when STR_05 =>
+                  Item.Measurement := (Kind => Enum_Value, Text_Data => To_Unbounded_String ("enum"));
                when PRF_01 =>
                   Item.Execution := Not_Applicable;
                   Item.Compliance := Not_Applicable;
@@ -112,6 +140,18 @@ package body Ada_Quality_Reporting_Tests is
             Result.Results.Append (Item);
          end;
       end loop;
+      Result.Executions.Append
+        (Tool_Execution'
+           (Tool => To_Unbounded_String ("timeout-fixture"),
+            Command => To_Unbounded_String ("sleep 2"), Status => Tool_Timed_Out,
+            Exit_Code => -1, Output_Digest => To_Unbounded_String ("cbf29ce484222325"),
+            Output_Bytes => 0, Truncated => False));
+      Result.Executions.Append
+        (Tool_Execution'
+           (Tool => To_Unbounded_String ("spawn-fixture"),
+            Command => To_Unbounded_String ("missing-tool"), Status => Tool_Spawn_Error,
+            Exit_Code => -1, Output_Digest => To_Unbounded_String ("cbf29ce484222325"),
+            Output_Bytes => 0, Truncated => False));
       return Result;
    end Sample;
 
@@ -180,11 +220,14 @@ package body Ada_Quality_Reporting_Tests is
       return Id;
    end Seed;
 
-   function Publish (Database_Path : String; Value : Assessment) return Positive is
+   function Publish
+     (Database_Path : String; Value : Assessment; Legacy : Boolean := False) return Positive
+   is
       Store : Storage.Store;
       Id    : Positive;
    begin
       Storage.Open (Store, Database_Path, Create_If_Missing => False);
+      Storage_Testing.Use_Legacy_Evidence (Store, Legacy);
       Id := Storage.Publish (Store, Value);
       Storage.Close (Store);
       return Id;
@@ -323,6 +366,12 @@ package body Ada_Quality_Reporting_Tests is
             Assert (To_String (Run.Policy_Id) = "policy-a" and then To_String (Run.Source_Id) = "source-1" and then
               To_String (Run.Toolchain_Id) = "toolchain-1", "fingerprints are preserved");
             Assert (Value.Results.Length = 33, "a completed assessment decodes all 33 results");
+            Assert
+              (Reporting.Executions (Session, Run_Id).Length = 2 and then
+               Reporting.Executions (Session, Run_Id) (1).Status = Tool_Timed_Out and then
+               Reporting.Executions (Session, Run_Id) (2).Status = Tool_Spawn_Error and then
+               To_String (Reporting.Executions (Session, Run_Id) (1).Command) = "sleep 2",
+               "timed-out and spawn-error execution evidence remains reportable");
             for Index in 1 .. 33 loop
                declare
                   Got  : constant Indicator_Result := Value.Results (Index);
@@ -353,6 +402,34 @@ package body Ada_Quality_Reporting_Tests is
          Reporting.Close (Session);
          Assert (not Reporting.Is_Open (Session), "close discards the snapshot");
          Assert (Same (Before, Capture (Directory & "/db")), "reporting leaves every database artifact unchanged");
+      end;
+      declare
+         Separator : constant Character := Character'Val (16#1F#);
+         First_Path : constant String := Make_Crate (Directory & "/identity-first", "first");
+         Second_Path : constant String := Make_Crate (Directory & "/identity-second", "second");
+         Alias_Path : constant String :=
+           First_Path & Separator & "TRUE" & Separator & " 2" & Separator & " 0" & Separator &
+           "ada_project" & Separator & "registered" & Separator & Second_Path;
+         Alias_DB : constant String := Directory & "/identity-alias.db";
+         Pair_DB  : constant String := Directory & "/identity-pair.db";
+         Alias_Store, Pair_Store : Storage.Store;
+         Alias_Session, Pair_Session : Reporting.Session;
+         Ignored : Positive;
+      begin
+         Storage.Open (Alias_Store, Alias_DB);
+         Ignored := Storage.Add_Project (Alias_Store, Make_Crate (Alias_Path, "alias"));
+         Storage.Close (Alias_Store);
+         Storage.Open (Pair_Store, Pair_DB);
+         Ignored := Storage.Add_Project (Pair_Store, First_Path);
+         Ignored := Storage.Add_Project (Pair_Store, Second_Path);
+         Storage.Close (Pair_Store);
+         Reporting.Open (Alias_Session, Alias_DB);
+         Reporting.Open (Pair_Session, Pair_DB);
+         Assert
+           (Reporting.Snapshot_Identity (Alias_Session) /= Reporting.Snapshot_Identity (Pair_Session),
+            "length-framed snapshot fields distinguish separator-aliasing row streams");
+         Reporting.Close (Alias_Session);
+         Reporting.Close (Pair_Session);
       end;
    end Round_Trip;
 
@@ -413,7 +490,7 @@ package body Ada_Quality_Reporting_Tests is
       Project := Seed (Directory, Path);
       pragma Unreferenced (Project);
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Storage.Testing_Set_Schema_Version (Store, 2);
+      Storage_Testing.Set_Schema_Version (Store, 2);
       Storage.Close (Store);
       declare
          Before : constant File_States := Capture (Directory);
@@ -423,7 +500,7 @@ package body Ada_Quality_Reporting_Tests is
       end;
       Storage.Open (Store, Path, Create_If_Missing => False);
       Assert (Storage.Schema_Version (Store) = 3, "normal storage still migrates version 2 to 3");
-      Storage.Testing_Set_Schema_Version (Store, 99);
+      Storage_Testing.Set_Schema_Version (Store, 99);
       Storage.Close (Store);
       declare
          Before : constant File_States := Capture (Directory);
@@ -472,9 +549,7 @@ package body Ada_Quality_Reporting_Tests is
             Item.Summary := To_Unbounded_String ("legacy violation");
          end if;
       end loop;
-      Storage.Testing_Use_Legacy_Evidence (True);
-      Run_Id := Publish (Path, Value);
-      Storage.Testing_Use_Legacy_Evidence (False);
+      Run_Id := Publish (Path, Value, Legacy => True);
       Reporting.Open (Session, Path);
       declare
          Run    : constant Reporting.Run_Record := Reporting.Runs (Session).First_Element;
@@ -495,8 +570,8 @@ package body Ada_Quality_Reporting_Tests is
       Reporting.Close (Session);
    end Legacy;
 
-   procedure Corruption is
-      Directory : constant String := Fixture ("corruption");
+   procedure Corruption (Kind : Storage_Testing.Corruption) is
+      Directory : constant String := Fixture ("corruption_" & Storage_Testing.Corruption'Image (Kind));
       Source    : constant String := Directory & "/source.db";
       Project   : Positive;
       Run_Id    : Positive;
@@ -504,33 +579,50 @@ package body Ada_Quality_Reporting_Tests is
       Fresh (Directory);
       Project := Seed (Directory, Source);
       Run_Id := Publish (Source, Sample (Project));
-      for Kind in Storage.Testing_Corruption loop
+      declare
+         Copy  : constant String := Directory & "/damaged.db";
+         Store : Storage.Store;
+      begin
+         Ada.Directories.Copy_File (Source, Copy);
+         if Ada.Directories.Exists (Source & ".fts") then
+            Ada.Directories.Copy_File (Source & ".fts", Copy & ".fts");
+         end if;
+         Storage.Open (Store, Copy, Create_If_Missing => False);
+         Storage_Testing.Corrupt (Store, Run_Id, Kind);
          declare
-            Copy  : constant String := Directory & "/" & Storage.Testing_Corruption'Image (Kind) & ".db";
-            Store : Storage.Store;
+            Rejected : Boolean := False;
          begin
-            Ada.Directories.Copy_File (Source, Copy);
-            if Ada.Directories.Exists (Source & ".fts") then
-               Ada.Directories.Copy_File (Source & ".fts", Copy & ".fts");
-            end if;
-            Storage.Open (Store, Copy, Create_If_Missing => False);
-            Storage.Testing_Corrupt (Store, Run_Id, Kind);
-            Storage.Close (Store);
-            case Kind is
-               when Storage.Invalid_Run_State =>
-                  Expect_Error (Copy, "integrity", "an unknown lifecycle state is an integrity error");
-               when others =>
-                  Expect_Read_Error
-                    (Copy, Run_Id, "integrity", Storage.Testing_Corruption'Image (Kind) & " is an integrity error");
-                  Expect_History_Error
-                    (Copy, Run_Id,
-                     Storage.Testing_Corruption'Image (Kind) & " is rejected by history evidence adapters");
-                  if Kind = Storage.Invalid_Measurement then
-                     Expect_Trend_Error (Copy, "invalid measurement evidence is rejected by trend adapters");
-                  end if;
-            end case;
+            begin
+               Storage.Check (Store);
+            exception
+               when Storage.Storage_Error => Rejected := True;
+            end;
+            Assert (Rejected, Storage_Testing.Corruption'Image (Kind) &
+              " is rejected by the database integrity command");
          end;
-      end loop;
+         Storage.Close (Store);
+         Expect_Error
+           (Copy, "integrity", Storage_Testing.Corruption'Image (Kind) &
+            " is rejected while opening a reporting snapshot");
+         case Kind is
+            when Storage_Testing.Invalid_Run_State |
+                 Storage_Testing.Unsupported_Evidence_Format |
+                 Storage_Testing.Malformed_Run_Timestamp |
+                 Storage_Testing.Incomplete_Run_Timestamps |
+                 Storage_Testing.Orphaned_Run_Finish |
+                 Storage_Testing.Inverted_Run_Timestamps =>
+               null;
+            when others =>
+               Expect_Read_Error
+                 (Copy, Run_Id, "integrity", Storage_Testing.Corruption'Image (Kind) & " is an integrity error");
+               Expect_History_Error
+                 (Copy, Run_Id,
+                  Storage_Testing.Corruption'Image (Kind) & " is rejected by history evidence adapters");
+               if Kind = Storage_Testing.Invalid_Measurement then
+                  Expect_Trend_Error (Copy, "invalid measurement evidence is rejected by trend adapters");
+               end if;
+         end case;
+      end;
    end Corruption;
 
    procedure Limit is
@@ -551,8 +643,42 @@ package body Ada_Quality_Reporting_Tests is
          when Reporting.Limit_Error => Raised := True;
       end;
       Assert (Raised and then not Reporting.Is_Open (Session), "exceeding a load limit is a typed failure");
+      Raised := False;
+      begin
+         Reporting.Open (Session, Path, (Max_Results => 32, others => <>));
+      exception
+         when Reporting.Limit_Error => Raised := True;
+      end;
+      Assert (Raised and then not Reporting.Is_Open (Session),
+        "result rows are independently resource bounded");
+      Raised := False;
+      begin
+         Reporting.Open (Session, Path, (Max_Total_Rows => 1, others => <>));
+      exception
+         when Reporting.Limit_Error => Raised := True;
+      end;
+      Assert (Raised and then not Reporting.Is_Open (Session),
+        "aggregate snapshot rows are resource bounded");
+      Raised := False;
+      begin
+         Reporting.Open (Session, Path, (Max_Text_Bytes => 1, others => <>));
+      exception
+         when Reporting.Limit_Error => Raised := True;
+      end;
+      Assert (Raised and then not Reporting.Is_Open (Session),
+        "aggregate persisted text is resource bounded");
       Reporting.Open (Session, Path, (Max_Findings => 2, others => <>));
       Assert (Reporting.Is_Open (Session), "a snapshot at the limit loads");
+      begin
+         declare
+            Missing : constant Reporting.Project_Record := Reporting.Project (Session, Project + 1);
+            pragma Unreferenced (Missing);
+         begin
+            Assert (False, "missing project lookup must fail");
+         end;
+      exception
+         when Reporting.Reporting_Error => null;
+      end;
       Reporting.Close (Session);
    end Limit;
 
@@ -578,17 +704,32 @@ package body Ada_Quality_Reporting_Tests is
       declare
          Runs     : constant Storage.History_Vectors.Vector := Reporting.History_Items (Session, Project);
          Baseline : constant Natural := Ada_Quality.History.Baseline_Id (Runs, Second);
-         Old_Rows : constant Reporting.History_Evidence := Reporting.Read_History_Evidence (Session, First);
-         New_Rows : constant Reporting.History_Evidence := Reporting.Read_History_Evidence (Session, Second);
-         Changes  : constant Ada_Quality.History.Regression_Vectors.Vector :=
-           Ada_Quality.History.Compare
-             (Runs (1), Runs (2), Old_Rows.Results, New_Rows.Results, Old_Rows.Measurements,
-              New_Rows.Measurements, Old_Rows.Findings, New_Rows.Findings);
+         Comparison : constant Reporting.Project_Comparison :=
+           Reporting.Compare_Project (Session, Project);
+         Selection : constant Ada_Quality.History.Comparison_Selection :=
+           Reporting.Select_Project_Comparison (Session, Project);
          Trend    : constant Ada_Quality.History.Trend_Vectors.Vector :=
            Ada_Quality.History.Metric_Trend (Runs, Reporting.All_Measurements (Session, Project), TST_03);
       begin
          Assert (Baseline = First, "history adapters feed baseline selection");
-         Assert (Changes.Length = 1 and then Changes (1).Indicator = DOC_01, "history adapters feed comparison");
+         Assert (Reporting.History_Items (Session).Length = 2 and then
+           Reporting.History_Items (Session, Project + 1).Is_Empty,
+           "history indexes serve all, matching, and absent project selections");
+         Assert (Reporting.Project (Session, Project).Id = Project and then
+           Reporting.All_Results (Session).Length = 66 and then
+           Reporting.All_Persisted_Measurements (Session).Length = 66 and then
+           Reporting.All_Findings (Session).Length = 4 and then
+           Reporting.All_Executions (Session).Length = 4 and then
+           Reporting.All_Events (Session).Length = 2,
+           "snapshot adapters expose projects and all bounded detail tables");
+         Assert (Reporting.Executions (Session, First).Length = 2 and then
+           Reporting.Events (Session, First).Length = 1,
+           "per-run indexes expose execution and lifecycle rows without table scans");
+         Assert
+           (Selection = Comparison.Selection and then Comparison.Selection.Baseline_Id = First and then
+            Comparison.Changes.Length = 1 and then
+            Comparison.Changes (1).Indicator = DOC_01,
+            "selection-only and full reporting comparisons share one baseline decision");
          Assert (Trend.Length = 2 and then Trend (1).Value = 9_123, "history adapters feed metric trends");
       end;
       Assert (Ada_Quality.Indicators.Measurement_Unit (TST_03) = "basis_points", "coverage unit is explicit");
@@ -607,10 +748,21 @@ package body Ada_Quality_Reporting_Tests is
          when Schema_Test => Schema;
          when Busy_Test => Busy;
          when Legacy_Test => Legacy;
-         when Corruption_Test => Corruption;
          when Limit_Test => Limit;
          when History_Adapter_Test => History_Adapter;
       end case;
+      Project_Tools.Files.Delete_Tree (Fixture_Root);
+   exception
+      when others =>  --  AQ: audited exception boundary
+         Project_Tools.Files.Delete_Tree (Fixture_Root);
+         raise;
+   end Run_Test;
+
+   overriding procedure Run_Test (Item : in out Corruption_Test) is
+   begin
+      Project_Tools.Files.Delete_Tree (Fixture_Root);
+      Ada.Directories.Create_Path (Fixture_Root);
+      Corruption (Item.Kind);
       Project_Tools.Files.Delete_Tree (Fixture_Root);
    exception
       when others =>  --  AQ: audited exception boundary
@@ -624,6 +776,9 @@ package body Ada_Quality_Reporting_Tests is
    begin
       for Kind in Test_Kind loop
          Result.Add_Test (Test_Access'(new Reporting_Test (Kind)));
+      end loop;
+      for Kind in Storage_Testing.Corruption loop
+         Result.Add_Test (Test_Access'(new Corruption_Test (Kind)));
       end loop;
       return Result;
    end Suite;

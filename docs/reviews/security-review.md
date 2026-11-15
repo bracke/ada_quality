@@ -6,7 +6,9 @@ Confirmed controls:
 
 - child tools receive explicit argument vectors and are never invoked through a shell;
 - the child environment is rebuilt from a small allowlist;
-- GNU `timeout` supplies forced termination and GNAT Expect supplies an independent watchdog;
+- persisted command evidence redacts positional and attached option values;
+- a protected process-wide gate serializes GNAT Expect process management across callers;
+- GNAT Expect supplies a monotonic deadline and five-second TERM-to-KILL escalation;
 - output is bounded while streaming, and persisted execution evidence stores digests and counts rather than output;
 - source and staged dependency traversal reject symbolic links and escaping local paths;
 - cleanup removes links without following them;

@@ -1,16 +1,18 @@
 # Verification record
 
-Verification procedure current on 2026-11-03:
+Verification procedure current on 2026-11-15:
 
 - Alire 2.1.0 selects GNAT 15.2.1.
 - The root project builds with Ada 2022 and 120-column checking.
 - The actual sibling `database` typed-table, catalog, transaction, and persistent reopen APIs are used.
 - The actual sibling `project_tools` file, process, and release-check APIs are used.
 - Deterministic report construction uses `jsonlib`.
-- Human output uses `messages` and `terminal_styles`; bounded security patterns use `regexp`.
-- The AUnit child crate contains 21 test cases covering the registry/tool graph, coverage boundaries, status and
+- Human output uses `messages` and `terminal_styles`; bounded credential patterns use `regexp`, while shell-use
+  detection uses an Ada-aware lexical scan.
+- The AUnit child crate contains 49 test cases covering the registry/tool graph, coverage boundaries, status and
   evaluator invariants, policy, UTF-8 JSON/schemas, persistent storage/migrations/faults, bounded hostile execution,
-  SPARK applicability, native analysis, isolated workspaces, link safety, history/regressions, and stress paths.
+  SPARK applicability, native analysis, isolated workspaces, link safety, history/regressions, stress paths, and 29
+  independently reported persistence-corruption modes.
 - Exact source-bound production coverage counts and fingerprints are published in
   [`coverage/gcov-summary.txt`](../coverage/gcov-summary.txt) and must meet the 90% minimum. CI regenerates the
   artifact and rejects any difference, so this record does not duplicate revision-specific totals.

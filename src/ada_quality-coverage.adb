@@ -1,3 +1,4 @@
+with Ada.Characters.Handling;
 with Ada.Directories;
 with Ada.Strings.Fixed;
 with Project_Tools.Files;
@@ -60,10 +61,136 @@ package body Ada_Quality.Coverage is
    function Production_Units (Root : String) return Production_Unit_Vectors.Vector is
       Result : Production_Unit_Vectors.Vector;
 
+      function Subunit_Parent_Stem (Path : String) return String is
+         Text   : constant String := Project_Tools.Files.Read_Raw_File (Path);
+         Cursor : Natural := Text'First;
+
+         function Identifier_Start (Value : Character) return Boolean is
+           (Value in 'a' .. 'z' | 'A' .. 'Z');
+
+         function Identifier_Part (Value : Character) return Boolean is
+           (Identifier_Start (Value) or else Value in '0' .. '9' or else Value = '_');
+
+         procedure Skip_Trivia is
+         begin
+            loop
+               while Cursor <= Text'Last and then
+                 Text (Cursor) in ' ' | ASCII.HT | ASCII.CR | ASCII.LF
+               loop
+                  Cursor := Cursor + 1;
+               end loop;
+               exit when Cursor >= Text'Last or else Text (Cursor .. Cursor + 1) /= "--";
+               Cursor := Cursor + 2;
+               while Cursor <= Text'Last and then Text (Cursor) /= ASCII.LF loop
+                  Cursor := Cursor + 1;
+               end loop;
+            end loop;
+         end Skip_Trivia;
+
+         function Next_Identifier return String is
+            First : constant Natural := Cursor;
+         begin
+            while Cursor <= Text'Last and then Identifier_Part (Text (Cursor)) loop
+               Cursor := Cursor + 1;
+            end loop;
+            return Ada.Characters.Handling.To_Lower (Text (First .. Cursor - 1));
+         end Next_Identifier;
+
+         procedure Skip_String is
+         begin
+            Cursor := Cursor + 1;
+            while Cursor <= Text'Last loop
+               if Text (Cursor) /= '"' then
+                  Cursor := Cursor + 1;
+               elsif Cursor < Text'Last and then Text (Cursor + 1) = '"' then
+                  Cursor := Cursor + 2;
+               else
+                  Cursor := Cursor + 1;
+                  return;
+               end if;
+            end loop;
+         end Skip_String;
+
+         function Parent_Name return String is
+            Name : Unbounded_String;
+         begin
+            loop
+               Skip_Trivia;
+               if Cursor > Text'Last or else not Identifier_Start (Text (Cursor)) then return ""; end if;
+               Append (Name, Next_Identifier);
+               Skip_Trivia;
+               if Cursor > Text'Last then
+                  return "";
+               elsif Text (Cursor) = ')' then
+                  Cursor := Cursor + 1;
+                  return To_String (Name);
+               elsif Text (Cursor) = '.' then
+                  Append (Name, '-');
+                  Cursor := Cursor + 1;
+               else
+                  return "";
+               end if;
+            end loop;
+         end Parent_Name;
+      begin
+         while Cursor <= Text'Last loop
+            Skip_Trivia;
+            exit when Cursor > Text'Last;
+            if Text (Cursor) = '"' then
+               Skip_String;
+            elsif Identifier_Start (Text (Cursor)) then
+               if Next_Identifier = "separate" then
+                  Skip_Trivia;
+                  if Cursor <= Text'Last and then Text (Cursor) = '(' then
+                     Cursor := Cursor + 1;
+                     return Parent_Name;
+                  end if;
+               end if;
+            else
+               Cursor := Cursor + 1;
+            end if;
+         end loop;
+         return "";
+      end Subunit_Parent_Stem;
+
+      procedure Include_Subunit (Stem, Path : String) is
+      begin
+         for Index in Result.First_Index .. Result.Last_Index loop
+            if To_String (Result (Index).Stem) = Stem then
+               declare
+                  Item : Production_Unit := Result (Index);
+               begin
+                  Item.Subunit_Paths.Append (To_Unbounded_String (Path));
+                  Result.Replace_Element (Index, Item);
+                  return;
+               end;
+            end if;
+         end loop;
+         Result.Append
+           (Production_Unit'
+              (Stem          => To_Unbounded_String (Stem),
+               Body_Path     => Null_Unbounded_String,
+               Spec_Path     => Null_Unbounded_String,
+               Subunit_Paths => Source_Path_Vectors.Empty_Vector));
+         Result (Result.Last_Index).Subunit_Paths.Append (To_Unbounded_String (Path));
+      end Include_Subunit;
+
       procedure Include (Path : String; Is_Body : Boolean) is
          Stem  : constant String := Stem_Of (Path);
          Found : Boolean := False;
       begin
+         if Is_Body then
+            declare
+               Parent_Stem : constant String := Subunit_Parent_Stem (Path);
+            begin
+               if Parent_Stem = "ada_quality_coverage" then
+                  return;
+               elsif Parent_Stem'Length > 0 then
+                  Include_Subunit (Parent_Stem, Path);
+                  return;
+               end if;
+            end;
+         end if;
          if Stem = "ada_quality_coverage" then
             return;
          end if;
@@ -94,7 +221,8 @@ package body Ada_Quality.Coverage is
               (Production_Unit'
                  (Stem => To_Unbounded_String (Stem),
                   Body_Path => (if Is_Body then To_Unbounded_String (Path) else Null_Unbounded_String),
-                  Spec_Path => (if Is_Body then Null_Unbounded_String else To_Unbounded_String (Path))));
+                  Spec_Path => (if Is_Body then Null_Unbounded_String else To_Unbounded_String (Path)),
+                  Subunit_Paths => Source_Path_Vectors.Empty_Vector));
          end if;
       end Include;
 
@@ -185,6 +313,14 @@ package body Ada_Quality.Coverage is
          end;
       end Complete;
    begin
-      return Notes'Length > 0 and then Complete (Unit.Body_Path) and then Complete (Unit.Spec_Path);
+      if Notes'Length = 0 or else not Complete (Unit.Body_Path) or else
+        not Complete (Unit.Spec_Path)
+      then
+         return False;
+      end if;
+      for Path of Unit.Subunit_Paths loop
+         if not Complete (Path) then return False; end if;
+      end loop;
+      return True;
    end Has_Complete_Source_Records;
 end Ada_Quality.Coverage;

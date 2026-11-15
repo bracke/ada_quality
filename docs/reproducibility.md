@@ -10,4 +10,6 @@ combines source files with conventional `bin`, `obj`, coverage, library, and pro
 artifact changes are visible. Artifact files are hashed as a stream, so large executables count only toward the
 1 GiB aggregate fingerprint limit; source files, which are read whole, are also limited to 64 MiB each. When the
 artifacts cannot be fingerprinted within those limits, TST-04 is blocked with the reason and the assessment
-continues. JSON member order is deterministic.
+continues. Tree fingerprints hash a version marker and length-framed kind, relative-path, and content records, so
+neither filename/content boundaries nor embedded delimiter bytes can alias another tree. JSON member order is
+deterministic.

@@ -1,0 +1,274 @@
+separate (Ada_Quality_Test_Suite)
+--  AQ-WAIVER: SRC-03 target=set_coverage justification=one-component-fixture-matrix
+procedure Run_Storage_Test is
+begin
+declare
+   Path  : constant String := Fixture_Root & "/storage_test.db";
+   Root  : constant String :=
+     Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
+   Store : Ada_Quality.Storage.Store;
+   Pid   : Positive;
+   Run_Id : Positive;
+   Count  : Natural;
+   Value  : Assessment;
+   Raised : Boolean := False;
+
+   procedure Set_Coverage (Basis_Points : Long_Long_Integer) is
+   begin
+      for Index in Value.Results.First_Index .. Value.Results.Last_Index loop
+         if Value.Results (Index).Indicator = TST_03 then
+            declare
+               Result : Indicator_Result := Value.Results (Index);
+            begin
+               Result.Measurement :=
+                 (Kind => Decimal_Value, Basis_Points => Basis_Points);
+               Value.Results.Replace_Element (Index, Result);
+               return;
+            end;
+         end if;
+      end loop;
+      raise Program_Error with "TST-03 fixture result is absent";
+   end Set_Coverage;
+begin
+   if Ada.Directories.Exists (Path) then Ada.Directories.Delete_File (Path); end if;
+   Ada_Quality.Storage.Open (Store, Path);
+   Ada_Quality.Storage.Check (Store);
+   Assert (Ada_Quality.Storage.Schema_Version (Store) = 3,
+     "new databases use the current migrated schema version");
+   Pid := Ada_Quality.Storage.Add_Project (Store, Root);
+   Assert (Pid = 1, "first persisted project ID is one");
+   Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
+   Assert (Ada_Quality.Storage.Project (Store, 1).Enabled, "project survives close and reopen");
+   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source", "policy");
+   Assert (Run_Id = 1, "first assessment ID is one");
+   Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
+   Ada_Quality.Storage.Recover (Store, Count);
+   Assert (Count = 1, "recovery marks one abandoned running assessment");
+   Assert (To_String (Ada_Quality.Storage.History (Store).Last_Element.Status) = "interrupted",
+     "recovered assessment is interrupted");
+   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source-2", "policy");
+   Value.Id := Run_Id;
+   Value.Project_Id := Pid;
+   Value.Status := Assessment_Completed;
+   Value.Source_Fingerprint := To_Unbounded_String ("source-2");
+   Value.Policy_Fingerprint := To_Unbounded_String ("policy");
+   Value.Toolchain_Fingerprint := To_Unbounded_String ("toolchain");
+   Value.Executions.Append
+     (Tool_Execution'(Tool => To_Unbounded_String ("fixture"),
+      Command => To_Unbounded_String ("/bin/fixture"), Status => Tool_Completed,
+      Exit_Code => 0, Output_Digest => To_Unbounded_String ("a430d84680aabd0b"),
+      Output_Bytes => 4, Truncated => False));
+   for Indicator in Indicator_Id loop
+      Value.Results.Append
+        (Indicator_Result'(Indicator => Indicator, Execution => Succeeded, Compliance => Pass,
+          Applicable => True, Summary => To_Unbounded_String ("pass"),
+          Evidence => To_Unbounded_String ("test"),
+          Measurement => (Kind => Boolean_Value, Boolean_Data => True), Findings => <>));
+   end loop;
+   Set_Coverage (9_100);
+   declare
+      First_Result : Indicator_Result := Value.Results.First_Element;
+   begin
+      First_Result.Findings.Append
+        (Finding'(Indicator => STR_01, Rule => To_Unbounded_String ("storage-fixture"), Level => Low,
+          Message => To_Unbounded_String ("persisted finding"),
+          Relative_Path => To_Unbounded_String ("src/fixture.adb"), Line => 1,
+          Fingerprint => To_Unbounded_String
+            (Ada_Quality.Finding_Identity.Create
+               (STR_01, "storage-fixture", "src/fixture.adb", "persisted finding"))));
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+   end;
+   declare
+      First_Result : Indicator_Result := Value.Results.First_Element;
+   begin
+      First_Result.Findings.Append (First_Result.Findings.First_Element);
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+      Assert (not Is_Publishable (Value),
+        "duplicate stable finding identities are rejected before publication");
+      First_Result.Findings.Delete_Last;
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+   end;
+   declare
+      First_Result : Indicator_Result := Value.Results.First_Element;
+      Saved : constant Ada.Strings.Unbounded.Unbounded_String :=
+        First_Result.Findings.First_Element.Fingerprint;
+   begin
+      First_Result.Findings.Reference (First_Result.Findings.First_Index).Fingerprint :=
+        To_Unbounded_String
+          (Ada_Quality.Finding_Identity.Create
+             (SRC_01, "storage-fixture", "src/fixture.adb", "persisted finding"));
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+      Assert (not Is_Publishable (Value),
+        "finding identities cannot contradict their structured indicator and payload");
+      First_Result.Findings.Reference (First_Result.Findings.First_Index).Fingerprint := Saved;
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+   end;
+   declare
+      First_Result : Indicator_Result := Value.Results.First_Element;
+      Saved : constant Ada.Strings.Unbounded.Unbounded_String :=
+        First_Result.Findings.First_Element.Fingerprint;
+   begin
+      First_Result.Findings.Reference (First_Result.Findings.First_Index).Fingerprint :=
+        To_Unbounded_String ("STR-01:storage-fixture:src/fixture.adb:persisted finding");
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+      Assert (not Is_Publishable (Value),
+        "new lossless publication rejects delimiter-based legacy finding identities");
+      First_Result.Findings.Reference (First_Result.Findings.First_Index).Fingerprint := Saved;
+      Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
+   end;
+   Assert (Ada_Quality.Storage.Publish (Store, Value) = Run_Id,
+     "publication finalizes the pre-created running assessment");
+   Assert (Ada_Quality.Storage.Measurements (Store, Run_Id).Length = 33,
+     "typed measurement rows are persisted for every indicator");
+   Assert (Ada_Quality.Storage.Executions (Store, Run_Id).Length = 1,
+     "individual tool execution rows are persisted");
+   Value.Id := 0;
+   Value.Status := Assessment_Completed;
+   Set_Coverage (9_200);
+   declare
+      Invalid : Assessment := Value;
+      Rejected : Boolean := False;
+   begin
+      Invalid.Results.Delete_Last;
+      begin
+         declare
+            Ignored : constant Positive := Ada_Quality.Storage.Publish (Store, Invalid);
+            pragma Unreferenced (Ignored);
+         begin
+            null;
+         end;
+      exception
+         when Ada_Quality.Storage.Storage_Error => Rejected := True;
+      end;
+      Assert (Rejected, "invalid publication is rejected before identifier reservation");
+   end;
+   declare
+      Regressed : Indicator_Result := Value.Results.First_Element;
+      Escalated : Finding := Regressed.Findings.First_Element;
+   begin
+      Regressed.Compliance := Violation;
+      Regressed.Summary := To_Unbounded_String ("regressed");
+      Escalated.Level := High;
+      Regressed.Findings.Replace_Element (Regressed.Findings.First_Index, Escalated);
+      Value.Results.Replace_Element (Value.Results.First_Index, Regressed);
+   end;
+   Assert (Ada_Quality.Storage.Publish (Store, Value) = 3,
+     "direct publication remains available for imported terminal assessments");
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Check
+        (Store, (Max_Total_Rows => 1, Max_Text_Bytes => 268_435_456));
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "database integrity checking enforces its aggregate row limit while scanning");
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Check
+        (Store, (Max_Total_Rows => 2_500_000, Max_Text_Bytes => 1));
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "database integrity checking enforces its aggregate text limit while scanning");
+   Ada_Quality.Storage.Check (Store);
+   declare
+      Session : Ada_Quality.Reporting.Session;
+   begin
+      Ada_Quality.Storage.Close (Store);
+      Ada_Quality.Reporting.Open (Session, Path);
+      declare
+         Archive : constant String := Ada_Quality.JSON.Render_Archive (Session);
+         Pretty_Archive : constant String :=
+           Ada_Quality.JSON.Render_Archive (Session, Pretty => True);
+         Doc : Jsonlib.Documents.Document;
+         Error : Jsonlib.Errors.Error_Info;
+      begin
+         Assert (Ada.Strings.Fixed.Index (Archive, """new-violation""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """increased-severity""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """schema_version"":2") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """comparisons""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """comparison-available""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """measurements""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """executions""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """output_digest""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """truncated""") > 0 and then
+           Ada.Strings.Fixed.Index (Archive, """evidence"":""command=""") = 0,
+           "archive JSON exports persisted evidence and derived regressions");
+         Jsonlib.Parsers.Parse (Pretty_Archive, Doc, Error);
+         Assert (not Jsonlib.Errors.Failed (Error),
+           "streamed pretty archive output remains strict RFC 8259 JSON");
+      end;
+      declare
+         Raised : Boolean := False;
+      begin
+         begin
+            declare
+               Ignored : constant String :=
+                 Ada_Quality.JSON.Render_Archive (Session, Max_Output_Bytes => 1);
+               pragma Unreferenced (Ignored);
+            begin
+               null;
+            end;
+         exception
+            when Ada_Quality.Reporting.Limit_Error => Raised := True;
+         end;
+         Assert (Raised, "archive JSON fails closed when its output budget is exceeded");
+      end;
+      Ada_Quality.Reporting.Close (Session);
+      Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
+   end;
+   Set_Coverage (9_400);
+   Assert (Ada_Quality.Storage.Publish (Store, Value) = 4,
+     "a third completed assessment is available for recovery-history integration");
+   Run_Id := Ada_Quality.Storage.Start_Assessment
+     (Store, Pid, "recovery-source", "policy");
+   Assert (Run_Id = 5, "the recovery fixture leaves the newest assessment running");
+   Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
+   Ada_Quality.Storage.Recover (Store, Count);
+   declare
+      Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
+        Ada_Quality.Storage.History (Store, Pid);
+      Trend : constant Ada_Quality.History.Trend_Vectors.Vector :=
+        Ada_Quality.History.Metric_Trend
+          (Runs, Ada_Quality.Storage.Measurements (Store), TST_03);
+      Selection : constant Ada_Quality.History.Comparison_Selection :=
+        Ada_Quality.History.Select_Comparison (Runs);
+   begin
+      Assert (Count = 1 and then To_String (Runs.Last_Element.Status) = "interrupted",
+        "recovery interrupts the abandoned latest assessment");
+      Assert (Trend.Length = 3 and then Trend (Trend.First_Index).Value = 9_100 and then
+        Trend (Trend.First_Index + 1).Value = 9_200 and then
+        Trend (Trend.Last_Index).Value = 9_400,
+        "recovery preserves three compatible completed metric points in chronological order");
+      Assert (Ada_Quality.History.Baseline_Id (Runs, 4) = 3 and then
+        Selection.Status = Ada_Quality.History.Current_Incomplete,
+        "recovery preserves completed baseline selection and names latest comparison unavailability");
+   end;
+   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "interrupt-source", "policy");
+   Ada_Quality.Storage.Testing.Inject_Next_Fault
+     (Store, Ada_Quality.Storage.Testing.Assessment_Interruption);
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "faulted interruption");
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised and then
+     To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "running" and then
+     Ada_Quality.Storage.Events (Store, Run_Id).Length = 1,
+     "an interruption commit fault rolls back both state and event");
+   Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "controlled test interruption");
+   Assert (To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "interrupted",
+     "explicit interruption atomically closes a running assessment");
+   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+     "explicit interruption records its terminal event");
+   Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "duplicate interruption");
+   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+     "interrupting an already terminal assessment is idempotent");
+   Ada_Quality.Storage.Close (Store);
+   Ada.Directories.Delete_File (Path);
+end;
+end Run_Storage_Test;

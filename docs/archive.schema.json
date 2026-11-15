@@ -22,7 +22,35 @@
     "results": { "type": "array" },
     "measurements": { "type": "array" },
     "findings": { "type": "array" },
-    "executions": { "type": "array" },
+    "executions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "assessment_id",
+          "command",
+          "exit_code",
+          "id",
+          "output_bytes",
+          "output_digest",
+          "status",
+          "tool",
+          "truncated"
+        ],
+        "properties": {
+          "assessment_id": { "type": "integer", "minimum": 1 },
+          "command": { "type": "string" },
+          "exit_code": { "type": "integer" },
+          "id": { "type": "integer", "minimum": 1 },
+          "output_bytes": { "type": "integer", "minimum": 0 },
+          "output_digest": { "type": "string" },
+          "status": { "enum": ["tool-completed", "tool-timed-out", "tool-spawn-error"] },
+          "tool": { "type": "string", "minLength": 1 },
+          "truncated": { "type": "boolean" }
+        },
+        "additionalProperties": false
+      }
+    },
     "events": { "type": "array" },
     "comparisons": {
       "type": "array",

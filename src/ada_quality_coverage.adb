@@ -1,11 +1,15 @@
 with Ada.Command_Line;
 with Ada.Containers.Vectors;
 with Ada.Directories;
+with Ada.Environment_Variables;
 with Ada.Finalization;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
+with Ada.Strings.Unbounded.Text_IO;
 with Ada.Text_IO;
+with GNAT.OS_Lib;
 with Interfaces;
+with Interfaces.C;
 with Project_Tools.Files;
 with Project_Tools.Gcov;
 with Project_Tools.Processes;
@@ -14,9 +18,11 @@ with Ada_Quality.Coverage;
 with Ada_Quality.Temporary_Directories;
 with Ada_Quality.Types;
 
+--  AQ-WAIVER: SRC-03 target=include_source justification=coverage aggregation shares one completeness boundary
 procedure Ada_Quality_Coverage is
    --  Isolated coverage entry point with concurrency locking and deterministic stability checks.
    use Ada.Strings.Unbounded;
+   use type Interfaces.C.int;
 
    Root : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
@@ -24,7 +30,6 @@ procedure Ada_Quality_Coverage is
    Output_Dir : constant String := Project_Tools.Files.Join (Root, "coverage");
    Summary_Path : constant String := Project_Tools.Files.Join (Output_Dir, "gcov-summary.txt");
    Stability_Path : constant String := Project_Tools.Files.Join (Output_Dir, "gcov-stability.txt");
-   Lock_Path : constant String := Project_Tools.Files.Join (Output_Dir, ".driver-lock");
    Alr : constant String := Project_Tools.Processes.Locate_Command ("alr");
    Scratch : Ada_Quality.Temporary_Directories.Temporary_Directory;
    Toolchain_Fingerprint : Unbounded_String;
@@ -39,81 +44,65 @@ procedure Ada_Quality_Coverage is
    package File_Coverage_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => File_Coverage);
 
-   type Coverage_Artifact_Guard is new Ada.Finalization.Limited_Controlled with record
-      Original : Unbounded_String;
-      Existed  : Boolean := False;
-      Active   : Boolean := False;
-   end record;
+   function Lock_Path return String;
 
-   overriding procedure Finalize (Item : in out Coverage_Artifact_Guard);
+   function C_Open
+     (Path : Interfaces.C.char_array; Flags : Interfaces.C.int;
+      Mode : Interfaces.C.unsigned) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "open";
 
-   procedure Seed
-     (Item : in out Coverage_Artifact_Guard;
-      Source_Fingerprint, Selected_Toolchain : String)
-   is
-      Covered : constant String := Project_Tools.Files.Value_Of (Summary_Path, "covered");
-      Total   : constant String := Project_Tools.Files.Value_Of (Summary_Path, "total");
-   begin
-      Item.Existed := Project_Tools.Files.File_Exists (Summary_Path);
-      if Item.Existed then
-         Item.Original := To_Unbounded_String (Project_Tools.Files.Read_Raw_File (Summary_Path));
-      end if;
-      Item.Active := True;
-      Project_Tools.Files.Write_Text_File
-        (Summary_Path,
-         "covered=" & (if Covered'Length = 0 then "0" else Covered) & ASCII.LF &
-         "total=" & (if Total'Length = 0 then "1" else Total) & ASCII.LF &
-         "complete=true" & ASCII.LF &
-         "inventory=gcov-production-lines-v3" & ASCII.LF &
-         "excluded_ada_quality_coverage=coverage-driver" & ASCII.LF &
-         "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
-         "toolchain_fingerprint=" & Selected_Toolchain & ASCII.LF);
-   end Seed;
+   function C_Flock (FD, Operation : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "flock";
 
-   procedure Commit (Item : in out Coverage_Artifact_Guard) is
-   begin
-      Item.Active := False;
-   end Commit;
+   function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "close";
 
-   overriding procedure Finalize (Item : in out Coverage_Artifact_Guard) is
-   begin
-      if Item.Active then
-         if Item.Existed then
-            Project_Tools.Files.Write_Text_File (Summary_Path, To_String (Item.Original));
-         else
-            Project_Tools.Files.Delete_File_If_Present (Summary_Path);
-         end if;
-      end if;
-      Item.Active := False;
-   exception
-      when others =>  --  AQ: audited exception boundary
-         null;
-   end Finalize;
-
-   Artifact : Coverage_Artifact_Guard;
+   function C_Rename
+     (Old_Path, New_Path : Interfaces.C.char_array) return Interfaces.C.int
+   with Import, Convention => C, External_Name => "rename";
 
    type Coverage_Lock is new Ada.Finalization.Limited_Controlled with record
-      Active : Boolean := False;
+      Descriptor : Interfaces.C.int := -1;
    end record;
 
    overriding procedure Finalize (Item : in out Coverage_Lock);
 
    procedure Acquire (Item : in out Coverage_Lock; Success : out Boolean) is
+      Descriptor : Interfaces.C.int;
    begin
-      Ada.Directories.Create_Directory (Lock_Path);
-      Item.Active := True;
-      Success := True;
-   exception
-      when Ada.Directories.Name_Error | Ada.Directories.Use_Error =>
+      Descriptor := C_Open
+        --  O_CLOEXEC prevents assessment subprocesses from retaining the
+        --  advisory lock if the coverage driver is killed.
+        (Interfaces.C.To_C (Lock_Path),
+         --  O_RDWR + O_CREAT + O_NOFOLLOW + O_CLOEXEC.
+         Interfaces.C.int (2 + 64 + 131_072 + 524_288),
+         Interfaces.C.unsigned (8#600#));
+      if Descriptor < 0 then
          Success := False;
+      elsif C_Flock (Descriptor, Interfaces.C.int (2 + 4)) /= 0 then
+         declare
+            Ignored : constant Interfaces.C.int := C_Close (Descriptor);
+            pragma Unreferenced (Ignored);
+         begin
+            Success := False;
+         end;
+      else
+         Item.Descriptor := Descriptor;
+         Success := True;
+      end if;
    end Acquire;
 
    overriding procedure Finalize (Item : in out Coverage_Lock) is
    begin
-      if Item.Active and then Project_Tools.Files.Exists (Lock_Path) then
-         Project_Tools.Files.Delete_Tree (Lock_Path);
+      if Item.Descriptor >= 0 then
+         declare
+            Ignored : constant Interfaces.C.int := C_Close (Item.Descriptor);
+            pragma Unreferenced (Ignored);
+         begin
+            null;
+         end;
       end if;
-      Item.Active := False;
+      Item.Descriptor := -1;
    end Finalize;
 
    Lock : Coverage_Lock;
@@ -126,6 +115,38 @@ procedure Ada_Quality_Coverage is
 
    function Trim (Text : String) return String is
      (Ada.Strings.Fixed.Trim (Text, Ada.Strings.Both));
+
+   procedure Publish_Artifacts (Content : String) is
+      Process : constant String := Trim
+        (Integer'Image (GNAT.OS_Lib.Pid_To_Integer (GNAT.OS_Lib.Current_Process_Id)));
+      Summary_Temporary : constant String := Summary_Path & ".tmp-" & Process;
+      Stability_Temporary : constant String := Stability_Path & ".tmp-" & Process;
+
+      procedure Cleanup_Temporary is
+      begin
+         Project_Tools.Files.Delete_File_If_Present (Summary_Temporary);
+         Project_Tools.Files.Delete_File_If_Present (Stability_Temporary);
+      end Cleanup_Temporary;
+
+      procedure Replace (Source, Target : String) is
+      begin
+         if C_Rename (Interfaces.C.To_C (Source), Interfaces.C.To_C (Target)) /= 0 then
+            raise Program_Error with "could not atomically publish coverage artifact: " & Target;
+         end if;
+      end Replace;
+   begin
+      Cleanup_Temporary;
+      Project_Tools.Files.Write_Text_File (Stability_Temporary, Content);
+      Project_Tools.Files.Write_Text_File (Summary_Temporary, Content);
+      --  The consumer-facing summary changes last, after its matching
+      --  stability record is already visible.
+      Replace (Stability_Temporary, Stability_Path);
+      Replace (Summary_Temporary, Summary_Path);
+   exception
+      when others =>  --  AQ: audited exception boundary
+         Cleanup_Temporary;
+         raise;
+   end Publish_Artifacts;
 
    function Per_File_Gcov_Output (Text : String) return String is
       Aggregate : constant Natural := Ada.Strings.Fixed.Index
@@ -150,6 +171,64 @@ procedure Ada_Quality_Coverage is
       end loop;
       return Result;
    end Hash_Output;
+
+   function Lock_Path return String is
+     (Project_Tools.Files.Join
+        (Project_Tools.Files.Temp_Dir,
+         "ada-quality-coverage-" & Hash_Output (Root) & ".lock"));
+
+   function Gcov_Notes (Object_Path, Object_Name : String)
+     return Project_Tools.Processes.Captured_Process
+   is
+      Output_Path : constant String :=
+        Ada_Quality.Temporary_Directories.Child (Scratch, "gcov-dump-" & Object_Name & ".txt");
+      Args : GNAT.OS_Lib.Argument_List :=
+        [new String'("exec"), new String'("--"), new String'("gcov-dump"),
+         new String'(Object_Path)];
+      File    : Ada.Text_IO.File_Type;
+      Output  : Unbounded_String;
+      Status  : Integer := -1;
+      Spawned : Boolean := False;
+      First_Line : Boolean := True;
+
+      procedure Cleanup is
+      begin
+         if Ada.Text_IO.Is_Open (File) then
+            Ada.Text_IO.Close (File);
+         end if;
+         Project_Tools.Files.Delete_File_If_Present (Output_Path);
+         for Index in Args'Range loop
+            GNAT.OS_Lib.Free (Args (Index));
+         end loop;
+      end Cleanup;
+   begin
+      Project_Tools.Files.Delete_File_If_Present (Output_Path);
+      GNAT.OS_Lib.Spawn
+        (Program_Name => Alr, Args => Args, Output_File => Output_Path,
+         Success => Spawned, Return_Code => Status, Err_To_Out => True);
+      if Spawned and then Project_Tools.Files.File_Exists (Output_Path) then
+         Ada.Text_IO.Open (File, Ada.Text_IO.In_File, Output_Path);
+         while not Ada.Text_IO.End_Of_File (File) loop
+            declare
+               Line : constant String :=
+                 To_String (Ada.Strings.Unbounded.Text_IO.Get_Line (File));
+            begin
+               if First_Line or else Ada.Strings.Fixed.Index (Line, "FUNCTION") > 0 then
+                  Append (Output, Line & ASCII.LF);
+               end if;
+               First_Line := False;
+            end;
+         end loop;
+      end if;
+      Cleanup;
+      return (Status => (if Spawned then Status else -1), Output => Output);
+   exception
+      when others =>  --  AQ: audited exception boundary
+         Cleanup;
+         raise;
+   end Gcov_Notes;
+
+   procedure Exercise_CLI is separate;
 
    procedure Fail (Message : String) is
    begin
@@ -188,8 +267,10 @@ begin
       Toolchain_Fingerprint := To_Unbounded_String (Hash_Output (To_String (Run.Output)));
    end;
    Current_Source_Fingerprint := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (Root));
-   Seed (Artifact, To_String (Current_Source_Fingerprint), To_String (Toolchain_Fingerprint));
-
+   --  Instrumented self-assessments must take the same fail-closed TST-03 path
+   --  before and after final artifact publication. This switch cannot inject
+   --  evidence or turn a blocked result into a pass.
+   Ada.Environment_Variables.Set ("ADA_QUALITY_INTERNAL_DISABLE_COVERAGE_EVIDENCE", "1");
    declare
       Build : constant Project_Tools.Processes.Captured_Process :=
         Project_Tools.Processes.Capture
@@ -218,327 +299,13 @@ begin
           ("coverage suite", Tests_Dir, Binary ("ada_quality_tests"),
            Project_Tools.Processes.No_Arguments, Quiet => True);
    begin
-      if Run.Status /= 0 then Fail ("instrumented test suite failed"); return; end if;
+      if Run.Status /= 0 then
+         Fail ("instrumented test suite failed" & ASCII.LF & To_String (Run.Output));
+         return;
+      end if;
    end;
 
-   declare
-      CLI_Binary : constant String := Binary ("ada-quality");
-      DB_Path    : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.db");
-      Missing_Policy : constant String :=
-        Ada_Quality.Temporary_Directories.Child (Scratch, "missing-policy.toml");
-      Operations : constant Project_Tools.Processes.Argument_Items :=
-        [Project_Tools.Processes.Argument ("list"), Project_Tools.Processes.Argument ("show"),
-         Project_Tools.Processes.Argument ("disable"), Project_Tools.Processes.Argument ("enable")];
-      Queries : constant Project_Tools.Processes.Argument_Items :=
-        [Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("status"),
-         Project_Tools.Processes.Argument ("findings")];
-
-      procedure Cleanup_Database is
-      begin
-         Project_Tools.Files.Delete_File_If_Present (DB_Path);
-         Project_Tools.Files.Delete_File_If_Present (DB_Path & ".wal");
-         Project_Tools.Files.Delete_File_If_Present (DB_Path & ".fts");
-         Project_Tools.Files.Delete_File_If_Present (DB_Path & ".lock");
-      end Cleanup_Database;
-
-      procedure Run_CLI
-        (Label       : String;
-         Args        : Project_Tools.Processes.Argument_Vectors.Vector;
-         Allow_One   : Boolean := False;
-         Allow_Two   : Boolean := False;
-         Allow_Three : Boolean := False;
-         Allow_Four  : Boolean := False;
-         Expected_Text : String := "")
-      is
-         Result : constant Project_Tools.Processes.Captured_Process :=
-           Project_Tools.Processes.Capture (Label, Root, CLI_Binary, Args, Quiet => True);
-      begin
-         if Result.Status /= 0 and then not (Allow_One and then Result.Status = 1) and then
-           not (Allow_Two and then Result.Status = 2) and then not (Allow_Three and then Result.Status = 3) and then
-           not (Allow_Four and then Result.Status = 4)
-         then
-            raise Program_Error with Label & " failed with status" & Integer'Image (Result.Status);
-         elsif Expected_Text'Length > 0 and then
-           Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Text) = 0
-         then
-            raise Program_Error with Label & " did not report: " & Expected_Text & ASCII.LF & To_String (Result.Output);
-         end if;
-      end Run_CLI;
-
-      procedure Exercise_Happy_Path is
-      begin
-      Cleanup_Database;
-      Run_CLI ("CLI help", Project_Tools.Processes.Arguments ([Project_Tools.Processes.Argument ("--help")]));
-      Run_CLI ("CLI version", Project_Tools.Processes.Arguments ([Project_Tools.Processes.Argument ("--version")]));
-      Run_CLI
-        ("database init",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
-             Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("init")]));
-      Run_CLI
-        ("database check",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("check"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
-      Run_CLI
-        ("policy validate",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("validate"),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
-      Run_CLI
-        ("policy show",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("show"),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
-      Run_CLI
-        ("project add",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("add"),
-             Project_Tools.Processes.Argument (Root), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]));
-      for Operation of Operations loop
-         declare
-            Name : constant String := Ada.Strings.Unbounded.To_String (Operation);
-            Args : Project_Tools.Processes.Argument_Vectors.Vector;
-         begin
-            Args.Append (Project_Tools.Processes.Argument ("project"));
-            Args.Append (Operation);
-            if Name /= "list" then Args.Append (Project_Tools.Processes.Argument ("1")); end if;
-            Args.Append (Project_Tools.Processes.Argument ("--database"));
-            Args.Append (Project_Tools.Processes.Argument (DB_Path));
-            Run_CLI ("project " & Name, Args);
-         end;
-      end loop;
-      Run_CLI
-        ("full assessment",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
-             Project_Tools.Processes.Argument ("--no-color")]),
-         Allow_One => True, Allow_Three => True);
-      Run_CLI
-        ("regressions without baseline",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("regressions"),
-             Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]),
-         Expected_Text => "comparison unavailable: no baseline assessment exists");
-      Run_CLI
-        ("second full assessment",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
-             Project_Tools.Processes.Argument ("--no-color")]),
-         Allow_One => True, Allow_Three => True);
-      Run_CLI
-        ("regressions with compatible baseline",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("regressions"),
-             Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]),
-         Expected_Text => "no regressions in comparable assessments");
-      Run_CLI
-        ("JSON report",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("report"), Project_Tools.Processes.Argument ("--format"),
-             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--no-color")]));
-      for Query of Queries loop
-         Run_CLI
-           (Ada.Strings.Unbounded.To_String (Query),
-            Project_Tools.Processes.Arguments
-              ([Query, Project_Tools.Processes.Argument ("--database"),
-                Project_Tools.Processes.Argument (DB_Path)]));
-      end loop;
-      Run_CLI
-        ("database recover",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("recover"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
-      declare
-         Release_Run : constant Project_Tools.Processes.Captured_Process :=
-           Project_Tools.Processes.Capture
-             ("instrumented release checker", Root,
-              Binary ("check_all"),
-              Project_Tools.Processes.No_Arguments, Quiet => True);
-      begin
-         if Release_Run.Status /= 0 then raise Program_Error with "instrumented release checker failed"; end if;
-      end;
-      Run_CLI
-        ("project remove",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("remove"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]));
-      end Exercise_Happy_Path;
-
-      procedure Exercise_Error_Paths is
-      begin
-      Run_CLI
-        ("check empty registry",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
-      Run_CLI
-        ("bad project ID",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("show"),
-             Project_Tools.Processes.Argument ("bad"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]), Allow_Two => True);
-      Run_CLI
-        ("unknown command",
-         Project_Tools.Processes.Arguments ([Project_Tools.Processes.Argument ("unknown")]),
-         Allow_Two => True);
-      Run_CLI
-        ("unknown option",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--unknown")]),
-         Allow_Two => True);
-      Run_CLI
-        ("missing option value",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--database")]),
-         Allow_Two => True);
-      Run_CLI
-        ("mutually exclusive selectors",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
-             Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1")]),
-         Allow_Two => True);
-      Run_CLI
-        ("invalid color policy",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--color"),
-             Project_Tools.Processes.Argument ("sometimes")]),
-         Allow_Two => True);
-      Run_CLI
-        ("unknown database operation",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("unknown"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
-         Allow_Two => True);
-      Run_CLI
-        ("unknown policy operation",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("unknown"),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
-         Allow_Two => True);
-      Run_CLI
-        ("unknown project operation",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("unknown"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
-         Allow_Two => True);
-      Run_CLI
-        ("check without selector",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
-         Allow_Two => True);
-      Run_CLI
-        ("missing project",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("show"),
-             Project_Tools.Processes.Argument ("999"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]), Allow_Four => True);
-      Run_CLI
-        ("missing policy validation",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("validate"),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Missing_Policy)]),
-         Allow_Two => True);
-      Run_CLI
-        ("check with missing policy",
-         Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
-             Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Missing_Policy)]),
-         Allow_Two => True);
-      end Exercise_Error_Paths;
-
-      procedure Exercise_Batch_Continuation is
-         Batch_Root : constant String :=
-           Ada_Quality.Temporary_Directories.Child (Scratch, "batch-projects");
-
-         procedure Create_Project (Number : Positive; Failing : Boolean := False) is
-            Directory : constant String := Project_Tools.Files.Join
-              (Batch_Root, "project-" & Ada.Strings.Fixed.Trim (Positive'Image (Number), Ada.Strings.Both));
-            Manifest : Unbounded_String := To_Unbounded_String
-              ("name = ""batch_" & Ada.Strings.Fixed.Trim (Positive'Image (Number), Ada.Strings.Both) &
-               """" & ASCII.LF & "version = ""0.1.0""" & ASCII.LF);
-         begin
-            Ada.Directories.Create_Path (Directory);
-            if Failing then
-               Append
-                 (Manifest,
-                  "[[pins]]" & ASCII.LF & "outside = { path = ""../../../etc"" }" & ASCII.LF);
-            end if;
-            Project_Tools.Files.Write_Text_File
-              (Project_Tools.Files.Join (Directory, "alire.toml"), To_String (Manifest));
-            Run_CLI
-              ("batch project add" & Positive'Image (Number),
-               Project_Tools.Processes.Arguments
-                 ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("add"),
-                   Project_Tools.Processes.Argument (Directory), Project_Tools.Processes.Argument ("--database"),
-                   Project_Tools.Processes.Argument (DB_Path)]));
-         end Create_Project;
-      begin
-         Cleanup_Database;
-         Ada.Directories.Create_Path (Batch_Root);
-         Run_CLI
-           ("batch database init",
-            Project_Tools.Processes.Arguments
-              ([Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
-                Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("init")]));
-         Create_Project (1);
-         Create_Project (2, Failing => True);
-         Create_Project (3);
-         Run_CLI
-           ("three-project assessment",
-            Project_Tools.Processes.Arguments
-              ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
-                Project_Tools.Processes.Argument ("--json"),
-                Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
-                Project_Tools.Processes.Argument ("--policy"),
-                Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
-                Project_Tools.Processes.Argument ("--no-color")]),
-            Allow_Three => True, Expected_Text => """kind"": ""assessment-batch""");
-         Run_CLI
-           ("interrupted middle project",
-            Project_Tools.Processes.Arguments
-              ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
-                Project_Tools.Processes.Argument (DB_Path)]),
-            Expected_Text => "project 2 interrupted");
-         Run_CLI
-           ("completed final project",
-            Project_Tools.Processes.Arguments
-              ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
-                Project_Tools.Processes.Argument (DB_Path)]),
-            Expected_Text => "project 3 completed");
-      end Exercise_Batch_Continuation;
-
-   begin
-      Exercise_Happy_Path;
-      Exercise_Error_Paths;
-      Exercise_Batch_Continuation;
-      Cleanup_Database;
-   exception
-      when Program_Error =>
-         Cleanup_Database;
-         raise;
-   end;
+   Exercise_CLI;
 
    declare
       Units : constant Ada_Quality.Coverage.Production_Unit_Vectors.Vector :=
@@ -571,18 +338,7 @@ begin
             Run : constant Project_Tools.Processes.Captured_Process :=
               Project_Tools.Processes.Capture ("gcov", Tests_Dir, Alr, Args, Quiet => True);
             Notes_Run : constant Project_Tools.Processes.Captured_Process :=
-              Project_Tools.Processes.Capture
-                ("gcov notes", Tests_Dir, Alr,
-                 Project_Tools.Processes.Arguments
-                   ([Project_Tools.Processes.Argument ("exec"), Project_Tools.Processes.Argument ("--"),
-                     Project_Tools.Processes.Argument ("bash"), Project_Tools.Processes.Argument ("-o"),
-                     Project_Tools.Processes.Argument ("pipefail"), Project_Tools.Processes.Argument ("-c"),
-                     Project_Tools.Processes.Argument
-                       ("gcov-dump ""$1"" | sed -n -e '1p' -e '/FUNCTION/p'"),
-                     Project_Tools.Processes.Argument ("coverage-note-inventory"),
-                     Project_Tools.Processes.Argument
-                       (Project_Tools.Files.Join (Object_Dir, Object_Name))]),
-                 Quiet => True);
+              Gcov_Notes (Project_Tools.Files.Join (Object_Dir, Object_Name), Object_Name);
             Gcov_Output : constant String := Per_File_Gcov_Output (To_String (Run.Output));
             Unit_Covered : Natural := 0;
             Unit_Total   : Natural := 0;
@@ -621,6 +377,9 @@ begin
             end if;
             Include_Source (Unit.Body_Path);
             Include_Source (Unit.Spec_Path);
+            for Path of Unit.Subunit_Paths loop
+               Include_Source (Path);
+            end loop;
             Covered := Covered + Unit_Covered;
             Total := Total + Unit_Total;
             Files.Append
@@ -696,11 +455,7 @@ begin
             "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
             "toolchain_fingerprint=" & To_String (Toolchain_Fingerprint) & ASCII.LF &
             To_String (File_Details));
-         Project_Tools.Files.Write_Text_File
-           (Summary_Path, To_String (Artifact_Text));
-         Project_Tools.Files.Write_Text_File
-           (Stability_Path, To_String (Artifact_Text));
-         Commit (Artifact);
+         Publish_Artifacts (To_String (Artifact_Text));
          Ada.Text_IO.Put_Line
            ("coverage " & Trim (Natural'Image (Covered)) & "/" & Trim (Natural'Image (Total)) & " (" &
             Project_Tools.Gcov.Percent_Image (Summary) & ")");

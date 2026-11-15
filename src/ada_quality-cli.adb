@@ -11,6 +11,7 @@ with Ada_Quality.History;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;
 with Ada_Quality.Presentation;
+with Ada_Quality.Reporting;
 with Ada_Quality.Storage;
 with Ada_Quality.Types;
 
@@ -20,6 +21,8 @@ package body Ada_Quality.CLI is
    use Ada_Quality.Types;
    use type Ada.Containers.Count_Type;
    use type Ada_Quality.History.Comparison_Status;
+
+   Usage_Error : exception;
 
    function Argument (Index : Positive) return String is
      (if Index <= Ada.Command_Line.Argument_Count then Ada.Command_Line.Argument (Index) else "");
@@ -74,10 +77,10 @@ package body Ada_Quality.CLI is
          begin
             if Starts_With (Value, "--") then
                if not Allowed (Value) then
-                  raise Constraint_Error with "unknown option: " & Value;
+                  raise Usage_Error with "unknown option: " & Value;
                elsif Takes_Value (Value) then
                   if Index = Ada.Command_Line.Argument_Count or else Starts_With (Argument (Index + 1), "--") then
-                     raise Constraint_Error with "option requires a value: " & Value;
+                     raise Usage_Error with "option requires a value: " & Value;
                   end if;
                   Index := Index + 1;
                end if;
@@ -86,12 +89,12 @@ package body Ada_Quality.CLI is
          Index := Index + 1;
       end loop;
       if Option ("--color", "never") not in "never" | "auto" | "always" then
-         raise Constraint_Error with "--color requires never, auto, or always";
+         raise Usage_Error with "--color requires never, auto, or always";
       end if;
       if Option ("--project", "") /= "" and then
         (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all")
       then
-         raise Constraint_Error with "--all and --project are mutually exclusive";
+         raise Usage_Error with "--all and --project are mutually exclusive";
       end if;
    end Validate_Options;
 
@@ -127,7 +130,7 @@ package body Ada_Quality.CLI is
       Ada.Text_IO.Put_Line ("Global options: --database PATH --policy PATH --no-color");
    end Help;
 
-   procedure Put_Project (P : Ada_Quality.Storage.Project_Info) is
+   procedure Put_Project (P : Ada_Quality.Reporting.Project_Record) is
    begin
       Ada.Text_IO.Put_Line
         (Positive'Image (P.Id) & "  " & To_String (P.Path) & "  " &
@@ -164,6 +167,12 @@ package body Ada_Quality.CLI is
       end loop;
    end Print_Assessment;
 
+   procedure Print_Findings (DB_Path : String) is separate;
+
+   function Run_Check
+     (Store : in out Ada_Quality.Storage.Store;
+      Policy_Path : String) return Natural is separate;
+
    function Run return Natural is
       Command     : constant String := Positional (1);
       Subcommand  : constant String := Positional (2);
@@ -181,8 +190,9 @@ package body Ada_Quality.CLI is
          return Positive'Value (Positional (Index));
       exception
          when Constraint_Error =>
-            raise Constraint_Error with "a positive project ID is required";
+            raise Usage_Error with "a positive project ID is required";
       end Id_Argument;
+
    begin
       if Ada.Command_Line.Argument_Count = 0 or else Command in "help" | "--help" | "-h" then
          Help;
@@ -205,7 +215,7 @@ package body Ada_Quality.CLI is
       end if;
 
       if Command = "database" then
-         if Subcommand = "" then raise Constraint_Error with "database operation is required"; end if;
+         if Subcommand = "" then raise Usage_Error with "database operation is required"; end if;
          if Subcommand = "init" then
             Open_Store;
             Ada_Quality.Storage.Check (Store);
@@ -223,11 +233,11 @@ package body Ada_Quality.CLI is
                Ada.Text_IO.Put_Line ("recovered" & Natural'Image (Count) & " assessment(s)");
             end;
          else
-            raise Constraint_Error with "database requires init, check, or recover";
+            raise Usage_Error with "database requires init, check, or recover";
          end if;
          return 0;
       elsif Command = "policy" then
-         if Subcommand = "" then raise Constraint_Error with "policy operation is required"; end if;
+         if Subcommand = "" then raise Usage_Error with "policy operation is required"; end if;
          declare
             Loaded : constant Ada_Quality.Policy.Load_Result := Ada_Quality.Policy.Load (Policy_Path);
          begin
@@ -247,17 +257,22 @@ package body Ada_Quality.CLI is
                Ada.Text_IO.Put_Line
                  ("require_clean_worktree = " & Boolean'Image (Loaded.Value.Require_Clean_Worktree));
             else
-               raise Constraint_Error with "policy requires validate or show";
+               raise Usage_Error with "policy requires validate or show";
             end if;
          end;
          return 0;
       end if;
 
-      Open_Store;
+      if Command = "check" or else
+        (Command = "project" and then Subcommand in "add" | "enable" | "disable" | "remove")
+      then
+         Open_Store;
+         Ada_Quality.Storage.Check (Store);
+      end if;
       if Command = "project" then
          if Subcommand = "add" then
             if Positional (3) = "" or else Starts_With (Positional (3), "--") then
-               raise Constraint_Error with "project add requires a path";
+               raise Usage_Error with "project add requires a path";
             end if;
             declare
                Id : constant Positive := Ada_Quality.Storage.Add_Project (Store, Positional (3));
@@ -265,9 +280,20 @@ package body Ada_Quality.CLI is
                Ada.Text_IO.Put_Line ("registered project" & Positive'Image (Id));
             end;
          elsif Subcommand = "list" then
-            for P of Ada_Quality.Storage.Projects (Store) loop Put_Project (P); end loop;
+            declare
+               Session : Ada_Quality.Reporting.Session;
+            begin
+               Ada_Quality.Reporting.Open (Session, DB_Path);
+               for P of Ada_Quality.Reporting.Projects (Session) loop Put_Project (P); end loop;
+            end;
          elsif Subcommand = "show" then
-            Put_Project (Ada_Quality.Storage.Project (Store, Id_Argument (3)));
+            declare
+               Session : Ada_Quality.Reporting.Session;
+               Id      : constant Positive := Id_Argument (3);
+            begin
+               Ada_Quality.Reporting.Open (Session, DB_Path);
+               Put_Project (Ada_Quality.Reporting.Project (Session, Id));
+            end;
          elsif Subcommand = "enable" then
             Ada_Quality.Storage.Set_Enabled (Store, Id_Argument (3), True);
          elsif Subcommand = "disable" then
@@ -275,270 +301,60 @@ package body Ada_Quality.CLI is
          elsif Subcommand = "remove" then
             Ada_Quality.Storage.Remove_Project (Store, Id_Argument (3));
          else
-            raise Constraint_Error with "unknown project subcommand";
+            raise Usage_Error with "unknown project subcommand";
          end if;
          return 0;
       elsif Command = "check" then
-         declare
-            Loaded : constant Ada_Quality.Policy.Load_Result := Ada_Quality.Policy.Load (Policy_Path);
-            Exit_Code : Natural := 0;
-            JSON_Mode : constant Boolean :=
-              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
-            All_Mode : constant Boolean :=
-              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all");
-            Batch_Mode : constant Boolean := JSON_Mode and then All_Mode;
-            Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
-
-            procedure Check_Project (P : Ada_Quality.Storage.Project_Info) is
-               Run_Id : Natural := 0;
-               Value  : Assessment;
-               Source : Ada.Strings.Unbounded.Unbounded_String;
-
-               procedure Interrupt_Project (Error : Ada.Exceptions.Exception_Occurrence) is
-                  Message : constant String :=
-                    (if Ada.Exceptions.Exception_Message (Error)'Length > 0
-                     then Ada.Exceptions.Exception_Message (Error)
-                     else Ada.Exceptions.Exception_Name (Error));
-                  Reason : constant String := "project assessment failed: " & Message;
-               begin
-                  Ada_Quality.Storage.Interrupt_Assessment (Store, Positive (Run_Id), Reason);
-                  Ada.Text_IO.Put_Line
-                    (Ada.Text_IO.Standard_Error,
-                     "project" & Positive'Image (P.Id) & " assessment interrupted: " & Message);
-                  if Batch_Mode then
-                     Outcomes.Append
-                       (Ada_Quality.JSON.Batch_Outcome'
-                          (Project_Id => P.Id, Assessment_Id => Run_Id,
-                           Status => Ada_Quality.JSON.Batch_Interrupted,
-                           Diagnostic => To_Unbounded_String (Reason), Value => <>));
-                  end if;
-                  Exit_Code := Natural'Max (Exit_Code, 3);
-               end Interrupt_Project;
-            begin
-               begin
-                  Source := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (To_String (P.Path)));
-               exception
-                  when Error : others =>  --  AQ: project-local fingerprint boundary
-                     Run_Id := Ada_Quality.Storage.Start_Assessment
-                       (Store, P.Id, "source-fingerprint-unavailable",
-                        Ada_Quality.Policy.Fingerprint (Loaded.Value));
-                     Interrupt_Project (Error);
-                     return;
-               end;
-               Run_Id := Ada_Quality.Storage.Start_Assessment
-                 (Store, P.Id, To_String (Source), Ada_Quality.Policy.Fingerprint (Loaded.Value));
-               begin
-                  Value := Ada_Quality.Checks.Assess (P.Id, To_String (P.Path), Loaded.Value);
-               exception
-                  when Error : others =>  --  AQ: project-local assessment boundary
-                     Interrupt_Project (Error);
-                     return;
-               end;
-               Value.Id := Run_Id;
-               if Ada_Quality.Storage.Publish (Store, Value) /= Run_Id then
-                  raise Ada_Quality.Storage.Storage_Error with "assessment publication changed its identifier";
-               end if;
-               Exit_Code := Natural'Max (Exit_Code, Result_Exit (Value));
-               if Batch_Mode then
-                  Outcomes.Append
-                    (Ada_Quality.JSON.Batch_Outcome'
-                       (Project_Id => P.Id, Assessment_Id => Run_Id,
-                        Status => Ada_Quality.JSON.Batch_Completed,
-                        Diagnostic => Null_Unbounded_String, Value => Value));
-               elsif JSON_Mode then Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
-               else Print_Assessment (Value); end if;
-            end Check_Project;
-         begin
-            if not Loaded.Success then
-               Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, To_String (Loaded.Error));
-               return 2;
-            elsif Option ("--project", "") /= "" then
-               declare
-                  P : constant Ada_Quality.Storage.Project_Info :=
-                    Ada_Quality.Storage.Project (Store, Positive'Value (Option ("--project", "")));
-               begin
-                  if P.Removed or else not P.Enabled then raise Constraint_Error with "project is not enabled"; end if;
-                  Check_Project (P);
-               end;
-            elsif All_Mode then
-               for P of Ada_Quality.Storage.Projects (Store) loop
-                  if P.Enabled and then not P.Removed then Check_Project (P); end if;
-               end loop;
-               if Batch_Mode then
-                  Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Batch (Outcomes, Pretty => True));
-               end if;
-            else
-               raise Constraint_Error with "check requires --all or --project ID";
-            end if;
-            return Exit_Code;
-         end;
+         return Run_Check (Store, Policy_Path);
       elsif Command = "history" or else Command = "status" then
-         for H of Ada_Quality.Storage.History (Store) loop
-            Ada.Text_IO.Put_Line
-              (Positive'Image (H.Id) & " project" & Positive'Image (H.Project_Id) & " " & To_String (H.Status));
-         end loop;
+         declare
+            Session : Ada_Quality.Reporting.Session;
+         begin
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            for H of Ada_Quality.Reporting.Runs (Session) loop
+               Ada.Text_IO.Put_Line
+                 (Positive'Image (H.Id) & " project" & Positive'Image (H.Project_Id) & " " &
+                  (case H.State is
+                     when Assessment_Running => "running",
+                     when Assessment_Completed => "completed",
+                     when Assessment_Invalid => "invalid",
+                     when Assessment_Interrupted => "interrupted"));
+            end loop;
+         end;
          return 0;
       elsif Command = "findings" then
-         for P of Ada_Quality.Storage.Projects (Store, Include_Removed => True) loop
-            declare
-               Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
-                 Ada_Quality.Storage.History (Store, P.Id);
-            begin
-               if not Runs.Is_Empty then
-                  declare
-                     Latest   : constant Ada_Quality.Storage.History_Item := Runs.Last_Element;
-                     Current  : constant Ada_Quality.Storage.Detail_Vectors.Vector :=
-                       Ada_Quality.Storage.Findings (Store, Latest.Id);
-                     Current_Results : constant Ada_Quality.Storage.Detail_Vectors.Vector :=
-                       Ada_Quality.Storage.Results (Store, Latest.Id);
-                     Previous : Ada_Quality.Storage.Detail_Vectors.Vector;
-                     Older    : Ada_Quality.Storage.Detail_Vectors.Vector;
-                     Baseline : constant Natural := Ada_Quality.History.Baseline_Id (Runs, Latest.Id);
-
-                     function Has
-                       (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
-                        Key   : Ada.Strings.Unbounded.Unbounded_String) return Boolean
-                     is
-                     begin
-                        for F of Items loop
-                           if F.Kind = Key then return True; end if;
-                        end loop;
-                        return False;
-                     end Has;
-
-                     function Successfully_Remeasured
-                       (Finding_Key : Ada.Strings.Unbounded.Unbounded_String) return Boolean
-                     is
-                        Text  : constant String := To_String (Finding_Key);
-                        Colon : constant Natural := Ada.Strings.Fixed.Index (Text, ":");
-                     begin
-                        if Colon <= Text'First then return False; end if;
-                        for Item of Current_Results loop
-                           if To_String (Item.Kind) = Text (Text'First .. Colon - 1) then
-                              return Ada.Strings.Fixed.Index (To_String (Item.State), "succeeded/") = 1;
-                           end if;
-                        end loop;
-                        return False;
-                     end Successfully_Remeasured;
-                  begin
-                     if Baseline > 0 then
-                        Previous := Ada_Quality.Storage.Findings (Store, Baseline);
-                        for Run of Runs loop
-                           exit when Run.Id = Baseline;
-                           for Finding of Ada_Quality.Storage.Findings (Store, Run.Id) loop
-                              Older.Append (Finding);
-                           end loop;
-                        end loop;
-                     elsif To_String (Latest.Status) /= "completed" and then Runs.Length >= 2 then
-                        Previous := Ada_Quality.Storage.Findings (Store, Runs (Runs.Last_Index - 1).Id);
-                     end if;
-                     for F of Current loop
-                        declare
-                           Lifecycle : constant Ada_Quality.History.Finding_Lifecycle :=
-                             Ada_Quality.History.Classify_Finding
-                               (F.Kind, Current, Previous, Older,
-                                To_String (Latest.Status) = "completed");
-                        begin
-                           Ada.Text_IO.Put_Line
-                             (Ada_Quality.History.Image (Lifecycle) & " " & To_String (F.State) & " " &
-                              To_String (F.Summary));
-                        end;
-                     end loop;
-                     for F of Previous loop
-                        if not Has (Current, F.Kind) then
-                           declare
-                              Lifecycle : constant Ada_Quality.History.Finding_Lifecycle :=
-                                Ada_Quality.History.Classify_Finding
-                                  (F.Kind, Current, Previous, Older,
-                                   To_String (Latest.Status) = "completed" and then
-                                     Successfully_Remeasured (F.Kind));
-                           begin
-                              if Lifecycle in Ada_Quality.History.Resolved | Ada_Quality.History.Unconfirmed then
-                                 Ada.Text_IO.Put_Line
-                                   (Ada_Quality.History.Image (Lifecycle) & " " & To_String (F.State) & " " &
-                                    To_String (F.Summary));
-                              end if;
-                           end;
-                        end if;
-                     end loop;
-                  end;
-               end if;
-            end;
-         end loop;
+         Print_Findings (DB_Path);
          return 0;
       elsif Command = "regressions" then
          declare
             Projects_Seen : Natural := 0;
-
-            function Find_Run
-              (Runs : Ada_Quality.Storage.History_Vectors.Vector;
-               Id   : Positive) return Ada_Quality.Storage.History_Item is
-            begin
-               for Candidate of Runs loop
-                  if Candidate.Id = Id then return Candidate; end if;
-               end loop;
-               raise Constraint_Error with "assessment baseline not found";
-            end Find_Run;
-
-            function Findings_Before
-              (Runs    : Ada_Quality.Storage.History_Vectors.Vector;
-               Baseline, Current : Ada_Quality.Storage.History_Item)
-               return Ada_Quality.Storage.Detail_Vectors.Vector
-            is
-               Result : Ada_Quality.Storage.Detail_Vectors.Vector;
-            begin
-               for Run of Runs loop
-                  exit when Run.Id = Baseline.Id;
-                  if Ada_Quality.History.Compatible (Run, Current) then
-                     Result.Append_Vector (Ada_Quality.Storage.Findings (Store, Run.Id));
-                  end if;
-               end loop;
-               return Result;
-            end Findings_Before;
+            Session : Ada_Quality.Reporting.Session;
          begin
-            for P of Ada_Quality.Storage.Projects (Store) loop
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            for P of Ada_Quality.Reporting.Projects (Session) loop
                Projects_Seen := Projects_Seen + 1;
                declare
-                  Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
-                    Ada_Quality.Storage.History (Store, P.Id);
-                  Selection : constant Ada_Quality.History.Comparison_Selection :=
-                    Ada_Quality.History.Select_Comparison (Runs);
+                  Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
+                    Ada_Quality.Reporting.Compare_Project (Session, P.Id);
                begin
-                  if Selection.Status = Ada_Quality.History.Comparison_Available then
-                     declare
-                        Current_Run : constant Ada_Quality.Storage.History_Item :=
-                          Find_Run (Runs, Positive (Selection.Current_Id));
-                        Baseline_Run : constant Ada_Quality.Storage.History_Item :=
-                          Find_Run (Runs, Positive (Selection.Baseline_Id));
-                        Changes : constant Ada_Quality.History.Regression_Vectors.Vector :=
-                          Ada_Quality.History.Compare
-                            (Baseline_Run, Current_Run,
-                             Ada_Quality.Storage.Results (Store, Baseline_Run.Id),
-                             Ada_Quality.Storage.Results (Store, Current_Run.Id),
-                             Ada_Quality.Storage.Measurements (Store, Baseline_Run.Id),
-                             Ada_Quality.Storage.Measurements (Store, Current_Run.Id),
-                             Ada_Quality.Storage.Findings (Store, Baseline_Run.Id),
-                             Ada_Quality.Storage.Findings (Store, Current_Run.Id),
-                             Findings_Before (Runs, Baseline_Run, Current_Run));
-                     begin
-                        if Changes.Is_Empty then
+                  if Comparison.Selection.Status = Ada_Quality.History.Comparison_Available then
+                     if Comparison.Changes.Is_Empty then
+                        Ada.Text_IO.Put_Line
+                          ("project" & Positive'Image (P.Id) &
+                           ": no regressions in comparable assessments");
+                     else
+                        for Change of Comparison.Changes loop
                            Ada.Text_IO.Put_Line
-                             ("project" & Positive'Image (P.Id) &
-                              ": no regressions in comparable assessments");
-                        else
-                           for Change of Changes loop
-                              Ada.Text_IO.Put_Line
-                                ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
-                                 Ada_Quality.History.Image (Change.Kind) & ": " &
-                                 To_String (Change.Before) & " -> " & To_String (Change.After));
-                           end loop;
-                        end if;
-                     end;
+                             ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
+                              Ada_Quality.History.Image (Change.Kind) & ": " &
+                              To_String (Change.Before) & " -> " & To_String (Change.After));
+                        end loop;
+                     end if;
                   else
                      Ada.Text_IO.Put_Line
                        ("project" & Positive'Image (P.Id) &
                         ": comparison unavailable: " &
-                        (case Selection.Status is
+                        (case Comparison.Selection.Status is
                            when Ada_Quality.History.No_Assessments => "no assessments exist",
                            when Ada_Quality.History.No_Baseline => "no baseline assessment exists",
                            when Ada_Quality.History.Current_Incomplete =>
@@ -560,16 +376,26 @@ package body Ada_Quality.CLI is
          return 0;
       elsif Command = "report" and then Option ("--format", "") = "json" then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-         Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Archive (Store, Pretty => True));
+         declare
+            Session : Ada_Quality.Reporting.Session;
+         begin
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Archive (Session, Pretty => True));
+         end;
          return 0;
       else
-         raise Constraint_Error with "unknown command: " & Command;
+         raise Usage_Error with "unknown command: " & Command;
       end if;
    exception
       when E : Ada_Quality.Storage.Storage_Error =>
          Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, Ada.Exceptions.Exception_Message (E));
          return 4;
-      when E : Constraint_Error =>
+      when E : Ada_Quality.Reporting.Reporting_Error | Ada_Quality.Reporting.Schema_Error |
+        Ada_Quality.Reporting.Integrity_Error | Ada_Quality.Reporting.Busy_Error |
+        Ada_Quality.Reporting.Limit_Error =>
+         Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, Ada.Exceptions.Exception_Message (E));
+         return 4;
+      when E : Usage_Error =>
          Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, Ada.Exceptions.Exception_Message (E));
          return 2;
       when E : others =>  --  AQ: audited exception boundary

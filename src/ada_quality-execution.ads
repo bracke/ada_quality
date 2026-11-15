@@ -3,7 +3,7 @@ with Project_Tools.Processes;
 
 --  Bounded, timeout-controlled child-process execution in a clean environment.
 package Ada_Quality.Execution is
-   --  Bounded child-process execution under an explicit clean environment.
+   --  Bounded process-group execution under an explicit clean environment.
    subtype Unbounded_String is Ada.Strings.Unbounded.Unbounded_String;
    --  Dynamically sized captured process text.
 
@@ -17,16 +17,20 @@ package Ada_Quality.Execution is
    --  @enum Spawn_Error Process could not be started or monitored.
 
    type Run_Result is record
-      Status     : Run_Status := Spawn_Error;
-      Exit_Code  : Integer := -1;
-      Output     : Unbounded_String;
-      Truncated  : Boolean := False;
-      Command    : Unbounded_String;
+      Status        : Run_Status := Spawn_Error;
+      Exit_Code     : Integer := -1;
+      Output        : Unbounded_String;
+      Output_Digest : Unbounded_String;
+      Output_Bytes  : Long_Long_Integer := 0;
+      Truncated     : Boolean := False;
+      Command       : Unbounded_String;
    end record;
    --  Bounded evidence returned by one child-process execution.
    --  @field Status Terminal process state.
    --  @field Exit_Code Child exit code, or minus one when unavailable.
    --  @field Output Captured stdout and stderr within the configured limit.
+   --  @field Output_Digest FNV-1a digest of complete combined stdout and stderr.
+   --  @field Output_Bytes 64-bit complete combined stdout and stderr byte count before truncation.
    --  @field Truncated Whether output exceeded the configured limit.
    --  @field Command Auditable executable and argument summary.
 
@@ -36,7 +40,7 @@ package Ada_Quality.Execution is
       Arguments      : Argument_Vector;
       Timeout_Seconds : Positive;
       Maximum_Bytes  : Positive) return Run_Result;
-   --  Execute a program without a shell, under a clean environment and hard limits.
+   --  Execute a program without a shell, in an isolated process group under a clean environment and hard limits.
    --  @param Directory Working directory for the child.
    --  @param Program Executable path or resolved program name.
    --  @param Arguments Explicit arguments, excluding the executable itself.

@@ -1,0 +1,195 @@
+separate (Ada_Quality_Test_Suite)
+--  AQ-WAIVER: SRC-03 target=run_source_analysis_test justification=one-component-fixture-matrix
+procedure Run_Source_Analysis_Test is
+begin
+declare
+   Root   : constant String := Fixture_Root & "/source_analysis_test";
+   Policy : Ada_Quality.Policy.Quality_Policy;
+   Metrics : Ada_Quality.Checks.Source_Analysis;
+   Long_Line : constant String := "   Value : constant String := """ &
+     [1 .. 121 => 'x'] & """;";
+   Other_Long_Line : constant String := "   Other : constant String := """ &
+     [1 .. 121 => 'y'] & """;";
+   Example_Body : constant String :=
+     "procedure Example is" & ASCII.LF &
+     "begin" & ASCII.LF &
+     "   if Ready and then Enabled then" & ASCII.LF &
+     "      null;" & ASCII.LF &
+     "   elsif Waiting then" & ASCII.LF &
+     "      null;" & ASCII.LF &
+     "   end if;" & ASCII.LF &
+     "   Label := ""password := Run_Shell"";" & ASCII.LF &
+     "   -- Password := and Run_Shell are inert in comments." & ASCII.LF &
+     "   Password := ""redacted"";" & ASCII.LF &
+     "   Run_Shell;" & ASCII.LF &
+     "   Program := Project_Tools.Processes.Argument (""bash"");" & ASCII.LF &
+     "   Register_Routine;" & ASCII.LF &
+     Long_Line & ASCII.LF &
+     Other_Long_Line & ASCII.LF &
+     "exception" & ASCII.LF &
+     "   when others => null;" & ASCII.LF &
+     "end Example;" & ASCII.LF;
+begin
+   Project_Tools.Files.Delete_Tree (Root);
+   Ada.Directories.Create_Path (Root & "/src");
+   Ada.Directories.Create_Path (Root & "/tests/src");
+   Ada.Directories.Create_Path (Root & "/config");
+   Policy.Maximum_Source_Lines := 5;
+   Policy.Maximum_Complexity := 4;
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/Documented.ads",
+      "--  Public package documentation." & ASCII.LF &
+      "package Documented is" & ASCII.LF &
+      "end Documented;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/undocumented.ads",
+      "package Undocumented is" & ASCII.LF &
+      "end Undocumented;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/example.adb",
+      "--  AQ: complexity-reviewed" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong justification=fixture rejects broad targeting" & ASCII.LF &
+      Example_Body);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/tests/src/example_tests.adb",
+      "procedure Example_Tests is begin Register_Routine; end Example_Tests;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/nested.adb",
+      "--  AQ-WAIVER: SRC-06 target=file justification=fixture exercises reviewed source size" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong justification=fixture skips unrelated waiver targets" &
+      ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=inner justification=fixture reviews the measured nested segment" &
+      ASCII.LF &
+      "procedure Nested is" & ASCII.LF &
+      "   function Expression (Flag : Boolean) return Boolean is (Flag and then Ready);" & ASCII.LF &
+      "   procedure Inner is" & ASCII.LF &
+      "   begin" & ASCII.LF &
+      "      case Value is" & ASCII.LF &
+      "         when One => null;" & ASCII.LF &
+      "         when others => null;" & ASCII.LF &
+      "      end case;" & ASCII.LF &
+      "   end Inner;" & ASCII.LF &
+      "begin" & ASCII.LF &
+      "   while Ready loop exit; end loop;" & ASCII.LF &
+      "end Nested;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/config/example_config.ads", "package Example_Config is end Example_Config;" & ASCII.LF);
+   Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
+   Assert (Metrics.File_Count = 5 and then Metrics.Spec_Count = 2 and then
+     Metrics.Production_Files = 4 and then Metrics.Test_Files = 1 and then
+     Metrics.Generated_Files = 1,
+     "native inventory distinguishes production, test, and generated Ada sources");
+   Assert (Metrics.Naming_Errors = 1, "non-lowercase Ada file names are findings");
+   declare
+      Subunit_Root : constant String := Root & "/subunits";
+      Subunits     : Ada_Quality.Checks.Source_Analysis;
+   begin
+      Ada.Directories.Create_Path (Subunit_Root & "/src");
+      Project_Tools.Files.Write_Text_File
+        (Subunit_Root & "/src/example-part.adb",
+         "separate (Example)" & ASCII.LF & "procedure Part (Value : Integer) is" & ASCII.LF &
+         "begin" & ASCII.LF &
+         "   null;" & ASCII.LF & "end Part;" & ASCII.LF);
+      Project_Tools.Files.Write_Text_File
+        (Subunit_Root & "/src/example-wrong.adb",
+         "separate (Example)" & ASCII.LF & "procedure Other is" & ASCII.LF & "begin" & ASCII.LF &
+         "   null;" & ASCII.LF & "end Other;" & ASCII.LF);
+      Subunits := Ada_Quality.Checks.Analyze_Source (Subunit_Root, Policy);
+      Assert (Subunits.Naming_Errors = 1,
+        "a subunit file is named after its parent and subunit; a mismatched subunit is a finding");
+   end;
+   Assert (Metrics.Undocumented_Specs = 1,
+     "a standalone package documentation comment is required");
+   Assert (Metrics.Maximum_Complexity = 5,
+     "defined complexity covers conditionals, short circuits, alternatives, loops, " &
+     "nested declarations, and expression functions");
+   Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 2,
+     "legacy and mismatched complexity markers do not waive a measured occurrence");
+   Assert (Metrics.Long_Lines = 2 and then Metrics.Oversized_Files = 1,
+     "line and file-size policy violations are measured");
+   declare
+      First_Key : Ada.Strings.Unbounded.Unbounded_String;
+      Count : Natural := 0;
+   begin
+      for Finding of Metrics.Findings loop
+         if To_String (Finding.Rule) = "line-length" then
+            Count := Count + 1;
+            if Count = 1 then
+               First_Key := Finding.Fingerprint;
+            else
+               Assert (Finding.Fingerprint /= First_Key,
+                 "different source contexts have different stable finding identities");
+            end if;
+         end if;
+      end loop;
+      Assert (Count = 2, "each distinct long source line remains an independently tracked finding");
+   end;
+   Assert (Metrics.Secret_Matches = 1 and then Metrics.Unsafe_Processes = 2,
+     "credential, shell API, and shell executable patterns are detected without comment/string false positives");
+   Assert (Metrics.Broad_Handlers = 1 and then Metrics.Test_Registrations = 2,
+     "broad handlers and test registrations use Ada-aware source scans");
+   Assert (Metrics.Findings.Length >= 7, "native violations carry structured findings");
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/example.adb",
+      "--  AQ-WAIVER: SRC-03 target=example justification=fixture reviewed this subprogram" &
+      ASCII.LF & Example_Body);
+   Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
+   Assert (Metrics.Complexity_Violations = 0 and then Metrics.Review_Waivers = 3,
+     "matching rule, target, and justification waive only the reviewed occurrence; violations" &
+     Natural'Image (Metrics.Complexity_Violations) & ", waivers" &
+     Natural'Image (Metrics.Review_Waivers));
+   declare
+      Visible_Waivers : Natural := 0;
+   begin
+      for Finding of Metrics.Findings loop
+         if To_String (Finding.Rule) = "review-waiver" and then Finding.Level = Low then
+            Visible_Waivers := Visible_Waivers + 1;
+         end if;
+      end loop;
+      Assert (Visible_Waivers = 3,
+        "accepted source-size and complexity waivers remain visible as low-severity evidence");
+   end;
+   Policy.Require_Clean_Worktree := False;
+   --  A SPARK unit with a dedicated proof project: PRF-01 proves that project, which cannot pass here.
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/proved.ads",
+      "pragma SPARK_Mode (On);" & ASCII.LF & "package Proved is end Proved;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/spark_example.gpr", "project Spark_Example is end Spark_Example;" & ASCII.LF);
+   declare
+      Incomplete : constant Assessment := Ada_Quality.Checks.Assess (98_765, Root, Policy);
+      Proof      : Indicator_Result;
+   begin
+      Assert (Incomplete.Results.Length = 33 and then
+        Incomplete.Status = Assessment_Completed,
+        "an incomplete project still produces all 33 explicit pass, violation, or blocked results");
+      for Item of Incomplete.Results loop
+         if Item.Indicator = PRF_01 then
+            Proof := Item;
+         end if;
+      end loop;
+      Assert (Proof.Indicator = PRF_01 and then Proof.Applicable and then Proof.Compliance /= Pass,
+        "a dedicated proof project is proved, and a failed proof cannot pass");
+   end;
+   declare
+      First_Tree  : constant String := Fixture_Root & "/fingerprint_framing_a";
+      Second_Tree : constant String := Fixture_Root & "/fingerprint_framing_b";
+   begin
+      Project_Tools.Files.Delete_Tree (First_Tree);
+      Project_Tools.Files.Delete_Tree (Second_Tree);
+      Ada.Directories.Create_Path (First_Tree);
+      Ada.Directories.Create_Path (Second_Tree);
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/a", "Xb" & Character'Val (0) & "Y");
+      Project_Tools.Files.Write_Text_File (Second_Tree & "/a", "X");
+      Project_Tools.Files.Write_Text_File (Second_Tree & "/b", "Y");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) /=
+           Ada_Quality.Checks.Source_Fingerprint (Second_Tree),
+         "length-framed source records distinguish formerly ambiguous trees");
+      Project_Tools.Files.Delete_Tree (First_Tree);
+      Project_Tools.Files.Delete_Tree (Second_Tree);
+   end;
+   Project_Tools.Files.Delete_Tree (Root);
+end;
+end Run_Source_Analysis_Test;

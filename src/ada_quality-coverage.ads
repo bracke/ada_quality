@@ -6,15 +6,23 @@ package Ada_Quality.Coverage is
    subtype Unbounded_String is Ada.Strings.Unbounded.Unbounded_String;
    --  Dynamically sized path or unit text.
 
+   package Source_Path_Vectors is new Ada.Containers.Vectors
+     (Index_Type   => Positive,
+      Element_Type => Unbounded_String,
+      "="          => Ada.Strings.Unbounded."=");
+   --  Source paths compiled as part of the same GNAT object.
+
    type Production_Unit is record
-      Stem      : Unbounded_String;
-      Body_Path : Unbounded_String;
-      Spec_Path : Unbounded_String;
+      Stem          : Unbounded_String;
+      Body_Path     : Unbounded_String;
+      Spec_Path     : Unbounded_String;
+      Subunit_Paths : Source_Path_Vectors.Vector;
    end record;
    --  One production Ada unit and its independently discovered source files.
    --  @field Stem GNAT object basename shared by the unit sources.
    --  @field Body_Path Absolute body path, or empty when the unit has no body.
    --  @field Spec_Path Absolute specification path, or empty when the unit has no specification.
+   --  @field Subunit_Paths Separate bodies whose coverage is emitted in this unit's object.
 
    package Production_Unit_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Production_Unit);

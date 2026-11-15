@@ -1,19 +1,48 @@
 with Ada.Containers;
 with Ada.Characters.Handling;
 with Ada.Strings.Fixed;
+with Ada_Quality.Finding_Identity;
 with Ada_Quality.Indicators;
+with Ada_Quality.Persistence;
 
 package body Ada_Quality.History is
    use Ada.Strings.Unbounded;
-   use Ada_Quality.Storage;
+   use Ada_Quality.Indicators;
+   use Ada_Quality.History_Data;
    use Ada_Quality.Types;
    use type Ada.Containers.Count_Type;
 
-   function Contains (Text, Pattern : String) return Boolean is
-     (Ada.Strings.Fixed.Index (Text, Pattern) > 0);
+   package Detail_Key_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type => Unbounded_String, Element_Type => Detail_Info);
+   package Run_Measurement_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type => Positive, Element_Type => Detail_Info);
+
+   function Legacy_Finding_Key (Key : Unbounded_String) return Unbounded_String is
+     (To_Unbounded_String (Ada_Quality.Finding_Identity.Legacy_Key (To_String (Key))));
+
+   function Finding_Indicator (Key : Unbounded_String; Id : out Indicator_Id) return Boolean is
+      Text  : constant String := To_String (Key);
+      Colon : constant Natural := Ada.Strings.Fixed.Index (Text, ":");
+   begin
+      if Colon <= 1 then
+         Id := STR_01;
+         return False;
+      end if;
+      return Ada_Quality.Indicators.Parse_Canonical (Text (Text'First .. Colon - 1), Id);
+   end Finding_Indicator;
+
+   function Legacy_Match_Available
+     (Baseline : Detail_Key_Maps.Map;
+      Consumed : Finding_Key_Sets.Set;
+      Current, Legacy : Unbounded_String) return Boolean is
+     (Legacy /= Current and then Baseline.Contains (Legacy) and then not Consumed.Contains (Legacy));
+
+   function Toolchain_Is_Available (Value : Unbounded_String) return Boolean is
+     (Length (Value) > 0 and then
+      To_String (Value) /= Unavailable_Toolchain_Fingerprint);
 
    function Compatible
-     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean is
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean is
      (Baseline.Project_Id = Current.Project_Id and then
       To_String (Baseline.Status) = "completed" and then
       To_String (Current.Status) = "completed" and then
@@ -21,11 +50,11 @@ package body Ada_Quality.History is
       Length (Current.Source_Fingerprint) > 0 and then
       Length (Baseline.Policy_Fingerprint) > 0 and then
       Baseline.Policy_Fingerprint = Current.Policy_Fingerprint and then
-      Length (Baseline.Toolchain_Fingerprint) > 0 and then
+      Toolchain_Is_Available (Baseline.Toolchain_Fingerprint) and then
       Baseline.Toolchain_Fingerprint = Current.Toolchain_Fingerprint);
 
    function Policy_Comparable
-     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean is
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean is
      (Baseline.Project_Id = Current.Project_Id and then
       To_String (Baseline.Status) = "completed" and then
       To_String (Current.Status) = "completed" and then
@@ -34,11 +63,11 @@ package body Ada_Quality.History is
       Length (Baseline.Policy_Fingerprint) > 0 and then
       Length (Current.Policy_Fingerprint) > 0 and then
       Baseline.Policy_Fingerprint /= Current.Policy_Fingerprint and then
-      Length (Baseline.Toolchain_Fingerprint) > 0 and then
+      Toolchain_Is_Available (Baseline.Toolchain_Fingerprint) and then
       Baseline.Toolchain_Fingerprint = Current.Toolchain_Fingerprint);
 
    function Baseline_Id
-     (Runs : Ada_Quality.Storage.History_Vectors.Vector;
+     (Runs : Ada_Quality.History_Data.History_Vectors.Vector;
       Current_Id : Positive) return Natural
    is
       Current_Index : Natural := 0;
@@ -58,7 +87,7 @@ package body Ada_Quality.History is
    end Baseline_Id;
 
    function Select_Comparison
-     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Comparison_Selection
+     (Runs : Ada_Quality.History_Data.History_Vectors.Vector) return Comparison_Selection
    is
       Result : Comparison_Selection;
    begin
@@ -99,38 +128,86 @@ package body Ada_Quality.History is
       return Result;
    end Select_Comparison;
 
-   function Has_Finding
-     (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Key   : Unbounded_String) return Boolean
+   procedure Include_Findings
+     (Index : in out Finding_Index;
+      Items : Ada_Quality.History_Data.Detail_Vectors.Vector)
    is
    begin
       for Item of Items loop
-         if Item.Kind = Key then return True; end if;
+         Index.Keys.Include (Item.Kind);
+         declare
+            Alias : constant Unbounded_String := Legacy_Finding_Key (Item.Kind);
+         begin
+            if Index.Alias_Counts.Contains (Alias) then
+               Index.Alias_Counts.Replace (Alias, Index.Alias_Counts.Element (Alias) + 1);
+            else
+               Index.Alias_Counts.Insert (Alias, 1);
+            end if;
+         end;
       end loop;
-      return False;
-   end Has_Finding;
+   end Include_Findings;
+
+   function Alias_Count (Index : Finding_Index; Key : Unbounded_String) return Natural is
+      Alias : constant Unbounded_String := Legacy_Finding_Key (Key);
+   begin
+      return (if Index.Alias_Counts.Contains (Alias) then Index.Alias_Counts.Element (Alias) else 0);
+   end Alias_Count;
+
+   function Contains_Finding
+     (Index : Finding_Index; Fingerprint : Unbounded_String) return Boolean is
+     (Index.Keys.Contains (Fingerprint) or else
+      (Alias_Count (Index, Fingerprint) = 1 and then
+       Index.Keys.Contains (Legacy_Finding_Key (Fingerprint))));
+
+   function Build_Finding_Classifier
+     (Current, Previous, Older : Ada_Quality.History_Data.Detail_Vectors.Vector)
+      return Finding_Classifier
+   is
+      Result : Finding_Classifier;
+   begin
+      Include_Findings (Result.Current, Current);
+      Include_Findings (Result.Previous, Previous);
+      Include_Findings (Result.Older, Older);
+      return Result;
+   end Build_Finding_Classifier;
 
    function Classify_Finding
-     (Fingerprint      : Unbounded_String;
-      Current, Previous, Older : Ada_Quality.Storage.Detail_Vectors.Vector;
+     (Item             : Finding_Classifier;
+      Fingerprint      : Unbounded_String;
       Current_Complete : Boolean) return Finding_Lifecycle
    is
-      In_Current  : constant Boolean := Has_Finding (Current, Fingerprint);
-      In_Previous : constant Boolean := Has_Finding (Previous, Fingerprint);
+      In_Current  : constant Boolean := Contains_Finding (Item.Current, Fingerprint);
+      In_Previous : constant Boolean := Contains_Finding (Item.Previous, Fingerprint);
+      Alias       : constant Unbounded_String := Legacy_Finding_Key (Fingerprint);
+      Ambiguous_Legacy_Match : constant Boolean :=
+        Alias /= Fingerprint and then Alias_Count (Item.Current, Fingerprint) > 1 and then
+        not Item.Previous.Keys.Contains (Fingerprint) and then Item.Previous.Keys.Contains (Alias);
    begin
       if not Current_Complete and then In_Previous then return Unconfirmed;
+      elsif Ambiguous_Legacy_Match then return Unconfirmed;
       elsif In_Current and then In_Previous then return Persistent;
-      elsif In_Current and then Has_Finding (Older, Fingerprint) then return Reintroduced;
+      elsif In_Current and then Contains_Finding (Item.Older, Fingerprint) then return Reintroduced;
       elsif In_Current then return New_Finding;
       elsif In_Previous then return Resolved;
       else return Unconfirmed;
       end if;
    end Classify_Finding;
 
+   function Classify_Finding
+     (Fingerprint      : Unbounded_String;
+      Current, Previous, Older : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Current_Complete : Boolean) return Finding_Lifecycle
+   is
+      Classifier : constant Finding_Classifier :=
+        Build_Finding_Classifier (Current, Previous, Older);
+   begin
+      return Classify_Finding (Classifier, Fingerprint, Current_Complete);
+   end Classify_Finding;
+
    function Detail
-     (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
+     (Items : Ada_Quality.History_Data.Detail_Vectors.Vector;
       Key   : Unbounded_String;
-      Found : out Boolean) return Ada_Quality.Storage.Detail_Info
+      Found : out Boolean) return Ada_Quality.History_Data.Detail_Info
    is
    begin
       for Item of Items loop
@@ -142,212 +219,264 @@ package body Ada_Quality.History is
          State => Null_Unbounded_String, Summary => Null_Unbounded_String);
    end Detail;
 
-   function Finding_Detail
-     (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Key   : Unbounded_String;
-      Found : out Boolean) return Ada_Quality.Storage.Detail_Info
-   is
-   begin
-      for Item of Items loop
-         if Item.Kind = Key then
-            Found := True;
-            return Item;
-         end if;
-      end loop;
-      Found := False;
-      return
-        (Id => 1, Run_Id => 1, Kind => Null_Unbounded_String,
-         State => Null_Unbounded_String, Summary => Null_Unbounded_String);
-   end Finding_Detail;
-
    function Number
-     (Items : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Key   : Unbounded_String;
+     (Item  : Ada_Quality.History_Data.Detail_Info;
       Found : out Boolean) return Long_Long_Integer
    is
-      Present : Boolean;
-      Item    : constant Ada_Quality.Storage.Detail_Info := Detail (Items, Key, Present);
+      Value : Measurement_Value;
    begin
-      if not Present or else not
-        (Contains (To_String (Item.State), "INTEGER_VALUE") or else
-         Contains (To_String (Item.State), "DECIMAL_VALUE"))
+      if not Ada_Quality.Persistence.Decode_Measurement
+        (To_String (Item.State), To_String (Item.Summary), Value)
       then
          Found := False;
          return 0;
       end if;
-      Found := True;
-      return Long_Long_Integer'Value (To_String (Item.Summary));
-   exception
-      when Constraint_Error => Found := False; return 0;
+      case Value.Kind is
+         when Integer_Value =>
+            Found := True;
+            return Value.Integer_Data;
+         when Decimal_Value =>
+            Found := True;
+            return Value.Basis_Points;
+         when others =>
+            Found := False;
+            return 0;
+      end case;
    end Number;
-
-   function Gate (Id : Indicator_Id) return Boolean is
-     (Id in BLD_01 .. BLD_04 or else Id in TST_01 .. TST_04 or else
-      Id in REL_01 .. REL_04 or else Id = PRF_01);
-
-   type Metric_Direction is (Higher_Is_Better, Lower_Is_Better, No_Trend);
-
-   function Direction (Id : Indicator_Id) return Metric_Direction is
-     (case Id is
-         when TST_02 | TST_03 => Higher_Is_Better,
-         when SRC_01 | SRC_02 | SRC_03 | SRC_04 | SRC_05 | SRC_06 |
-              DOC_01 | SEC_01 | SEC_02 | SEC_03 => Lower_Is_Better,
-         when others => No_Trend);
 
    function Is_Worse
      (Id : Indicator_Id; Before, After : Long_Long_Integer) return Boolean is
-     (case Direction (Id) is
+     (case Direction_Of (Id) is
          when Higher_Is_Better => After < Before,
          when Lower_Is_Better  => After > Before,
          when No_Trend         => False);
 
-   function Severity_Rank (Text : String) return Natural is
-      Upper : constant String := Ada.Characters.Handling.To_Upper (Text);
+   function Increased_Severity (Before, After : String) return Boolean is
+      Old_Level, New_Level : Severity;
    begin
-      if Contains (Upper, "CRITICAL") then return 4;
-      elsif Contains (Upper, "HIGH") then return 3;
-      elsif Contains (Upper, "MEDIUM") then return 2;
-      elsif Contains (Upper, "LOW") then return 1;
-      else return 0;
+      return Ada_Quality.Persistence.Decode_Severity (Before, Old_Level) and then
+        Ada_Quality.Persistence.Decode_Severity (After, New_Level) and then
+        Severity'Pos (New_Level) > Severity'Pos (Old_Level);
+   end Increased_Severity;
+
+   procedure Compare_One_Finding
+     (New_Finding   : Detail_Info;
+      Baseline      : Detail_Key_Maps.Map;
+      Older         : Finding_Index;
+      Consumed      : in out Finding_Key_Sets.Set;
+      Found         : out Boolean;
+      Change        : out Regression)
+   is
+      Legacy_Key  : constant Unbounded_String := Legacy_Finding_Key (New_Finding.Kind);
+      Exact_Found : constant Boolean := Baseline.Contains (New_Finding.Kind);
+      Legacy_Found : constant Boolean :=
+        not Exact_Found and then Legacy_Match_Available
+          (Baseline, Consumed, New_Finding.Kind, Legacy_Key);
+      Old_Key   : constant Unbounded_String :=
+        (if Exact_Found then New_Finding.Kind else Legacy_Key);
+      Old_Found : constant Boolean := Exact_Found or else Legacy_Found;
+      Id        : Indicator_Id;
+   begin
+      Found := False;
+      Change := (others => <>);
+      if not Finding_Indicator (New_Finding.Kind, Id) then
+         return;
       end if;
-   end Severity_Rank;
+      if Legacy_Found then
+         Consumed.Insert (Legacy_Key);
+      end if;
+      if not Old_Found then
+         Change :=
+           (Indicator => Id,
+            Kind => (if Contains_Finding (Older, New_Finding.Kind)
+                     then Reintroduced_Finding else Introduced_Finding),
+            Before => To_Unbounded_String ("absent"),
+            After => To_Unbounded_String
+              (To_String (New_Finding.Kind) & " " & To_String (New_Finding.Summary)));
+         Found := True;
+      elsif Increased_Severity
+        (To_String (Baseline.Element (Old_Key).State), To_String (New_Finding.State))
+      then
+         Change :=
+           (Indicator => Id, Kind => Increased_Severity,
+            Before => Baseline.Element (Old_Key).State, After => New_Finding.State);
+         Found := True;
+      end if;
+   end Compare_One_Finding;
+
+   function Semantic_Identity (State : Unbounded_String) return Unbounded_String;
+
+   function Index_Details (Items : Detail_Vectors.Vector) return Detail_Key_Maps.Map is
+      Index : Detail_Key_Maps.Map;
+   begin
+      for Item of Items loop
+         if not Index.Contains (Item.Kind) then
+            Index.Insert (Item.Kind, Item);
+         end if;
+      end loop;
+      return Index;
+   end Index_Details;
+
+   procedure Add_Regression
+     (Result : in out Regression_Vectors.Vector;
+      Id     : Indicator_Id;
+      Kind   : Regression_Kind;
+      Before, After : String) is
+   begin
+      Result.Append
+        (Regression'(Indicator => Id, Kind => Kind,
+         Before => To_Unbounded_String (Before), After => To_Unbounded_String (After)));
+   end Add_Regression;
+
+   procedure Compare_State
+     (New_Item         : Detail_Info;
+      Baseline_Results : Detail_Vectors.Vector;
+      Policy_Changed   : Boolean;
+      Result           : in out Regression_Vectors.Vector)
+   is
+      Old_Found : Boolean;
+      Old_Item  : constant Detail_Info := Detail (Baseline_Results, New_Item.Kind, Old_Found);
+      Id        : Indicator_Id;
+      Parsed    : constant Boolean :=
+        Ada_Quality.Indicators.Parse_Canonical (To_String (New_Item.Kind), Id);
+      Old_Execution, New_Execution : Execution_Status;
+      Old_Compliance, New_Compliance : Compliance_Status;
+   begin
+      if not Old_Found or else not Parsed or else Old_Item.State = New_Item.State or else
+        not Ada_Quality.Persistence.Decode_Result_State
+          (To_String (Old_Item.State), Old_Execution, Old_Compliance) or else
+        not Ada_Quality.Persistence.Decode_Result_State
+          (To_String (New_Item.State), New_Execution, New_Compliance)
+      then
+         return;
+      end if;
+      if Policy_Changed then
+         Add_Regression
+           (Result, Id, Policy_Induced_Change, To_String (Old_Item.State), To_String (New_Item.State));
+      elsif New_Compliance = Violation and then Old_Compliance = Pass then
+         Add_Regression
+           (Result, Id, (if Is_Gate (Id) then Failed_Gate else New_Violation),
+            To_String (Old_Item.State), To_String (New_Item.State));
+      elsif New_Compliance not in Pass | Violation then
+         Add_Regression
+           (Result, Id, Lost_Evidence, To_String (Old_Item.State), To_String (New_Item.State));
+      end if;
+   end Compare_State;
+
+   procedure Compare_Metric
+     (New_Item              : Detail_Info;
+      Baseline_Results      : Detail_Vectors.Vector;
+      Baseline_Measurements : Detail_Vectors.Vector;
+      Current_Measurements  : Detail_Vectors.Vector;
+      Policy_Changed        : Boolean;
+      Result                : in out Regression_Vectors.Vector)
+   is
+      Old_Found : Boolean;
+      Id        : Indicator_Id;
+      Parsed    : constant Boolean :=
+        Ada_Quality.Indicators.Parse_Canonical (To_String (New_Item.Kind), Id);
+      Old_Number, New_Number : Long_Long_Integer;
+      Old_Number_Found, New_Number_Found : Boolean;
+      Old_Measurement_Found, New_Measurement_Found : Boolean;
+   begin
+      if Policy_Changed or else not Parsed then return; end if;
+      declare
+         Old_Item : constant Detail_Info := Detail (Baseline_Results, New_Item.Kind, Old_Found);
+         pragma Unreferenced (Old_Item);
+      begin
+         if not Old_Found then return; end if;
+      end;
+      declare
+         Old_Measurement : constant Detail_Info :=
+           Detail (Baseline_Measurements, New_Item.Kind, Old_Measurement_Found);
+         New_Measurement : constant Detail_Info :=
+           Detail (Current_Measurements, New_Item.Kind, New_Measurement_Found);
+         Old_Semantics : constant Unbounded_String := Semantic_Identity (Old_Measurement.State);
+         New_Semantics : constant Unbounded_String := Semantic_Identity (New_Measurement.State);
+      begin
+         if not Old_Measurement_Found or else not New_Measurement_Found or else
+           Old_Semantics /= New_Semantics or else Length (Old_Semantics) = 0
+         then
+            return;
+         end if;
+         Old_Number := Number (Old_Measurement, Old_Number_Found);
+         New_Number := Number (New_Measurement, New_Number_Found);
+         if Old_Number_Found and then New_Number_Found and then Is_Worse (Id, Old_Number, New_Number) then
+            Add_Regression
+              (Result, Id, Worsened_Metric, Long_Long_Integer'Image (Old_Number),
+               Long_Long_Integer'Image (New_Number));
+         end if;
+      end;
+   end Compare_Metric;
 
    function Compare
-     (Baseline, Current : Ada_Quality.Storage.History_Item;
-      Baseline_Results, Current_Results : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Measurements, Current_Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Older_Findings : Ada_Quality.Storage.Detail_Vectors.Vector :=
-        Ada_Quality.Storage.Detail_Vectors.Empty_Vector)
+     (Baseline, Current : Ada_Quality.History_Data.History_Item;
+      Baseline_Results, Current_Results : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Measurements, Current_Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Findings, Current_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Older_Index : Finding_Index)
       return Regression_Vectors.Vector
    is
       Result : Regression_Vectors.Vector;
       Policy_Changed : constant Boolean := Baseline.Policy_Fingerprint /= Current.Policy_Fingerprint;
 
-      procedure Add
-        (Id : Indicator_Id; Kind : Regression_Kind; Before, After : String) is
-      begin
-         Result.Append
-           (Regression'(Indicator => Id, Kind => Kind,
-            Before => To_Unbounded_String (Before), After => To_Unbounded_String (After)));
-      end Add;
-
-      procedure Compare_State (New_Item : Ada_Quality.Storage.Detail_Info) is
-         Old_Found : Boolean;
-         Old_Item  : constant Ada_Quality.Storage.Detail_Info :=
-           Detail (Baseline_Results, New_Item.Kind, Old_Found);
-         Id        : Indicator_Id;
-         Parsed    : constant Boolean := Ada_Quality.Indicators.Parse (To_String (New_Item.Kind), Id);
-      begin
-         if not Old_Found or else not Parsed or else Old_Item.State = New_Item.State then return; end if;
-         if Policy_Changed then
-            Add (Id, Policy_Induced_Change, To_String (Old_Item.State), To_String (New_Item.State));
-         elsif Contains (To_String (New_Item.State), "/violation") and then
-           Contains (To_String (Old_Item.State), "/pass")
-         then
-            Add (Id, (if Gate (Id) then Failed_Gate else New_Violation),
-              To_String (Old_Item.State), To_String (New_Item.State));
-         elsif not Contains (To_String (New_Item.State), "/pass") and then
-           not Contains (To_String (New_Item.State), "/violation")
-         then
-            Add (Id, Lost_Evidence, To_String (Old_Item.State), To_String (New_Item.State));
-         end if;
-      end Compare_State;
-
-      procedure Compare_Metric (New_Item : Ada_Quality.Storage.Detail_Info) is
-         Old_Found : Boolean;
-         Id        : Indicator_Id;
-         Parsed    : constant Boolean := Ada_Quality.Indicators.Parse (To_String (New_Item.Kind), Id);
-         Old_Number, New_Number : Long_Long_Integer;
-         Old_Number_Found, New_Number_Found : Boolean;
-      begin
-         if Policy_Changed or else not Parsed then return; end if;
-         declare
-            Old_Item : constant Ada_Quality.Storage.Detail_Info :=
-              Detail (Baseline_Results, New_Item.Kind, Old_Found);
-            pragma Unreferenced (Old_Item);
-         begin
-            if not Old_Found then return; end if;
-         end;
-         Old_Number := Number (Baseline_Measurements, New_Item.Kind, Old_Number_Found);
-         New_Number := Number (Current_Measurements, New_Item.Kind, New_Number_Found);
-         if Old_Number_Found and then New_Number_Found and then
-           Is_Worse (Id, Old_Number, New_Number)
-         then
-            Add (Id, Worsened_Metric, Long_Long_Integer'Image (Old_Number),
-              Long_Long_Integer'Image (New_Number));
-         end if;
-      end Compare_Metric;
-
-      procedure Compare_Finding (New_Finding : Ada_Quality.Storage.Detail_Info) is
-         Old_Found   : Boolean;
-         Old_Finding : constant Ada_Quality.Storage.Detail_Info :=
-           Finding_Detail (Baseline_Findings, New_Finding.Kind, Old_Found);
-         Colon       : constant Natural := Ada.Strings.Fixed.Index (To_String (New_Finding.Kind), ":");
-         Id          : Indicator_Id;
-      begin
-         if Colon <= 1 then
-            return;
-         elsif not Ada_Quality.Indicators.Parse (To_String (New_Finding.Kind) (1 .. Colon - 1), Id) then
-            return;
-         elsif not Old_Found then
-            Add
-              (Id,
-               (if Has_Finding (Older_Findings, New_Finding.Kind)
-                then Reintroduced_Finding else Introduced_Finding),
-               "absent", To_String (New_Finding.Kind) & " " & To_String (New_Finding.Summary));
-         elsif Severity_Rank (To_String (New_Finding.State)) > Severity_Rank (To_String (Old_Finding.State)) then
-            Add (Id, Increased_Severity, To_String (Old_Finding.State), To_String (New_Finding.State));
-         end if;
-      end Compare_Finding;
+      Baseline_Finding_Index : constant Detail_Key_Maps.Map := Index_Details (Baseline_Findings);
+      Consumed_Legacy_Findings : Finding_Key_Sets.Set;
    begin
       if To_String (Baseline.Status) /= "completed" or else To_String (Current.Status) /= "completed" then
          return Result;
       elsif Baseline.Project_Id /= Current.Project_Id or else
-        Length (Baseline.Toolchain_Fingerprint) = 0 or else
+        not Toolchain_Is_Available (Baseline.Toolchain_Fingerprint) or else
         Baseline.Toolchain_Fingerprint /= Current.Toolchain_Fingerprint
       then
          return Result;
       end if;
       for New_Item of Current_Results loop
-         Compare_State (New_Item);
-         Compare_Metric (New_Item);
+         Compare_State (New_Item, Baseline_Results, Policy_Changed, Result);
+         Compare_Metric
+           (New_Item, Baseline_Results, Baseline_Measurements, Current_Measurements,
+            Policy_Changed, Result);
       end loop;
       if not Policy_Changed then
          for New_Finding of Current_Findings loop
-            Compare_Finding (New_Finding);
+            declare
+               Found  : Boolean;
+               Change : Regression;
+            begin
+               Compare_One_Finding
+                 (New_Finding, Baseline_Finding_Index, Older_Index,
+                  Consumed_Legacy_Findings, Found, Change);
+               if Found then Result.Append (Change); end if;
+            end;
          end loop;
       end if;
       return Result;
    end Compare;
 
-   function Semantic_Identity (State : Unbounded_String) return Unbounded_String is
-      Text : constant String := To_String (State);
-      Indicator_Tag : constant String := ";indicator_version=";
-      Method_Tag    : constant String := ";method_version=";
-      Indicator_At  : constant Natural := Ada.Strings.Fixed.Index (Text, Indicator_Tag);
-      Method_At     : constant Natural := Ada.Strings.Fixed.Index (Text, Method_Tag);
+   function Compare
+     (Baseline, Current : Ada_Quality.History_Data.History_Item;
+      Baseline_Results, Current_Results : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Measurements, Current_Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Findings, Current_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Older_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector :=
+        Ada_Quality.History_Data.Detail_Vectors.Empty_Vector)
+      return Regression_Vectors.Vector
+   is
+      Older_Finding_Index : Finding_Index;
    begin
-      if Ada.Strings.Fixed.Index (Text, ";") = 0 then
-         return To_Unbounded_String (Text & Indicator_Tag & "1" & Method_Tag & "1");
-      elsif Indicator_At = 0 or else Method_At <= Indicator_At + Indicator_Tag'Length then
-         return Null_Unbounded_String;
-      end if;
-      declare
-         Indicator_Text : constant String := Text (Indicator_At + Indicator_Tag'Length .. Method_At - 1);
-         Method_Text : constant String := Text (Method_At + Method_Tag'Length .. Text'Last);
-         Indicator_Version : constant Positive := Positive'Value (Indicator_Text);
-         Method_Version : constant Positive := Positive'Value (Method_Text);
-         pragma Unreferenced (Indicator_Version, Method_Version);
-      begin
-         return State;
-      end;
-   exception
-      when Constraint_Error => return Null_Unbounded_String;
-   end Semantic_Identity;
+      Include_Findings (Older_Finding_Index, Older_Findings);
+      return Compare
+        (Baseline, Current, Baseline_Results, Current_Results,
+         Baseline_Measurements, Current_Measurements,
+         Baseline_Findings, Current_Findings, Older_Finding_Index);
+   end Compare;
+
+   function Semantic_Identity (State : Unbounded_String) return Unbounded_String is
+     (To_Unbounded_String
+        (Ada_Quality.Persistence.Measurement_Semantic_Identity (To_String (State))));
 
    function Latest_Completed
-     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Natural
+     (Runs : Ada_Quality.History_Data.History_Vectors.Vector) return Natural
    is
    begin
       if Runs.Is_Empty then return 0; end if;
@@ -359,64 +488,44 @@ package body Ada_Quality.History is
       return 0;
    end Latest_Completed;
 
-   function Semantics_For
-     (Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Run_Id       : Positive;
-      Key          : Unbounded_String) return Unbounded_String
-   is
-   begin
-      for Item of Measurements loop
-         if Item.Run_Id = Run_Id and then Item.Kind = Key then
-            return Semantic_Identity (Item.State);
-         end if;
-      end loop;
-      return Null_Unbounded_String;
-   end Semantics_For;
-
-   procedure Append_Trend_Point
-     (Result       : in out Trend_Vectors.Vector;
-      Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Run           : History_Item;
-      Key, Reference_Semantics : Unbounded_String)
-   is
-   begin
-      for Item of Measurements loop
-         if Item.Run_Id = Run.Id and then Item.Kind = Key and then
-           Semantic_Identity (Item.State) = Reference_Semantics
-         then
-            declare
-               One : Detail_Vectors.Vector;
-               Found : Boolean;
-               Value : Long_Long_Integer;
-            begin
-               One.Append (Item);
-               Value := Number (One, Key, Found);
-               if Found then Result.Append (Trend_Point'(Run_Id => Run.Id, Value => Value)); end if;
-            end;
-            return;
-         end if;
-      end loop;
-   end Append_Trend_Point;
-
    function Metric_Trend
-     (Runs         : Ada_Quality.Storage.History_Vectors.Vector;
-      Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
+     (Runs         : Ada_Quality.History_Data.History_Vectors.Vector;
+      Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
       Indicator    : Indicator_Id) return Trend_Vectors.Vector
    is
       Result : Trend_Vectors.Vector;
       Key    : constant Unbounded_String := To_Unbounded_String (Image (Indicator));
       Reference_Index : constant Natural := Latest_Completed (Runs);
+      Measurement_Index : Run_Measurement_Maps.Map;
    begin
       if Reference_Index = 0 then return Result; end if;
+      for Item of Measurements loop
+         if Item.Kind = Key and then not Measurement_Index.Contains (Item.Run_Id) then
+            Measurement_Index.Insert (Item.Run_Id, Item);
+         end if;
+      end loop;
       declare
          Reference : constant History_Item := Runs (Reference_Index);
          Reference_Semantics : constant Unbounded_String :=
-           Semantics_For (Measurements, Reference.Id, Key);
+           (if Measurement_Index.Contains (Reference.Id)
+            then Semantic_Identity (Measurement_Index.Element (Reference.Id).State)
+            else Null_Unbounded_String);
       begin
          if Length (Reference_Semantics) = 0 then return Result; end if;
          for Run of Runs loop
-            if Compatible (Run, Reference) then
-               Append_Trend_Point (Result, Measurements, Run, Key, Reference_Semantics);
+            if Compatible (Run, Reference) and then Measurement_Index.Contains (Run.Id) then
+               declare
+                  Item : constant Detail_Info := Measurement_Index.Element (Run.Id);
+                  Found : Boolean;
+                  Value : Long_Long_Integer;
+               begin
+                  if Semantic_Identity (Item.State) = Reference_Semantics then
+                     Value := Number (Item, Found);
+                     if Found then
+                        Result.Append (Trend_Point'(Run_Id => Run.Id, Value => Value));
+                     end if;
+                  end if;
+               end;
             end if;
          end loop;
       end;

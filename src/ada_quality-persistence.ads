@@ -1,4 +1,6 @@
+with Ada.Calendar;
 with Ada.Containers.Vectors;
+with Ada.Strings.Unbounded;
 with Ada.Strings.Wide_Wide_Unbounded;
 with Ada_Quality.Types;
 with Database.Rows;
@@ -113,6 +115,12 @@ private package Ada_Quality.Persistence is
    --  @param Text Unbounded database text.
    --  @return UTF-8 text.
 
+   function Metadata_Row_Is_Valid (Row : Entity) return Boolean;
+   --  Validate the invariant fields of the single schema metadata row.
+
+   function Project_Row_Is_Valid (Row : Entity) return Boolean;
+   --  Validate a project registry row independently of cross-row ownership.
+
    function Has_Field (Payload, Name : String) return Boolean;
    --  Test whether a line-oriented payload contains a named field.
    --  @param Payload Line-feed separated `name=value` payload.
@@ -161,6 +169,67 @@ private package Ada_Quality.Persistence is
    --  @param Lossless Whether child result and finding rows use the lossless format.
    --  @return Line-feed separated run payload.
 
+   type Persisted_Timestamp (Present : Boolean := False) is record
+      case Present is
+         when True =>
+            Value : Ada.Calendar.Time;
+         when False =>
+            null;
+      end case;
+   end record;
+   --  Canonically decoded optional persisted timestamp.
+
+   type Assessment_Payload_Data is record
+      Source_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
+      Policy_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
+      Toolchain_Fingerprint : Ada.Strings.Unbounded.Unbounded_String;
+      Started_At            : Persisted_Timestamp;
+      Finished_At           : Persisted_Timestamp;
+      Lossless              : Boolean := False;
+   end record;
+   --  Canonically decoded assessment-run payload.
+
+   function Decode_Assessment_Payload
+     (Payload : String; Item : out Assessment_Payload_Data) return Boolean;
+   --  Decode one canonical assessment-run payload.
+   --  @param Payload Persisted assessment payload.
+   --  @param Item Decoded fingerprints, timestamps, and child-evidence format.
+   --  @return True only when Payload has supported, canonical fields and valid UTC timestamps.
+
+   function Decode_Assessment_State
+     (State : String; Item : out Ada_Quality.Types.Assessment_Status) return Boolean;
+   --  Decode one canonical persisted assessment lifecycle state.
+
+   function Assessment_Payload_Matches_State
+     (Item : Assessment_Payload_Data;
+      State : Ada_Quality.Types.Assessment_Status) return Boolean;
+   --  Validate evidence format and timestamp presence against a lifecycle state.
+
+   function Decode_Assessment_Row
+     (Row     : Entity;
+      Payload : out Assessment_Payload_Data;
+      State   : out Ada_Quality.Types.Assessment_Status) return Boolean;
+   --  Decode and validate one assessment row independently of project ownership and child cardinality.
+
+   type Lifecycle_Event_Class is (Invalid_Lifecycle_Event, Started_Lifecycle_Event, Terminal_Lifecycle_Event);
+   --  Meaning of one event relative to its owning assessment state.
+
+   function Classify_Lifecycle_Event
+     (State       : Ada_Quality.Types.Assessment_Status;
+      Event_Kind  : String;
+      Event_State : String) return Lifecycle_Event_Class;
+   --  Classify one canonical lifecycle event for its owning assessment.
+
+   function Lifecycle_Counts_Are_Valid
+     (State          : Ada_Quality.Types.Assessment_Status;
+      Started_Count  : Natural;
+      Terminal_Count : Natural;
+      Event_Count    : Natural) return Boolean;
+   --  Validate lifecycle-event cardinality for one assessment state.
+
+   function Event_Row_Is_Valid (Row : Entity) return Boolean;
+   --  Validate the invariant fields of one lifecycle-event row.
+
    function Result_Payload (Item : Ada_Quality.Types.Indicator_Result) return String;
    --  Encode applicability, summary, and evidence losslessly.
    --  @param Item Indicator result.
@@ -170,4 +239,65 @@ private package Ada_Quality.Persistence is
    --  Encode indicator, rule, message, path, and line losslessly.
    --  @param Item Finding.
    --  @return Escaped key-value payload.
+
+   function Decode_Result_Payload
+     (Payload : String; Item : out Ada_Quality.Types.Indicator_Result) return Boolean;
+   --  Decode one canonical lossless result payload.
+   --  @param Payload Persisted result payload.
+   --  @param Item Decoded applicability, summary, and evidence.
+   --  @return True only when Payload is exactly the canonical encoding of Item.
+
+   function Decode_Result_State
+     (State      : String;
+      Execution  : out Ada_Quality.Types.Execution_Status;
+      Compliance : out Ada_Quality.Types.Compliance_Status) return Boolean;
+   --  Decode one canonical execution/compliance state pair.
+
+   function Decode_Severity
+     (Text : String; Item : out Ada_Quality.Types.Severity) return Boolean;
+   --  Decode one canonical persisted finding severity.
+
+   function Measurement_Semantic_Identity (State : String) return String;
+   --  Return the canonical versioned identity of one measurement state.
+   --  @param State Bare legacy kind or versioned measurement state.
+   --  @return Canonical versioned state, or an empty string when malformed or noncanonical.
+
+   function Decode_Measurement
+     (State, Payload    : String;
+      Item              : out Ada_Quality.Types.Measurement_Value;
+      Require_Versioned : Boolean := False) return Boolean;
+   --  Decode one canonical typed measurement payload.
+   --  @param State Persisted measurement kind and semantics.
+   --  @param Payload Persisted measurement value.
+   --  @param Item Decoded typed measurement.
+   --  @param Require_Versioned Whether a bare legacy kind must be rejected.
+   --  @return True only when State names a kind and Payload uses its canonical encoding.
+
+   function Decode_Finding_Payload
+     (Payload : String; Item : out Ada_Quality.Types.Finding) return Boolean;
+   --  Decode one canonical lossless finding payload.
+   --  @param Payload Persisted finding payload.
+   --  @param Item Decoded indicator, rule, message, path, and line.
+   --  @return True only when Payload is exactly the canonical encoding of Item.
+
+   function Execution_Payload (Item : Ada_Quality.Types.Tool_Execution) return String;
+   --  Encode one canonical tool-execution payload.
+
+   function Decode_Execution_Payload
+     (Payload : String; Item : out Ada_Quality.Types.Tool_Execution) return Boolean;
+   --  Decode canonical command, exit, digest, byte-count, and truncation evidence.
+
+   function Decode_Execution_Row
+     (State, Payload : String;
+      Active : Boolean;
+      Item : out Ada_Quality.Types.Tool_Execution) return Boolean;
+   --  Decode one complete execution row, including its terminal state and active invariant.
+
+   function Execution_Row_Is_Valid (State, Payload : String; Active : Boolean) return Boolean;
+   --  Validate canonical execution state, payload, and active relationship.
+
+   function Result_Measurement_Are_Consistent
+     (Result_State, Result_Payload, Measurement_State : String;
+      Lossless : Boolean) return Boolean;
+   --  Validate the cross-row execution, compliance, applicability, and measurement invariant.
 end Ada_Quality.Persistence;

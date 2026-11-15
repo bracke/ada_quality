@@ -1,8 +1,10 @@
 with Ada.Calendar.Formatting;
+with Ada.Containers.Ordered_Sets;
 with Ada.Directories;
 with Ada.Exceptions;
 with Ada.Strings.Fixed;
 with Ada.Strings.Wide_Wide_Unbounded;
+with Ada_Quality.Finding_Identity;
 with Ada_Quality.Indicators;
 with Ada_Quality.Persistence;
 with Database;
@@ -20,15 +22,19 @@ package body Ada_Quality.Reporting is
    use Ada_Quality.Types;
    use type Ada.Directories.File_Kind;
    use type Database.Status_Code;
+   use type Ada_Quality.History.Comparison_Status;
    use type Interfaces.Unsigned_64;
 
    LF : constant Character := Character'Val (10);
 
    type Schema_Array is array (Positive range 1 .. Logical_Table_Count) of Database.Schema.Table_Schema;
 
-   ------------------------------------------------------------------------------------------------------------------
+   package Finding_Key_Sets is new Ada.Containers.Ordered_Sets
+     (Element_Type => UString,
+      "<" => Ada.Strings.Unbounded."<",
+      "=" => Ada.Strings.Unbounded."=");
+
    --  Text helpers
-   ------------------------------------------------------------------------------------------------------------------
 
    function Image (Item : Optional_Timestamp) return String is
    begin
@@ -43,140 +49,28 @@ package body Ada_Quality.Reporting is
       end;
    end Image;
 
-   function Parse_Timestamp (Text : String; Context : String) return Optional_Timestamp is
-      function Digits_At (First, Last : Positive) return Natural is
-         Result : Natural := 0;
-      begin
-         for Index in First .. Last loop
-            if Text (Index) not in '0' .. '9' then
-               raise Integrity_Error with Context & ": malformed timestamp " & Text;
-            end if;
-            Result := Result * 10 + (Character'Pos (Text (Index)) - Character'Pos ('0'));
-         end loop;
-         return Result;
-      end Digits_At;
-   begin
-      if Text'Length = 0 then
-         return (Present => False);
-      elsif Text'Length /= 20 or else Text (Text'First + 4) /= '-' or else Text (Text'First + 7) /= '-' or else
-        Text (Text'First + 10) /= 'T' or else Text (Text'First + 13) /= ':' or else
-        Text (Text'First + 16) /= ':' or else Text (Text'Last) /= 'Z'
-      then
-         raise Integrity_Error with Context & ": malformed timestamp " & Text;
-      end if;
-      declare
-         F : constant Positive := Text'First;
-      begin
-         return
-           (Present => True,
-            Value   => Ada.Calendar.Formatting.Time_Of
-              (Year => Ada.Calendar.Year_Number (Digits_At (F, F + 3)),
-               Month => Ada.Calendar.Month_Number (Digits_At (F + 5, F + 6)),
-               Day => Ada.Calendar.Day_Number (Digits_At (F + 8, F + 9)),
-               Hour => Ada.Calendar.Formatting.Hour_Number (Digits_At (F + 11, F + 12)),
-               Minute => Ada.Calendar.Formatting.Minute_Number (Digits_At (F + 14, F + 15)),
-               Second => Ada.Calendar.Formatting.Second_Number (Digits_At (F + 17, F + 18)),
-               Time_Zone => 0));
-      end;
-   exception
-      when Constraint_Error | Ada.Calendar.Time_Error =>
-         raise Integrity_Error with Context & ": invalid timestamp " & Text;
-   end Parse_Timestamp;
-
    function Context_Of (Table : String; Id : Positive) return String is
      (Table & " row" & Positive'Image (Id));
 
-   --  Return the value of a lossless field, which must be present and well formed.
-   function Required_Field (Payload, Name, Context : String) return String is
-      Valid : Boolean;
-   begin
-      if not Has_Field (Payload, Name) then
-         raise Integrity_Error with Context & ": missing field " & Name;
-      end if;
-      declare
-         Value : constant String := Unescape (Field (Payload, Name), Valid);
-      begin
-         if not Valid then
-            raise Integrity_Error with Context & ": malformed field " & Name;
-         end if;
-         return Value;
-      end;
-   end Required_Field;
-
-   ------------------------------------------------------------------------------------------------------------------
    --  Enumeration decoding
-   ------------------------------------------------------------------------------------------------------------------
 
    function Parse_Indicator (Text, Context : String) return Indicator_Id is
       Id : Indicator_Id;
    begin
-      if not Ada_Quality.Indicators.Parse (Text, Id) or else Image (Id) /= Text then
+      if not Ada_Quality.Indicators.Parse_Canonical (Text, Id) then
          raise Integrity_Error with Context & ": unknown indicator " & Text;
       end if;
       return Id;
    end Parse_Indicator;
 
-   function Parse_Execution (Text, Context : String) return Execution_Status is
-   begin
-      for Value in Execution_Status loop
-         if Image (Value) = Text then return Value; end if;
-      end loop;
-      raise Integrity_Error with Context & ": unknown execution state " & Text;
-   end Parse_Execution;
-
-   function Parse_Compliance (Text, Context : String) return Compliance_Status is
-   begin
-      for Value in Compliance_Status loop
-         if Image (Value) = Text then return Value; end if;
-      end loop;
-      raise Integrity_Error with Context & ": unknown compliance state " & Text;
-   end Parse_Compliance;
-
    function Parse_Severity (Text, Context : String) return Severity is
+      Value : Severity;
    begin
-      for Value in Severity loop
-         if Severity'Image (Value) = Text then return Value; end if;
-      end loop;
+      if Decode_Severity (Text, Value) then return Value; end if;
       raise Integrity_Error with Context & ": unknown severity " & Text;
    end Parse_Severity;
 
-   function Parse_Value_Kind (Text, Context : String) return Value_Kind is
-      Separator : constant Natural := Ada.Strings.Fixed.Index (Text, ";");
-      Kind_Text : constant String :=
-        (if Separator = 0 then Text else Text (Text'First .. Separator - 1));
-   begin
-      for Value in Value_Kind loop
-         if Value_Kind'Image (Value) = Kind_Text then return Value; end if;
-      end loop;
-      raise Integrity_Error with Context & ": unknown measurement kind " & Text;
-   end Parse_Value_Kind;
-
-   function Parse_Run_State (Text, Context : String) return Assessment_Status is
-   begin
-      if Text = "running" then return Assessment_Running;
-      elsif Text = "completed" then return Assessment_Completed;
-      elsif Text = "invalid" then return Assessment_Invalid;
-      elsif Text = "interrupted" then return Assessment_Interrupted;
-      end if;
-      raise Integrity_Error with Context & ": unknown lifecycle state " & Text;
-   end Parse_Run_State;
-
-   function Parse_Number (Text, Context : String) return Long_Long_Integer is
-      Value : Long_Long_Integer;
-   begin
-      Value := Long_Long_Integer'Value (Text);
-      if Long_Long_Integer'Image (Value) /= Text then
-         raise Integrity_Error with Context & ": noncanonical number " & Text;
-      end if;
-      return Value;
-   exception
-      when Constraint_Error =>
-         raise Integrity_Error with Context & ": invalid number " & Text;
-   end Parse_Number;
-
-   ------------------------------------------------------------------------------------------------------------------
    --  Snapshot loading
-   ------------------------------------------------------------------------------------------------------------------
 
    function Message_Of (Status : Database.Status.Result) return String is
      (Decode (To_Wide_Wide_String (Status.Message)));
@@ -204,11 +98,13 @@ package body Ada_Quality.Reporting is
    end Require_Read;
 
    procedure Hash (State : in out Interfaces.Unsigned_64; Text : String) is
+      Length_Image : constant String :=
+        Ada.Strings.Fixed.Trim (Natural'Image (Text'Length), Ada.Strings.Both);
+      Framed : constant String := Length_Image & ":" & Text;
    begin
-      for C of Text loop
+      for C of Framed loop
          State := (State xor Interfaces.Unsigned_64 (Character'Pos (C))) * 16#0000_0100_0000_01B3#;
       end loop;
-      State := (State xor 16#1F#) * 16#0000_0100_0000_01B3#;
    end Hash;
 
    function Hex (Value : Interfaces.Unsigned_64) return String is
@@ -231,6 +127,27 @@ package body Ada_Quality.Reporting is
       DB      : Database.Handle;
       Tx      : Database.Transactions.Transaction;
       Schemas : Schema_Array;
+      Total_Rows : Natural := 0;
+      Total_Text_Bytes : Long_Long_Integer := 0;
+
+      function Text_Bytes (Row : Entity) return Long_Long_Integer is
+        (Long_Long_Integer (S (Row.Kind)'Length) +
+         Long_Long_Integer (S (Row.State)'Length) +
+         Long_Long_Integer (S (Row.Payload)'Length));
+
+      procedure Account (Row : Entity; Label : String) is
+         Bytes : constant Long_Long_Integer := Text_Bytes (Row);
+      begin
+         if Total_Rows >= Limits.Max_Total_Rows then
+            raise Limit_Error with
+              "snapshot rows exceed the reporting limit of" & Positive'Image (Limits.Max_Total_Rows);
+         elsif Bytes > Long_Long_Integer (Limits.Max_Text_Bytes) - Total_Text_Bytes then
+            raise Limit_Error with
+              Label & " exceed the reporting text limit of" & Positive'Image (Limits.Max_Text_Bytes) & " bytes";
+         end if;
+         Total_Rows := Total_Rows + 1;
+         Total_Text_Bytes := Total_Text_Bytes + Bytes;
+      end Account;
 
       procedure Scan (Table : Positive; Limit : Positive; Label : String) is
          Cursor : Entity_Tables.Cursor;
@@ -243,7 +160,12 @@ package body Ada_Quality.Reporting is
             if Natural (Rows (Table).Length) >= Limit then
                raise Limit_Error with Label & " exceed the reporting limit of" & Positive'Image (Limit);
             end if;
-            Rows (Table).Append (Entity_Tables.Element (Cursor));
+            declare
+               Row : constant Entity := Entity_Tables.Element (Cursor);
+            begin
+               Account (Row, Label);
+               Rows (Table).Append (Row);
+            end;
             Status := Entity_Tables.Next
               (Tx, DB, Schemas (Table), Database.Predicates.True_Predicate, Cursor);
             Require_Read (Status, "advance " & Label);
@@ -261,7 +183,6 @@ package body Ada_Quality.Reporting is
       end Release;
 
       Status : Database.Status.Result;
-      Meta   : Entity;
 
       procedure Open_Database is
       begin
@@ -282,18 +203,39 @@ package body Ada_Quality.Reporting is
       end Open_Database;
 
       procedure Load_Version is
+         Cursor : Entity_Tables.Cursor;
       begin
          Database.Transactions.Begin_Read (DB, Tx);
          if not Database.Transactions.Is_Active (Tx) then
             raise Busy_Error with "read snapshot unavailable: " & Message_Of (Database.Transactions.Result (Tx));
          end if;
-         Status := Entity_Tables.Find (Tx, DB, Schemas (Metadata_Table), 1, Meta);
-         if not Database.Status.Is_Ok (Status) or else S (Meta.Kind) /= "schema_version" then
+         Status := Entity_Tables.Scan
+           (Tx, DB, Schemas (Metadata_Table), Database.Predicates.True_Predicate, Cursor);
+         Require_Read (Status, "scan schema metadata");
+         while Entity_Tables.Has_Element (Cursor) loop
+            if not Rows (Metadata_Table).Is_Empty then
+               raise Integrity_Error with "database must contain exactly one schema metadata row: " & Path;
+            end if;
+            declare
+               Row : constant Entity := Entity_Tables.Element (Cursor);
+            begin
+               Account (Row, "schema metadata");
+               Rows (Metadata_Table).Append (Row);
+            end;
+            Status := Entity_Tables.Next
+              (Tx, DB, Schemas (Metadata_Table), Database.Predicates.True_Predicate, Cursor);
+            Require_Read (Status, "advance schema metadata");
+         end loop;
+         if Rows (Metadata_Table).Is_Empty then
             raise Schema_Error with "schema version metadata is missing: " & Path;
          end if;
          declare
+            Meta : constant Entity := Rows (Metadata_Table).First_Element;
             Text : constant String := S (Meta.Payload);
          begin
+            if not Metadata_Row_Is_Valid (Meta) then
+               raise Integrity_Error with "schema metadata is malformed: " & Path;
+            end if;
             Version := Positive'Value (Text);
             if Ada.Strings.Fixed.Trim (Positive'Image (Version), Ada.Strings.Both) /= Text then
                raise Constraint_Error;
@@ -314,9 +256,11 @@ package body Ada_Quality.Reporting is
       begin
          Scan (Projects_Table, Limits.Max_Projects, "projects");
          Scan (Assessments_Table, Limits.Max_Runs, "assessment runs");
-         Scan (Indicator_Results_Table, Positive'Last, "indicator results");
-         Scan (Measurements_Table, Positive'Last, "measurements");
+         Scan (Indicator_Results_Table, Limits.Max_Results, "indicator results");
+         Scan (Measurements_Table, Limits.Max_Measurements, "measurements");
          Scan (Findings_Table, Limits.Max_Findings, "findings");
+         Scan (Executions_Table, Limits.Max_Executions, "tool executions");
+         Scan (Events_Table, Limits.Max_Events, "assessment events");
       end Load_Rows;
    begin
       Version := Supported_Schema;
@@ -334,114 +278,17 @@ package body Ada_Quality.Reporting is
    function Less (Left, Right : Entity) return Boolean is (Left.Id < Right.Id);
    package Entity_Sorting is new Entity_Vectors.Generic_Sorting ("<" => Less);
 
-   function To_Detail (Row : Entity) return Ada_Quality.Storage.Detail_Info is
+   function To_Detail (Row : Entity) return Ada_Quality.History_Data.Detail_Info is
      (Id => Row.Id, Run_Id => Positive (Row.Parent_Id),
       Kind => To_Unbounded_String (S (Row.Kind)), State => To_Unbounded_String (S (Row.State)),
       Summary => To_Unbounded_String (S (Row.Payload)));
 
-   procedure Decode_Snapshot (Item : in out Session; Rows : in out Entity_Table_Array) is
-      Digest : Interfaces.Unsigned_64 := 16#CBF2_9CE4_8422_2325#;
-      Known_Projects : Run_Index_Maps.Map;
-      procedure Index_Rows is
-      begin
-         for Table in Rows'Range loop
-            Entity_Sorting.Sort (Rows (Table));
-            Hash (Digest, Positive'Image (Table));
-            for Row of Rows (Table) loop
-               Hash (Digest, Positive'Image (Row.Id));
-               Hash (Digest, Natural'Image (Row.Parent_Id));
-               Hash (Digest, S (Row.Kind));
-               Hash (Digest, S (Row.State));
-               Hash (Digest, S (Row.Payload));
-               Hash (Digest, Boolean'Image (Row.Active));
-            end loop;
-         end loop;
-         Item.Identity := To_Unbounded_String ("fnv1a64:" & Hex (Digest));
-      end Index_Rows;
+   procedure Decode_Snapshot (Item : in out Session; Rows : in out Entity_Table_Array) is separate;
 
-      procedure Decode_Projects is
-      begin
-         for Row of Rows (Projects_Table) loop
-            declare
-               Context : constant String := Context_Of ("project", Row.Id);
-               State   : constant String := S (Row.State);
-            begin
-               if S (Row.Kind) /= "ada_project" or else State not in "registered" | "removed" or else
-                 Row.Parent_Id /= 0 or else Length (Row.Payload) = 0
-               then
-                  raise Integrity_Error with Context & ": malformed registry entry";
-               end if;
-               Item.All_Projects.Append
-                 (Project_Record'(Id => Row.Id, Path => To_Unbounded_String (S (Row.Payload)), Enabled => Row.Active,
-                   Removed => State = "removed"));
-               Known_Projects.Insert (Row.Id, Item.All_Projects.Last_Index);
-            end;
-         end loop;
-      end Decode_Projects;
+   function Decode_Assessment
+     (Item : Session; Run_Id : Positive; Allow_Terminal : Boolean) return Assessment_Record;
 
-      procedure Decode_Runs is
-      begin
-         for Row of Rows (Assessments_Table) loop
-            declare
-               Context : constant String := Context_Of ("assessment run", Row.Id);
-               Payload : constant String := S (Row.Payload);
-               State   : constant Assessment_Status := Parse_Run_State (S (Row.State), Context);
-               Format  : constant String := Field (Payload, "evidence_format");
-            begin
-               if S (Row.Kind) /= "assessment" or else not Known_Projects.Contains (Row.Parent_Id) then
-                  raise Integrity_Error with Context & ": run is not owned by a registered project";
-               elsif Row.Active /= (State = Assessment_Completed) then
-                  raise Integrity_Error with Context & ": completion flag contradicts lifecycle state";
-               elsif Has_Field (Payload, "evidence_format") and then Format /= Lossless_Evidence_Format then
-                  raise Integrity_Error with Context & ": unsupported evidence format " & Format;
-               end if;
-               Item.All_Runs.Append
-                 (Run_Record'(Id => Row.Id, Project_Id => Row.Parent_Id, State => State,
-                   Source_Id => To_Unbounded_String (Field (Payload, "source")),
-                   Policy_Id => To_Unbounded_String (Field (Payload, "policy")),
-                   Toolchain_Id => To_Unbounded_String (Field (Payload, "toolchain")),
-                   Started_At => Parse_Timestamp (Field (Payload, "started_at"), Context),
-                   Finished_At => Parse_Timestamp (Field (Payload, "finished_at"), Context),
-                   Format => (if Has_Field (Payload, "evidence_format") then Lossless_Evidence else Legacy_Evidence)));
-               Item.Run_Index.Insert (Row.Id, Item.All_Runs.Last_Index);
-               Item.Payloads.Append
-                 (Ada_Quality.Storage.History_Item'
-                    (Id => Row.Id, Project_Id => Row.Parent_Id, Status => To_Unbounded_String (S (Row.State)),
-                   Summary => To_Unbounded_String (Payload),
-                   Source_Fingerprint => To_Unbounded_String (Field (Payload, "source")),
-                   Policy_Fingerprint => To_Unbounded_String (Field (Payload, "policy")),
-                   Toolchain_Fingerprint => To_Unbounded_String (Field (Payload, "toolchain"))));
-               Item.Details.Insert (Row.Id, (others => <>));
-            end;
-         end loop;
-      end Decode_Runs;
-
-      procedure Decode_Details is
-      begin
-         for Table in Indicator_Results_Table .. Findings_Table loop
-            for Row of Rows (Table) loop
-               if not Item.Details.Contains (Row.Parent_Id) then
-                  raise Integrity_Error with
-                    Context_Of (Decode (Table_Name (Table)), Row.Id) & ": orphaned evidence";
-               end if;
-               declare
-                  Group : Detail_Group renames Item.Details.Reference (Row.Parent_Id);
-               begin
-                  case Table is
-                     when Indicator_Results_Table => Group.Results.Append (To_Detail (Row));
-                     when Measurements_Table => Group.Measurements.Append (To_Detail (Row));
-                     when others => Group.Findings.Append (To_Detail (Row));
-                  end case;
-               end;
-            end loop;
-         end loop;
-      end Decode_Details;
-   begin
-      Index_Rows;
-      Decode_Projects;
-      Decode_Runs;
-      Decode_Details;
-   end Decode_Snapshot;
+   procedure Validate_Snapshot (Item : in out Session) is separate;
 
    procedure Open (Item : in out Session; Path : String; Limits : Load_Limits := (others => <>)) is
       Rows : Entity_Table_Array;
@@ -457,6 +304,7 @@ package body Ada_Quality.Reporting is
       Read_Tables (Path, Limits, Item.Version, Rows);
       Decode_Snapshot (Item, Rows);
       Item.Opened := True;
+      Validate_Snapshot (Item);
    exception
       when Reporting_Error | Schema_Error | Integrity_Error | Busy_Error | Limit_Error =>
          Close (Item);
@@ -476,6 +324,7 @@ package body Ada_Quality.Reporting is
       Item.All_Runs.Clear;
       Item.Run_Index.Clear;
       Item.Payloads.Clear;
+      Item.Project_Histories.Clear;
       Item.Details.Clear;
    end Close;
 
@@ -493,9 +342,7 @@ package body Ada_Quality.Reporting is
       end if;
    end Require_Open;
 
-   ------------------------------------------------------------------------------------------------------------------
    --  Queries
-   ------------------------------------------------------------------------------------------------------------------
 
    function Projects (Item : Session; Include_Removed : Boolean := False) return Project_Vectors.Vector is
       Result : Project_Vectors.Vector;
@@ -509,6 +356,15 @@ package body Ada_Quality.Reporting is
       return Result;
    end Projects;
 
+   function Project (Item : Session; Project_Id : Positive) return Project_Record is
+   begin
+      Require_Open (Item);
+      for Candidate of Item.All_Projects loop
+         if Candidate.Id = Project_Id then return Candidate; end if;
+      end loop;
+      raise Reporting_Error with "project not found:" & Positive'Image (Project_Id);
+   end Project;
+
    function Runs (Item : Session; Project_Id : Natural := 0) return Run_Vectors.Vector is
       Result : Run_Vectors.Vector;
    begin
@@ -521,7 +377,9 @@ package body Ada_Quality.Reporting is
       return Result;
    end Runs;
 
-   function Completed_Run (Item : Session; Run_Id : Positive) return Run_Record is
+   function Evidence_Run
+     (Item : Session; Run_Id : Positive; Allow_Terminal : Boolean) return Run_Record
+   is
    begin
       Require_Open (Item);
       if not Item.Run_Index.Contains (Run_Id) then
@@ -530,40 +388,32 @@ package body Ada_Quality.Reporting is
       declare
          Run : constant Run_Record := Item.All_Runs (Item.Run_Index.Element (Run_Id));
       begin
-         if Run.State /= Assessment_Completed then
-            raise Reporting_Error with "assessment is not completed:" & Positive'Image (Run_Id);
+         if Run.State /= Assessment_Completed and then
+           (not Allow_Terminal or else Run.State = Assessment_Running)
+         then
+            raise Reporting_Error with "assessment has no terminal evidence:" & Positive'Image (Run_Id);
          end if;
          return Run;
       end;
-   end Completed_Run;
+   end Evidence_Run;
 
-   function Decode_Measurement (Row : Ada_Quality.Storage.Detail_Info; Context : String) return Measurement_Value is
-      Kind : constant Value_Kind := Parse_Value_Kind (To_String (Row.State), Context);
-      Text : constant String := To_String (Row.Summary);
+   function Decode_Measurement
+     (Row : Ada_Quality.History_Data.Detail_Info;
+      Context : String;
+      Require_Versioned : Boolean) return Measurement_Value
+   is
+      Value : Measurement_Value;
    begin
-      case Kind is
-         when Unavailable_Value =>
-            return (Kind => Unavailable_Value, Reason => Row.Summary);
-         when Boolean_Value =>
-            if Text = "TRUE" then
-               return (Kind => Boolean_Value, Boolean_Data => True);
-            elsif Text = "FALSE" then
-               return (Kind => Boolean_Value, Boolean_Data => False);
-            end if;
-            raise Integrity_Error with Context & ": invalid Boolean measurement " & Text;
-         when Integer_Value =>
-            return (Kind => Integer_Value, Integer_Data => Parse_Number (Text, Context));
-         when Decimal_Value =>
-            return (Kind => Decimal_Value, Basis_Points => Parse_Number (Text, Context));
-         when Text_Value =>
-            return (Kind => Text_Value, Text_Data => Row.Summary);
-         when Enum_Value =>
-            return (Kind => Enum_Value, Text_Data => Row.Summary);
-      end case;
+      if not Ada_Quality.Persistence.Decode_Measurement
+        (To_String (Row.State), To_String (Row.Summary), Value, Require_Versioned)
+      then
+         raise Integrity_Error with Context & ": invalid or noncanonical measurement";
+      end if;
+      return Value;
    end Decode_Measurement;
 
    function Decode_Finding
-     (Row : Ada_Quality.Storage.Detail_Info; Format : Evidence_Format) return Finding
+     (Row : Ada_Quality.History_Data.Detail_Info; Format : Evidence_Format) return Finding
    is
       Context     : constant String := Context_Of ("finding", Row.Id);
       Fingerprint : constant String := To_String (Row.Kind);
@@ -577,22 +427,21 @@ package body Ada_Quality.Reporting is
       Result.Level := Parse_Severity (To_String (Row.State), Context);
       case Format is
          when Lossless_Evidence =>
-            Result.Indicator := Parse_Indicator (Required_Field (Payload, "indicator", Context), Context);
-            Result.Rule := To_Unbounded_String (Required_Field (Payload, "rule", Context));
-            Result.Message := To_Unbounded_String (Required_Field (Payload, "message", Context));
-            Result.Relative_Path := To_Unbounded_String (Required_Field (Payload, "path", Context));
             declare
-               Line : constant Long_Long_Integer := Parse_Number (" " & Required_Field (Payload, "line", Context),
-                                                                  Context);
+               Value : Finding;
             begin
-               if Line < 0 or else Line > Long_Long_Integer (Natural'Last) then
-                  raise Integrity_Error with Context & ": line number out of range";
+               if not Decode_Finding_Payload (Payload, Value) then
+                  raise Integrity_Error with Context & ": invalid or noncanonical finding payload";
+               elsif not Ada_Quality.Finding_Identity.Matches
+                 (Fingerprint, Value.Indicator, To_String (Value.Rule),
+                  To_String (Value.Relative_Path), To_String (Value.Message))
+               then
+                  raise Integrity_Error with Context & ": fingerprint contradicts finding payload";
                end if;
-               Result.Line := Natural (Line);
+               Value.Fingerprint := Row.Kind;
+               Value.Level := Result.Level;
+               return Value;
             end;
-            if Finding_Payload (Result) /= Payload then
-               raise Integrity_Error with Context & ": noncanonical finding payload";
-            end if;
          when Legacy_Evidence =>
             declare
                Split : constant Natural := Ada.Strings.Fixed.Index (Payload, [LF]);
@@ -609,9 +458,11 @@ package body Ada_Quality.Reporting is
       return Result;
    end Decode_Finding;
 
-   function Read_Assessment (Item : Session; Run_Id : Positive) return Assessment_Record is
-      Run     : constant Run_Record := Completed_Run (Item, Run_Id);
-      Group   : constant Detail_Group := Item.Details.Element (Run_Id);
+   function Decode_Assessment
+     (Item : Session; Run_Id : Positive; Allow_Terminal : Boolean) return Assessment_Record
+   is
+      Run     : constant Run_Record := Evidence_Run (Item, Run_Id, Allow_Terminal);
+      Group   : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
       Decoded : array (Indicator_Id) of Indicator_Result;
       Has_Result, Has_Measurement : array (Indicator_Id) of Boolean := [others => False];
       Output  : Assessment_Record;
@@ -625,29 +476,30 @@ package body Ada_Quality.Reporting is
                Slash   : constant Natural := Ada.Strings.Fixed.Index (State, "/");
                Payload : constant String := To_String (Row.Summary);
                Value   : Indicator_Result;
+               Execution  : Execution_Status;
+               Compliance : Compliance_Status;
             begin
                if Has_Result (Id) then
                   raise Integrity_Error with Context & ": duplicate result for " & Image (Id);
-               elsif Slash = 0 then
+               elsif Slash = 0 or else
+                 not Decode_Result_State (State, Execution, Compliance)
+               then
                   raise Integrity_Error with Context & ": malformed result state " & State;
                end if;
                Value.Indicator := Id;
-               Value.Execution := Parse_Execution (State (State'First .. Slash - 1), Context);
-               Value.Compliance := Parse_Compliance (State (Slash + 1 .. State'Last), Context);
+               Value.Execution := Execution;
+               Value.Compliance := Compliance;
                case Run.Format is
                   when Lossless_Evidence =>
                      declare
-                        Applicable : constant String := Required_Field (Payload, "applicable", Context);
+                        Payload_Value : Indicator_Result;
                      begin
-                        if Applicable not in "true" | "false" then
-                           raise Integrity_Error with Context & ": malformed applicability";
+                        if not Decode_Result_Payload (Payload, Payload_Value) then
+                           raise Integrity_Error with Context & ": invalid or noncanonical result payload";
                         end if;
-                        Value.Applicable := Applicable = "true";
-                        Value.Summary := To_Unbounded_String (Required_Field (Payload, "summary", Context));
-                        Value.Evidence := To_Unbounded_String (Required_Field (Payload, "evidence", Context));
-                        if Result_Payload (Value) /= Payload then
-                           raise Integrity_Error with Context & ": noncanonical result payload";
-                        end if;
+                        Value.Applicable := Payload_Value.Applicable;
+                        Value.Summary := Payload_Value.Summary;
+                        Value.Evidence := Payload_Value.Evidence;
                      end;
                   when Legacy_Evidence =>
                      declare
@@ -683,15 +535,23 @@ package body Ada_Quality.Reporting is
                if Has_Measurement (Id) then
                   raise Integrity_Error with Context & ": duplicate measurement for " & Image (Id);
                end if;
-               Decoded (Id).Measurement := Decode_Measurement (Row, Context);
+               Decoded (Id).Measurement :=
+                 Decode_Measurement
+                   (Row, Context, Require_Versioned => Run.Format = Lossless_Evidence);
                Has_Measurement (Id) := True;
             end;
          end loop;
       end Decode_Measurements;
 
       procedure Decode_Findings is
+         Seen : Finding_Key_Sets.Set;
       begin
          for Row of Group.Findings loop
+            if Seen.Contains (Row.Kind) then
+               raise Integrity_Error with
+                 Context_Of ("finding", Row.Id) & ": duplicate finding fingerprint";
+            end if;
+            Seen.Insert (Row.Kind);
             declare
                Value : constant Finding := Decode_Finding (Row, Run.Format);
             begin
@@ -706,7 +566,9 @@ package body Ada_Quality.Reporting is
             if not Has_Measurement (Id) then
                raise Integrity_Error with
                  "assessment" & Positive'Image (Run_Id) & ": missing measurement for " & Image (Id);
-            elsif not Is_Valid (Decoded (Id)) then
+            elsif not Is_Valid (Decoded (Id)) or else
+              not Execution_Is_Terminal (Decoded (Id).Execution)
+            then
                raise Integrity_Error with
                  "assessment" & Positive'Image (Run_Id) & ": inconsistent evidence for " & Image (Id);
             end if;
@@ -722,7 +584,15 @@ package body Ada_Quality.Reporting is
       for Id in Indicator_Id loop
          Output.Results.Append (Decoded (Id));
       end loop;
+      Output.Executions := Group.Executions;
       return Output;
+   end Decode_Assessment;
+
+
+   function Read_Assessment (Item : Session; Run_Id : Positive) return Assessment_Record is
+      Run : constant Run_Record := Evidence_Run (Item, Run_Id, Allow_Terminal => False);
+   begin
+      return Decode_Assessment (Item, Run.Id, Allow_Terminal => False);
    end Read_Assessment;
 
    function Supported_Schema_Version (Item : Session) return Positive is
@@ -738,41 +608,278 @@ package body Ada_Quality.Reporting is
    end Snapshot_Identity;
 
    function History_Items
-     (Item : Session; Project_Id : Natural := 0) return Ada_Quality.Storage.History_Vectors.Vector
+     (Item : Session; Project_Id : Natural := 0) return Ada_Quality.History_Data.History_Vectors.Vector
    is
-      Result : Ada_Quality.Storage.History_Vectors.Vector;
+      Result : Ada_Quality.History_Data.History_Vectors.Vector;
    begin
       Require_Open (Item);
-      for Run of Item.Payloads loop
-         if Project_Id = 0 or else Run.Project_Id = Project_Id then
-            Result.Append (Run);
-         end if;
-      end loop;
-      return Result;
+      if Project_Id = 0 then
+         return Item.Payloads;
+      elsif Item.Project_Histories.Contains (Project_Id) then
+         for Position of Item.Project_Histories.Element (Project_Id) loop
+            Result.Append (Item.Payloads (Position));
+         end loop;
+         return Result;
+      else
+         return Ada_Quality.History_Data.History_Vectors.Empty_Vector;
+      end if;
    end History_Items;
 
+   function Select_Project_Comparison
+     (Item : Session; Project_Id : Positive) return Ada_Quality.History.Comparison_Selection is
+     (Ada_Quality.History.Select_Comparison (History_Items (Item, Project_Id)));
+
+   function Compare_Project (Item : Session; Project_Id : Positive) return Project_Comparison is
+      Runs : constant Ada_Quality.History_Data.History_Vectors.Vector := History_Items (Item, Project_Id);
+      Selection : constant Ada_Quality.History.Comparison_Selection :=
+        Ada_Quality.History.Select_Comparison (Runs);
+      Result : Project_Comparison :=
+        (Project_Id => Project_Id, Selection => Selection, Changes => <>);
+
+      function Find_Run (Id : Positive) return Ada_Quality.History_Data.History_Item is
+      begin
+         for Run of Runs loop
+            if Run.Id = Id then
+               return Run;
+            end if;
+         end loop;
+         raise Integrity_Error with "selected assessment is absent from project history";
+      end Find_Run;
+   begin
+      if Selection.Status /= Ada_Quality.History.Comparison_Available then
+         return Result;
+      end if;
+      declare
+         Current : constant Ada_Quality.History_Data.History_Item :=
+           Find_Run (Positive (Selection.Current_Id));
+         Baseline : constant Ada_Quality.History_Data.History_Item :=
+           Find_Run (Positive (Selection.Baseline_Id));
+         Older_Findings : Ada_Quality.History.Finding_Index;
+      begin
+         for Run of Runs loop
+            exit when Run.Id = Baseline.Id;
+            if Ada_Quality.History.Compatible (Run, Current) then
+               declare
+                  Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+               begin
+                  Ada_Quality.History.Include_Findings (Older_Findings, Group.Findings);
+               end;
+            end if;
+         end loop;
+         declare
+            Baseline_Group : Detail_Group renames Item.Details.Constant_Reference (Baseline.Id);
+            Current_Group  : Detail_Group renames Item.Details.Constant_Reference (Current.Id);
+         begin
+            Result.Changes := Ada_Quality.History.Compare
+              (Baseline, Current,
+               Baseline_Group.Results, Current_Group.Results,
+               Baseline_Group.Measurements, Current_Group.Measurements,
+               Baseline_Group.Findings, Current_Group.Findings, Older_Findings);
+         end;
+      end;
+      return Result;
+   end Compare_Project;
+
    function Read_History_Evidence (Item : Session; Run_Id : Positive) return History_Evidence is
-      Validated : constant Assessment_Record := Read_Assessment (Item, Run_Id);
-      Group     : constant Detail_Group := Item.Details.Element (Validated.Run.Id);
+      Validated : constant Run_Record := Evidence_Run (Item, Run_Id, Allow_Terminal => False);
+      Group     : Detail_Group renames Item.Details.Constant_Reference (Validated.Id);
    begin
       return (Results => Group.Results, Measurements => Group.Measurements, Findings => Group.Findings);
    end Read_History_Evidence;
 
    function All_Measurements
-     (Item : Session; Project_Id : Natural := 0) return Ada_Quality.Storage.Detail_Vectors.Vector
+     (Item : Session; Project_Id : Natural := 0) return Ada_Quality.History_Data.Detail_Vectors.Vector
    is
-      Result : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Result : Ada_Quality.History_Data.Detail_Vectors.Vector;
    begin
       Require_Open (Item);
       for Run of Item.All_Runs loop
          if Run.State = Assessment_Completed and then (Project_Id = 0 or else Run.Project_Id = Project_Id) then
             declare
-               Validated : constant Assessment_Record := Read_Assessment (Item, Run.Id);
+               Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
             begin
-               Result.Append (Item.Details.Element (Validated.Run.Id).Measurements);
+               Result.Append (Group.Measurements);
             end;
          end if;
       end loop;
       return Result;
    end All_Measurements;
+
+   function All_Persisted_Measurements
+     (Item : Session) return Ada_Quality.History_Data.Detail_Vectors.Vector
+   is
+      Result : Ada_Quality.History_Data.Detail_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      for Run of Item.All_Runs loop
+         declare
+            Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+         begin
+            Result.Append (Group.Measurements);
+         end;
+      end loop;
+      return Result;
+   end All_Persisted_Measurements;
+
+   function All_Results (Item : Session) return Ada_Quality.History_Data.Detail_Vectors.Vector is
+      Result : Ada_Quality.History_Data.Detail_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      for Run of Item.All_Runs loop
+         declare
+            Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+         begin
+            Result.Append (Group.Results);
+         end;
+      end loop;
+      return Result;
+   end All_Results;
+
+   function All_Findings (Item : Session) return Ada_Quality.History_Data.Detail_Vectors.Vector is
+      Result : Ada_Quality.History_Data.Detail_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      for Run of Item.All_Runs loop
+         declare
+            Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+         begin
+            Result.Append (Group.Findings);
+         end;
+      end loop;
+      return Result;
+   end All_Findings;
+
+   function All_Executions (Item : Session) return Execution_Vectors.Vector is
+      Result : Execution_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      for Run of Item.All_Runs loop
+         declare
+            Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+         begin
+            Result.Append (Group.Executions);
+         end;
+      end loop;
+      return Result;
+   end All_Executions;
+
+   function All_Events (Item : Session) return Ada_Quality.History_Data.Detail_Vectors.Vector is
+      Result : Ada_Quality.History_Data.Detail_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      for Run of Item.All_Runs loop
+         declare
+            Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+         begin
+            Result.Append (Group.Events);
+         end;
+      end loop;
+      return Result;
+   end All_Events;
+
+   procedure Require_Run (Item : Session; Run_Id : Positive) is
+   begin
+      Require_Open (Item);
+      if not Item.Details.Contains (Run_Id) then
+         raise Reporting_Error with "assessment not found:" & Positive'Image (Run_Id);
+      end if;
+   end Require_Run;
+
+   function Results
+     (Item : Session; Run_Id : Positive) return Ada_Quality.History_Data.Detail_Vectors.Vector
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         return Group.Results;
+      end;
+   end Results;
+
+   function Measurements
+     (Item : Session; Run_Id : Positive) return Ada_Quality.History_Data.Detail_Vectors.Vector
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         return Group.Measurements;
+      end;
+   end Measurements;
+
+   function Findings
+     (Item : Session; Run_Id : Positive) return Ada_Quality.History_Data.Detail_Vectors.Vector
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         return Group.Findings;
+      end;
+   end Findings;
+
+   function Executions
+     (Item : Session; Run_Id : Positive) return Execution_Vectors.Vector
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         return Group.Executions;
+      end;
+   end Executions;
+
+   function Events
+     (Item : Session; Run_Id : Positive) return Ada_Quality.History_Data.Detail_Vectors.Vector
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         return Group.Events;
+      end;
+   end Events;
+
+   procedure Visit_Details
+     (Item    : Session;
+      Run_Id  : Positive;
+      Kind    : Detail_Collection;
+      Process : not null access procedure (Row : Ada_Quality.History_Data.Detail_Info))
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         case Kind is
+            when Result_Details =>
+               for Row of Group.Results loop Process (Row); end loop;
+            when Measurement_Details =>
+               for Row of Group.Measurements loop Process (Row); end loop;
+            when Finding_Details =>
+               for Row of Group.Findings loop Process (Row); end loop;
+            when Event_Details =>
+               for Row of Group.Events loop Process (Row); end loop;
+         end case;
+      end;
+   end Visit_Details;
+
+   procedure Visit_Executions
+     (Item    : Session;
+      Run_Id  : Positive;
+      Process : not null access procedure (Row : Execution_Record))
+   is
+   begin
+      Require_Run (Item, Run_Id);
+      declare
+         Group : Detail_Group renames Item.Details.Constant_Reference (Run_Id);
+      begin
+         for Row of Group.Executions loop Process (Row); end loop;
+      end;
+   end Visit_Executions;
 end Ada_Quality.Reporting;

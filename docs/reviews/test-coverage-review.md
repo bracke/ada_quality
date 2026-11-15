@@ -1,26 +1,29 @@
 # AQ-009 test and coverage review
 
-The AUnit action ran 21 tests: twelve component cases for registry, coverage arithmetic, status invariants, policy,
-JSON, storage, execution, proof applicability, source analysis, database integrity, symbolic-link safety, and
-history, plus nine read-only reporting cases. Result: 21 successful,
+The AUnit action now runs 49 tests: component cases for registry, coverage arithmetic, status invariants, policy,
+JSON, storage, execution, proof applicability, source analysis, database integrity, symbolic-link safety, finding
+identity, and history; read-only reporting cases; and 29 separately registered persistence-corruption cases. Each
+corruption mode receives a fresh fixture and an independent AUnit result. Result: 49 successful,
 zero failed assertions, zero unexpected errors.
 
 Fresh isolated instrumented runs observed:
 
 ```text
-covered=3702
-total=4113
+covered=<current tracked count>
+total=<current tracked count>
 complete=true
-inventory=gcov-production-lines-v2
+inventory=gcov-production-lines-v3
 excluded_ada_quality_coverage=coverage-driver
 source_fingerprint=<matched reviewed tree>
 toolchain_fingerprint=<matched selected GNAT toolchain>
 ```
 
-This is 90.00%. Unchanged complete runs produced identical aggregate and per-production-unit counts. The driver
-stores an independent stability artifact and rejects drift for the same source and toolchain. It seeds its temporary
-self-assessment evidence with the current fingerprint, eliminating the former first-run/second-run path difference.
-The v2 inventory independently enumerates eligible production units and rejects missing instrumentation. AQ9-002 is
+The tracked ratio is required to remain at or above 90%. Unchanged complete runs produce identical aggregate and
+per-production-unit counts. The driver
+stores an independent stability artifact and rejects drift for the same source and toolchain. Self-assessment never
+redirects or replaces canonical coverage evidence: its explicit internal switch can only disable TST-03 evidence and
+therefore fails closed. Stability is atomically published before the consumer-facing summary.
+The v3 inventory independently enumerates eligible production units and rejects missing instrumentation. AQ9-002 is
 resolved.
 
 The coverage workflow exercises the CLI help/version surface, database and policy commands, project lifecycle, two

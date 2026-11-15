@@ -1,6 +1,8 @@
+with Ada.Containers.Ordered_Sets;
+with Ada.Containers.Ordered_Maps;
 with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
-with Ada_Quality.Storage;
+with Ada_Quality.History_Data;
 with Ada_Quality.Types;
 
 --  Baseline selection, finding lifecycles, regressions, and metric trends.
@@ -8,6 +10,9 @@ package Ada_Quality.History is
    --  Baseline selection, lifecycle classification, regression detection, and trends.
    subtype Unbounded_String is Ada.Strings.Unbounded.Unbounded_String;
    --  Dynamically sized persisted history text.
+
+   type Finding_Index is private;
+   --  Opaque index of stable finding identities used by bulk history operations.
 
    type Finding_Lifecycle is (New_Finding, Persistent, Resolved, Reintroduced, Unconfirmed);
    --  Lifecycle classification for a stable finding identity.
@@ -72,21 +77,21 @@ package Ada_Quality.History is
    --  One centralized baseline-selection decision shared by every renderer.
 
    function Compatible
-     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean;
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean;
    --  Test whether two completed assessments may be compared directly.
    --  @param Baseline Earlier assessment.
    --  @param Current Later assessment.
    --  @return True when project, policy, and toolchain identities are compatible.
 
    function Policy_Comparable
-     (Baseline, Current : Ada_Quality.Storage.History_Item) return Boolean;
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean;
    --  Test whether two completed assessments may be compared across a policy change.
    --  @param Baseline Earlier assessment under a different policy.
    --  @param Current Later assessment.
    --  @return True when both runs have complete source and toolchain identity evidence.
 
    function Baseline_Id
-     (Runs : Ada_Quality.Storage.History_Vectors.Vector;
+     (Runs : Ada_Quality.History_Data.History_Vectors.Vector;
       Current_Id : Positive) return Natural;
    --  Select the newest compatible assessment preceding Current_Id.
    --  @param Runs Ordered project history.
@@ -94,14 +99,37 @@ package Ada_Quality.History is
    --  @return Compatible assessment identity, or zero when none exists.
 
    function Select_Comparison
-     (Runs : Ada_Quality.Storage.History_Vectors.Vector) return Comparison_Selection;
+     (Runs : Ada_Quality.History_Data.History_Vectors.Vector) return Comparison_Selection;
    --  Select a baseline and preserve the reason when comparison is unavailable.
    --  @param Runs Ordered history for one project.
    --  @return Typed comparison decision for the latest assessment.
 
+   type Finding_Classifier is private;
+   --  Indexed current, previous, and older finding evidence.
+
+   function Build_Finding_Classifier
+     (Current, Previous, Older : Ada_Quality.History_Data.Detail_Vectors.Vector)
+      return Finding_Classifier;
+   --  Build one reusable indexed lifecycle classifier.
+
+   function Classify_Finding
+     (Item             : Finding_Classifier;
+      Fingerprint      : Unbounded_String;
+      Current_Complete : Boolean) return Finding_Lifecycle;
+   --  Classify one finding using a reusable indexed evidence set.
+
+   procedure Include_Findings
+     (Index : in out Finding_Index;
+      Items : Ada_Quality.History_Data.Detail_Vectors.Vector);
+   --  Add stable identities from Items to a reusable opaque index.
+
+   function Contains_Finding
+     (Index : Finding_Index; Fingerprint : Unbounded_String) return Boolean;
+   --  Test whether an indexed finding identity is present.
+
    function Classify_Finding
      (Fingerprint      : Unbounded_String;
-      Current, Previous, Older : Ada_Quality.Storage.Detail_Vectors.Vector;
+      Current, Previous, Older : Ada_Quality.History_Data.Detail_Vectors.Vector;
       Current_Complete : Boolean) return Finding_Lifecycle;
    --  Classify one stable finding across current, previous, and older evidence.
    --  @param Fingerprint Stable finding identity.
@@ -112,12 +140,12 @@ package Ada_Quality.History is
    --  @return Finding lifecycle classification.
 
    function Compare
-     (Baseline, Current : Ada_Quality.Storage.History_Item;
-      Baseline_Results, Current_Results : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Measurements, Current_Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Baseline_Findings, Current_Findings : Ada_Quality.Storage.Detail_Vectors.Vector;
-      Older_Findings : Ada_Quality.Storage.Detail_Vectors.Vector :=
-        Ada_Quality.Storage.Detail_Vectors.Empty_Vector)
+     (Baseline, Current : Ada_Quality.History_Data.History_Item;
+      Baseline_Results, Current_Results : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Measurements, Current_Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Findings, Current_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Older_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector :=
+        Ada_Quality.History_Data.Detail_Vectors.Empty_Vector)
       return Regression_Vectors.Vector;
    --  Compare compatible result, measurement, and finding detail rows.
    --  @param Baseline Earlier assessment metadata.
@@ -131,9 +159,18 @@ package Ada_Quality.History is
    --  @param Older_Findings Finding rows from compatible assessments older than Baseline.
    --  @return Deterministically ordered regression collection.
 
+   function Compare
+     (Baseline, Current : Ada_Quality.History_Data.History_Item;
+      Baseline_Results, Current_Results : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Measurements, Current_Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Baseline_Findings, Current_Findings : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      Older_Index : Finding_Index)
+      return Regression_Vectors.Vector;
+   --  Compare evidence using already indexed older finding identities.
+
    function Metric_Trend
-     (Runs         : Ada_Quality.Storage.History_Vectors.Vector;
-      Measurements : Ada_Quality.Storage.Detail_Vectors.Vector;
+     (Runs         : Ada_Quality.History_Data.History_Vectors.Vector;
+      Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
       Indicator    : Ada_Quality.Types.Indicator_Id) return Trend_Vectors.Vector;
    --  Build a numeric series from compatible completed assessment measurements.
    --  @param Runs Ordered assessment history.
@@ -153,4 +190,25 @@ package Ada_Quality.History is
 
    function Image (Value : Comparison_Status) return String;
    --  Return the stable external spelling of a comparison-selection state.
+private
+   package Finding_Key_Sets is new Ada.Containers.Ordered_Sets
+     (Element_Type => Unbounded_String,
+      "<" => Ada.Strings.Unbounded."<",
+      "=" => Ada.Strings.Unbounded."=");
+
+   package Finding_Count_Maps is new Ada.Containers.Ordered_Maps
+     (Key_Type => Unbounded_String,
+      Element_Type => Natural,
+      "<" => Ada.Strings.Unbounded."<");
+
+   type Finding_Index is record
+      Keys         : Finding_Key_Sets.Set;
+      Alias_Counts : Finding_Count_Maps.Map;
+   end record;
+
+   type Finding_Classifier is record
+      Current  : Finding_Index;
+      Previous : Finding_Index;
+      Older    : Finding_Index;
+   end record;
 end Ada_Quality.History;

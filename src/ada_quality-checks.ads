@@ -63,11 +63,13 @@ package Ada_Quality.Checks is
    function Assess
      (Project_Id : Natural;
       Root       : String;
-      Policy     : Ada_Quality.Policy.Quality_Policy) return Ada_Quality.Types.Assessment;
+      Policy     : Ada_Quality.Policy.Quality_Policy;
+      Coverage_Evidence_Enabled : Boolean := True) return Ada_Quality.Types.Assessment;
    --  Execute all applicable native and external checks for one project.
    --  @param Project_Id Persistent project identity.
    --  @param Root Canonical project root.
    --  @param Policy Validated policy controlling limits and gates.
+   --  @param Coverage_Evidence_Enabled False only for fail-closed coverage-driver self-assessment.
    --  @return Complete in-memory assessment ready for atomic publication.
 
    function Source_Fingerprint (Root : String) return String;

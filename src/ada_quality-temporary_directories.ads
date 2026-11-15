@@ -25,9 +25,9 @@ package Ada_Quality.Temporary_Directories is
    --  @return Absolute directory path.
 
    function Child (Item : Temporary_Directory; Name : String) return String;
-   --  Construct a direct child path beneath the allocated directory.
+   --  Construct a contained relative path beneath the allocated directory.
    --  @param Item Active directory owner.
-   --  @param Name Relative child name.
+   --  @param Name Nonempty relative path without parent components.
    --  @return Joined child path.
 
    function Is_Active (Item : Temporary_Directory) return Boolean;

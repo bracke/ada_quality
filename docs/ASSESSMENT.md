@@ -20,7 +20,9 @@ overflow at `Natural'Last`.
 GNATdoc writes to a dedicated temporary output directory that is removed after the check, so documentation generation
 does not alter the project source tree. DOC-01 counts only GNATdoc's undocumented-entity diagnostics while DOC-02
 enforces the complete warning policy. Truncated diagnostic output blocks both. These conservative outcomes are part
-of the contract: unsupported evidence cannot silently become compliance.
+of the contract: unsupported evidence cannot silently become compliance. The DOC-01 count is audit evidence rather
+than a trend metric because GNATdoc can vary its diagnostic cardinality for identical source; compliance transitions
+and stable finding identity remain regression inputs.
 
 Finding fingerprints combine indicator, rule, relative semantic context, and message. Persisted assessments retain
 policy and source fingerprints for compatibility checks. The `regressions` command selects the newest compatible

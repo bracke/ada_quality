@@ -1,7 +1,7 @@
 with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
+with Ada_Quality.Reporting;
 with Ada_Quality.Types;
-with Ada_Quality.Storage;
 
 --  Deterministic JSON serialization for assessments and persistent archives.
 package Ada_Quality.JSON is
@@ -32,9 +32,13 @@ package Ada_Quality.JSON is
    --  Serialize a multi-project run as one versioned JSON document.
 
    function Render_Archive
-     (Store : in out Ada_Quality.Storage.Store; Pretty : Boolean := False) return String;
+     (Item             : Ada_Quality.Reporting.Session;
+      Pretty           : Boolean := False;
+      Max_Output_Bytes : Positive := 268_435_456) return String;
    --  Serialize every persisted project, assessment, detail, and regression.
-   --  @param Store Open persistent store to read.
+   --  @param Item Open, bounded, read-only reporting snapshot.
    --  @param Pretty Whether to indent the resulting document.
+   --  @param Max_Output_Bytes Maximum serialized archive size.
    --  @return Complete archive JSON document.
+   --  @exception Ada_Quality.Reporting.Limit_Error The serialized archive exceeds the output limit.
 end Ada_Quality.JSON;

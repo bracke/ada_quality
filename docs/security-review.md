@@ -7,9 +7,11 @@ publication.
 Controls:
 
 - every assessed tool receives an explicit argument vector; the adapter does not invoke a shell;
-- executable lookup occurs before spawn and evidence records program paths without sensitive argument values;
-- GNU timeout has a five-second forced-kill escalation and GNAT Expect provides an independent watchdog;
+- executable lookup occurs before spawn and evidence records program paths plus redacted option/argument shapes,
+  never positional or attached option values;
+- GNAT Expect enforces the monotonic deadline and escalates from TERM to KILL after five seconds;
 - stdout and stderr are merged into a streaming byte-bounded buffer;
+- a protected process-wide gate serializes the GNAT Expect spawn, monitor, and close boundary;
 - symbolic links are identified before `Kind` and are never followed by assessment traversal or cleanup;
 - coverage is rejected unless its source fingerprint equals the current assessment fingerprint;
 - Git cleanliness is checked before and after tools when policy requires it;

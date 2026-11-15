@@ -52,7 +52,8 @@ package Ada_Quality.Types is
    --  @enum REL_04 Source fingerprint remains unchanged during assessment.
    --  @enum PRF_01 SPARK proof succeeds when proof is applicable.
 
-   subtype Indicator_Count is Natural range 0 .. 33;
+   subtype Indicator_Count is Natural range
+     0 .. Indicator_Id'Pos (Indicator_Id'Last) - Indicator_Id'Pos (Indicator_Id'First) + 1;
    --  Bounded number of indicators or indicator results.
 
    type Execution_Status is (Not_Run, Running, Succeeded, Blocked, Failed, Errored, Not_Applicable);
@@ -169,16 +170,16 @@ package Ada_Quality.Types is
       Status        : Tool_Run_Status := Tool_Spawn_Error;
       Exit_Code     : Integer := -1;
       Output_Digest : Unbounded_String;
-      Output_Bytes  : Natural := 0;
+      Output_Bytes  : Long_Long_Integer := 0;
       Truncated     : Boolean := False;
    end record;
    --  Bounded, immutable execution evidence.
    --  @field Tool Stable adapter label.
-   --  @field Command Auditable executable and argument summary.
+   --  @field Command Auditable executable and redacted argument-shape summary.
    --  @field Status Terminal tool state.
    --  @field Exit_Code Child exit code, or minus one when unavailable.
-   --  @field Output_Digest Stable digest of captured output.
-   --  @field Output_Bytes Number of captured output bytes before truncation.
+   --  @field Output_Digest Stable digest of complete combined stdout and stderr.
+   --  @field Output_Bytes 64-bit complete combined stdout and stderr byte count before truncation.
    --  @field Truncated Whether output exceeded its configured limit.
 
    package Tool_Execution_Vectors is new Ada.Containers.Vectors
@@ -214,6 +215,9 @@ package Ada_Quality.Types is
    --  @field Results Exactly one result for each applicable contract identifier at publication.
    --  @field Executions Bounded external-tool evidence.
 
+   Unavailable_Toolchain_Fingerprint : constant String := "toolchain-unavailable";
+   --  Explicit identity used when no selected toolchain could be established.
+
    function Image (Id : Indicator_Id) return String;
    --  Return the stable external indicator spelling.
    --  @param Id Indicator identity.
@@ -244,10 +248,53 @@ package Ada_Quality.Types is
    --  @param Item Indicator result to validate.
    --  @return True when every state invariant holds.
 
+   function Is_Valid
+     (Execution        : Execution_Status;
+      Compliance       : Compliance_Status;
+      Applicable       : Boolean;
+      Measurement_Kind : Value_Kind;
+      Has_Evidence     : Boolean) return Boolean;
+   --  Validate the persisted state components of an indicator result.
+   --  @param Execution Adapter execution state.
+   --  @param Compliance Policy compliance state.
+   --  @param Applicable Whether the requirement applies.
+   --  @param Measurement_Kind Persisted measurement representation.
+   --  @param Has_Evidence Whether explanatory evidence is present.
+   --  @return True when the components obey the canonical result invariant.
+
+   function Execution_Is_Terminal (Status : Execution_Status) return Boolean;
+   --  Test whether an indicator execution state is admissible in terminal assessment evidence.
+   --  @param Status Indicator execution state.
+   --  @return False only for Not_Run and Running.
+
    function Is_Publishable (Item : Assessment) return Boolean;
-   --  Validate terminal status and exact unique 33-result cardinality.
+   --  Validate identities, terminal status, executions, and exact unique 33-result cardinality.
    --  @param Item Assessment to validate.
    --  @return True when Item may be atomically published.
+
+   function Fingerprint_Is_Valid (Text : String) return Boolean;
+   --  Validate one persisted single-line identity.
+   --  @param Text Source, policy, toolchain, or output identity.
+   --  @return True when Text is nonempty and contains no persisted-field line separator.
+
+   function Output_Digest_Is_Valid (Text : String) return Boolean;
+   --  Validate the canonical complete-output digest spelling.
+   --  @param Text Digest text.
+   --  @return True only for a 16-character lowercase hexadecimal FNV-1a digest.
+
+   function Execution_Evidence_Is_Valid
+     (Status        : Tool_Run_Status;
+      Exit_Code     : Integer;
+      Output_Digest : String;
+      Output_Bytes  : Long_Long_Integer;
+      Truncated     : Boolean) return Boolean;
+   --  Validate the cross-field invariants of persisted external-tool evidence.
+   --  @param Status Terminal execution state.
+   --  @param Exit_Code Child status, or minus one when no child status exists.
+   --  @param Output_Digest Canonical complete-output digest.
+   --  @param Output_Bytes Complete combined-output byte count.
+   --  @param Truncated Whether retained output was truncated.
+   --  @return True when the digest, count, truncation, and status fields are consistent.
 
    function Coverage_Passes (Covered, Total : Natural; Minimum_Basis_Points : Natural := 9_000) return Boolean;
    --  Compare exact line counts against a basis-point threshold without overflow.

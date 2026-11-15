@@ -19,7 +19,7 @@ package Ada_Quality.Policy is
    --  @field Maximum_Source_Lines Maximum permitted physical lines in one source file.
    --  @field Maximum_Complexity Maximum permitted decision complexity for one subprogram.
    --  @field Process_Timeout_Seconds Maximum wall-clock duration of an external tool.
-   --  @field Maximum_Output_Bytes Maximum captured bytes from one external tool.
+   --  @field Maximum_Output_Bytes Maximum combined output bytes retained from one external tool.
    --  @field Require_Clean_Worktree Whether source mutation and dirty Git state fail the assessment.
 
    type Load_Result is record

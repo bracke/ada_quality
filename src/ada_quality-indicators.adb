@@ -36,6 +36,19 @@ package body Ada_Quality.Indicators is
       REL_04 => new String'("Clean staging"),
       PRF_01 => new String'("SPARK proof verification")];
 
+   Units : constant array (Indicator_Id) of access constant String :=
+     [TST_02 => new String'("registered_tests"),
+      TST_03 => new String'("basis_points"),
+      SRC_01 => new String'("lines"),
+      SRC_02 | SRC_06 => new String'("files"),
+      SRC_03 => new String'("decision_points"),
+      SRC_04 => new String'("findings"),
+      SRC_05 => new String'("handlers"),
+      DOC_01 => new String'("warnings"),
+      SEC_01 | SEC_02 => new String'("matches"),
+      SEC_03 => new String'("forbidden_entries"),
+      others => new String'("none")];
+
    function Category_Of (Id : Indicator_Id) return Indicator_Category is
    begin
       case Id is
@@ -71,21 +84,37 @@ package body Ada_Quality.Indicators is
       return Result;
    end Dependencies;
 
-   function Registry return Descriptor_Array is
+   function Gate_Of (Id : Indicator_Id) return Boolean is
+     (Id in BLD_01 .. BLD_04 or else Id in TST_01 .. TST_04 or else
+      Id in REL_01 .. REL_04 or else Id = PRF_01);
+
+   function Trend_Of (Id : Indicator_Id) return Metric_Direction is
+     (case Id is
+         when TST_02 | TST_03 => Higher_Is_Better,
+         when SRC_01 | SRC_02 | SRC_03 | SRC_04 | SRC_05 | SRC_06 |
+              SEC_01 | SEC_02 | SEC_03 => Lower_Is_Better,
+         when others => No_Trend);
+
+   function Build_Registry return Descriptor_Array is
       Result : Descriptor_Array;
    begin
       for Id in Indicator_Id loop
          Result (Id) :=
            (Id => Id, Version => 1, Measurement_Version => 1,
-            Category => Category_Of (Id), Name => Names (Id),
+            Category => Category_Of (Id), Name => Names (Id), Unit_Name => Units (Id),
+            Gate => Gate_Of (Id), Trend => Trend_Of (Id),
             Prerequisites => Dependencies (Id));
       end loop;
       return Result;
-   end Registry;
+   end Build_Registry;
+
+   Descriptors : constant Descriptor_Array := Build_Registry;
+
+   function Registry return Descriptor_Array is (Descriptors);
 
    function Count return Ada.Containers.Count_Type is
    begin
-      return 33;
+      return Ada.Containers.Count_Type (Indicator_Count'Last);
    end Count;
 
    function Parse (Text : String; Id : out Indicator_Id) return Boolean is
@@ -104,19 +133,17 @@ package body Ada_Quality.Indicators is
          return False;
    end Parse;
 
+   function Parse_Canonical (Text : String; Id : out Indicator_Id) return Boolean is
+     (Parse (Text, Id) and then Image (Id) = Text);
+
    function Measurement_Unit (Id : Indicator_Id) return String is
-     (case Id is
-         when TST_02 => "registered_tests",
-         when TST_03 => "basis_points",
-         when SRC_01 => "lines",
-         when SRC_02 | SRC_06 => "files",
-         when SRC_03 => "decision_points",
-         when SRC_04 => "findings",
-         when SRC_05 => "handlers",
-         when DOC_01 => "warnings",
-         when SEC_01 | SEC_02 => "matches",
-         when SEC_03 => "forbidden_entries",
-         when others => "none");
+     (Descriptors (Id).Unit_Name.all);
+
+   function Is_Gate (Id : Indicator_Id) return Boolean is
+     (Descriptors (Id).Gate);
+
+   function Direction_Of (Id : Indicator_Id) return Metric_Direction is
+     (Descriptors (Id).Trend);
 
    function Validate_Acyclic return Boolean is
       type Visit_State is (Unseen, Visiting, Complete);

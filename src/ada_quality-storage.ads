@@ -1,6 +1,7 @@
 with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
+with Ada_Quality.History_Data;
 with Ada_Quality.Types;
 with Database;
 with Database.Schema;
@@ -13,19 +14,6 @@ package Ada_Quality.Storage is
 
    Storage_Error : exception;
    --  Raised when persistence, integrity, locking, or lifecycle validation fails.
-
-   type Testing_Fault_Point is
-     (No_Testing_Fault, Schema_Creation_Commit, Schema_Migration_Commit,
-      Assessment_Start_Commit, Assessment_Publication_Commit,
-      Assessment_Interruption_Commit, Assessment_Recovery_Commit);
-   --  Transaction boundary at which a test may inject one deterministic failure.
-   --  @enum No_Testing_Fault Disable fault injection.
-   --  @enum Schema_Creation_Commit Fail the schema-creation commit.
-   --  @enum Schema_Migration_Commit Fail the schema-migration commit.
-   --  @enum Assessment_Start_Commit Fail the assessment-start commit.
-   --  @enum Assessment_Publication_Commit Fail the terminal-publication commit.
-   --  @enum Assessment_Interruption_Commit Fail the interruption commit.
-   --  @enum Assessment_Recovery_Commit Fail the recovery commit.
 
    type Project_Info is record
       Id      : Positive;
@@ -43,45 +31,14 @@ package Ada_Quality.Storage is
      (Index_Type => Positive, Element_Type => Project_Info);
    --  Ordered project registry collection.
 
-   type History_Item is record
-      Id         : Positive;
-      Project_Id : Positive;
-      Status     : Unbounded_String;
-      Summary    : Unbounded_String;
-      Source_Fingerprint    : Unbounded_String;
-      Policy_Fingerprint    : Unbounded_String;
-      Toolchain_Fingerprint : Unbounded_String;
-   end record;
-   --  Immutable assessment-history metadata.
-   --  @field Id Positive assessment identity.
-   --  @field Project_Id Owning project identity.
-   --  @field Status Persisted lifecycle state.
-   --  @field Summary Stable publication summary.
-   --  @field Source_Fingerprint Assessed source identity.
-   --  @field Policy_Fingerprint Applied policy identity.
-   --  @field Toolchain_Fingerprint Selected toolchain identity.
-
-   package History_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => History_Item);
-   --  Ordered assessment-history collection.
-
-   type Detail_Info is record
-      Id       : Positive;
-      Run_Id   : Positive;
-      Kind     : Unbounded_String;
-      State    : Unbounded_String;
-      Summary  : Unbounded_String;
-   end record;
-   --  Generic immutable child row used for results, measurements, findings, executions, and events.
-   --  @field Id Positive row identity.
-   --  @field Run_Id Owning assessment identity.
-   --  @field Kind Stable detail key or category.
-   --  @field State Persisted detail state.
-   --  @field Summary Persisted payload or evidence summary.
-
-   package Detail_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Detail_Info);
-   --  Ordered detail-row collection.
+   subtype History_Item is Ada_Quality.History_Data.History_Item;
+   --  Compatibility alias for persistence-neutral assessment metadata.
+   package History_Vectors renames Ada_Quality.History_Data.History_Vectors;
+   --  Compatibility alias for ordered assessment metadata.
+   subtype Detail_Info is Ada_Quality.History_Data.Detail_Info;
+   --  Compatibility alias for persistence-neutral detail rows.
+   package Detail_Vectors renames Ada_Quality.History_Data.Detail_Vectors;
+   --  Compatibility alias for ordered detail rows.
 
    type Store is new Ada.Finalization.Limited_Controlled with private;
    --  Exclusive persistent database handle with automatic close and lock release.
@@ -200,45 +157,69 @@ package Ada_Quality.Storage is
    --  @param Item Open store.
    --  @return Supported positive schema version.
 
-   procedure Testing_Set_Schema_Version (Item : in out Store; Version : Positive);
-   --  Override schema metadata for migration and fail-closed tests.
-   --  @param Item Open test store.
-   --  @param Version Version value to persist.
+   type Integrity_Limits is record
+      Max_Total_Rows : Positive := 2_500_000;
+      Max_Text_Bytes : Positive := 268_435_456;
+   end record;
+   --  Resource bounds for a full database integrity audit.
+   --  @field Max_Total_Rows Maximum rows across all logical tables.
+   --  @field Max_Text_Bytes Maximum aggregate UTF-8 bytes in persisted text fields.
 
-   procedure Testing_Inject_Next_Fault (Point : Testing_Fault_Point);
-   --  Arm one deterministic commit fault for the next matching transaction.
-   --  @param Point Transaction boundary to fail, or No_Testing_Fault to disarm.
+   procedure Check (Item : in out Store; Limits : Integrity_Limits := (others => <>));
+   --  Validate schema, row ownership, lifecycle, cardinality, and immutable evidence invariants.
+   --  @param Item Open store to check.
+   --  @param Limits Resource bounds applied before rows enter the audit snapshot.
 
-   procedure Testing_Use_Legacy_Evidence (Enabled : Boolean);
-   --  Make subsequent publications write the schema-2 evidence encoding, for legacy-decoding tests.
-   --  @param Enabled Whether publication omits timestamps and the lossless evidence format.
+private
+   type Testing_Fault_Point is
+     (No_Testing_Fault, Schema_Creation_Commit, Schema_Migration_Commit,
+      Assessment_Start_Commit, Assessment_Publication_Commit,
+      Assessment_Interruption_Commit, Assessment_Recovery_Commit);
+   --  Internal transaction boundary selected by the explicit test child.
 
    type Testing_Corruption is
-     (Duplicate_Result, Missing_Result, Invalid_Measurement, Malformed_Finding, Invalid_Run_State);
-   --  Deliberate damage applied to a disposable test database.
-   --  @enum Duplicate_Result Add a second result row for one indicator.
-   --  @enum Missing_Result Delete one result row.
-   --  @enum Invalid_Measurement Store a nonnumeric value as a decimal measurement.
-   --  @enum Malformed_Finding Replace a finding payload with undecodable text.
-   --  @enum Invalid_Run_State Store an unknown lifecycle state.
+     (Duplicate_Result, Missing_Result, Inconsistent_Result, Contradictory_Result_Active,
+      Nonterminal_Result, Noncanonical_Result,
+      Noncanonical_Indicator,
+      Invalid_Measurement, Contradictory_Measurement_Active,
+      Noncanonical_Measurement, Missing_Measurement_Semantics,
+      Noncanonical_Measurement_Semantics, Duplicate_Finding, Malformed_Finding, Noncanonical_Finding,
+      Inactive_Finding, Mismatched_Finding,
+      Malformed_Execution, Noncanonical_Execution,
+      Invalid_Run_State, Unsupported_Evidence_Format, Malformed_Run_Timestamp,
+      Incomplete_Run_Timestamps, Orphaned_Run_Finish, Inverted_Run_Timestamps,
+      Missing_Terminal_Event,
+      Malformed_Metadata, Extra_Metadata);
+   --  Internal corruption mode selected by the explicit test child.
 
+   procedure Testing_Set_Schema_Version (Item : in out Store; Version : Positive);
+   --  Internal implementation of the test child's schema-version override.
+   --  @param Item Open disposable store.
+   --  @param Version Version to persist.
+   procedure Testing_Inject_Next_Fault (Item : in out Store; Point : Testing_Fault_Point);
+   --  Internal implementation of deterministic commit fault injection.
+   --  @param Item Store whose operation will fail.
+   --  @param Point Commit boundary to fail.
+   procedure Testing_Use_Legacy_Evidence (Item : in out Store; Enabled : Boolean);
+   --  Internal implementation of legacy fixture encoding selection.
+   --  @param Item Store whose publication encoding is selected.
+   --  @param Enabled Whether legacy encoding is active.
    procedure Testing_Corrupt (Item : in out Store; Run_Id : Positive; Kind : Testing_Corruption);
-   --  Damage the evidence of one published run in a disposable test database.
-   --  @param Item Open test store.
+   --  Internal implementation of deliberate fixture corruption.
+   --  @param Item Open disposable store.
    --  @param Run_Id Published run to damage.
    --  @param Kind Damage to apply.
 
-   procedure Check (Item : in out Store);
-   --  Validate schema, row ownership, lifecycle, cardinality, and immutable evidence invariants.
-   --  @param Item Open store to check.
-
-private
    type Schema_Array is array (Positive range 1 .. 8) of Database.Schema.Table_Schema;
+   type Identifier_Array is array (Positive range 1 .. 8) of Positive;
 
    type Store is new Ada.Finalization.Limited_Controlled with record
       DB      : Database.Handle;
       Schemas : Schema_Array;
+      Next_Identifiers : Identifier_Array := [others => 1];
       Opened  : Boolean := False;
+      Next_Testing_Fault : Testing_Fault_Point := No_Testing_Fault;
+      Legacy_Testing_Evidence : Boolean := False;
    end record;
 
    overriding procedure Finalize (Item : in out Store);
