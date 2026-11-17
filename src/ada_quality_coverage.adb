@@ -267,7 +267,12 @@ begin
            Quiet => True);
    begin
       if Run.Status /= 0 then Fail ("toolchain fingerprint query failed"); return; end if;
-      Toolchain_Fingerprint := To_Unbounded_String (Hash_Output (To_String (Run.Output)));
+      Toolchain_Fingerprint := To_Unbounded_String
+        (Ada_Quality.Checks.Toolchain_Fingerprint (To_String (Run.Output)));
+      if Length (Toolchain_Fingerprint) = 0 then
+         Fail ("toolchain fingerprint query returned no GNATLS version banner");
+         return;
+      end if;
    end;
    Current_Source_Fingerprint := To_Unbounded_String (Ada_Quality.Checks.Source_Fingerprint (Root));
    --  Instrumented self-assessments must take the same fail-closed TST-03 path

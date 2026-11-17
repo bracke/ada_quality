@@ -9,6 +9,25 @@ Assert (not Coverage_Passes (0, 0), "zero eligible lines cannot pass");
 Assert
   (Coverage_Passes (Natural'Last, Natural'Last), "multiplication uses overflow-safe wide arithmetic");
 declare
+   Plain : constant String := Ada_Quality.Checks.Toolchain_Fingerprint
+     ("GNATLS 15.2.0" & ASCII.LF & "Copyright changes are not compiler identity" & ASCII.LF);
+   With_Setup_Chatter : constant String := Ada_Quality.Checks.Toolchain_Fingerprint
+     ("Note: Synchronizing workspace..." & ASCII.CR & ASCII.LF &
+      "  GNATLS 15.2.0  " & ASCII.CR & ASCII.LF & "one-time Alire diagnostic" & ASCII.LF);
+   Other_Version : constant String := Ada_Quality.Checks.Toolchain_Fingerprint
+     ("GNATLS 16.1.0" & ASCII.LF);
+begin
+   Assert
+     (Plain'Length = 16 and then Plain = With_Setup_Chatter,
+      "toolchain identity ignores Alire chatter, surrounding space, trailing output, and line endings");
+   Assert
+     (Other_Version'Length = 16 and then Other_Version /= Plain,
+      "toolchain identity changes with the GNATLS version banner");
+   Assert
+     (Ada_Quality.Checks.Toolchain_Fingerprint ("GNAT setup did not complete")'Length = 0,
+      "toolchain identity requires an actual GNATLS version banner");
+end;
+declare
    Root    : constant String := Fixture_Root & "/coverage_inventory";
    Objects : constant String := Root & "/objects";
 begin

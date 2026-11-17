@@ -210,14 +210,15 @@ is
          Project_Tools.Processes.Argument ("--"), Project_Tools.Processes.Argument ("gnatls"),
          Project_Tools.Processes.Argument ("--version")]));
       if Toolchain_Identified (Toolchain_Run) then
-         Result.Toolchain_Fingerprint := Result.Executions.Last_Element.Output_Digest;
+         Result.Toolchain_Fingerprint := To_Unbounded_String
+           (Toolchain_Fingerprint (To_String (Toolchain_Run.Output)));
       end if;
       Add (Tool_Result (BLD_01, Build_Run, "project builds", "project build failed"));
       Add (Tool_Result (BLD_02, Validation_Run, "validation build passes", "validation build failed"));
       Add (Tool_Result (BLD_03, Warning_Run, "compiler warnings gate passes", "compiler warnings gate failed"));
       Add
         (Inspected_Output_Result
-           (BLD_04, Toolchain_Run, Contains (To_String (Toolchain_Run.Output), "GNAT"),
+           (BLD_04, Toolchain_Run, Toolchain_Identified (Toolchain_Run),
             "Alire GNAT toolchain identified", "toolchain output did not identify GNAT"));
    else
       Add (Blocked_Result (BLD_01, "build prerequisites unavailable", "requires STR-01 and STR-02"));

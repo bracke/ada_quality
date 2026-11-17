@@ -447,6 +447,46 @@ package body Ada_Quality.Checks is
       return Result;
    end Hash_Image;
 
+   function Toolchain_Fingerprint (Output : String) return String is
+      Hash       : Interfaces.Unsigned_64 := 16#CBF29CE484222325#;
+      Line_Start : Positive := Output'First;
+
+      function Fingerprint (Banner : String) return String is
+         Canonical : constant String := "ada-quality-toolchain-v1:" & Lower (Banner);
+      begin
+         for C of Canonical loop
+            Hash := (Hash xor Interfaces.Unsigned_64 (Character'Pos (C))) * 16#100000001B3#;
+         end loop;
+         return Hash_Image (Hash);
+      end Fingerprint;
+   begin
+      while Line_Start <= Output'Last loop
+         declare
+            Newline : constant Natural :=
+              Ada.Strings.Fixed.Index (Output, [Ada.Characters.Latin_1.LF], From => Line_Start);
+            Raw_Last : constant Natural :=
+              (if Newline = 0 then Output'Last else Newline - 1);
+            Text_Last : constant Natural :=
+              (if Raw_Last >= Line_Start and then Output (Raw_Last) = Ada.Characters.Latin_1.CR
+               then Raw_Last - 1 else Raw_Last);
+         begin
+            if Text_Last >= Line_Start then
+               declare
+                  Banner : constant String :=
+                    Ada.Strings.Fixed.Trim (Output (Line_Start .. Text_Last), Ada.Strings.Both);
+               begin
+                  if Starts_With (Lower (Banner), "gnatls ") then
+                     return Fingerprint (Banner);
+                  end if;
+               end;
+            end if;
+            exit when Newline = 0;
+            Line_Start := Newline + 1;
+         end;
+      end loop;
+      return "";
+   end Toolchain_Fingerprint;
+
    function Finding_Fingerprint
      (Indicator : Indicator_Id;
       Rule, Path, Message : String;
@@ -747,7 +787,7 @@ package body Ada_Quality.Checks is
      (Run : Ada_Quality.Execution.Run_Result) return Boolean is
      (Run.Status = Ada_Quality.Execution.Completed and then
       Run.Exit_Code = 0 and then not Run.Truncated and then
-      Contains (To_String (Run.Output), "GNAT"));
+      Toolchain_Fingerprint (To_String (Run.Output))'Length > 0);
 
    function Run_Tool
      (Root : String;

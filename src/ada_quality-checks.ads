@@ -82,6 +82,14 @@ package Ada_Quality.Checks is
    --  @param Root Canonical project root.
    --  @return Stable source and artifact fingerprint for determinism comparisons.
 
+   function Toolchain_Fingerprint (Output : String) return String;
+   --  Derive a stable compiler identity from `gnatls --version` output.
+   --  Alire setup diagnostics and line-ending differences are ignored; the
+   --  normalized GNATLS version banner is the complete identity input.
+   --  @param Output Complete combined output of the toolchain query.
+   --  @return A lowercase hexadecimal fingerprint, or empty when no GNATLS
+   --  version banner is present.
+
    function Test_Project_File (Root : String) return String;
    --  Locate the project file of a project's AUnit tests crate from Root/tests/alire.toml.
    --  @param Root Canonical project root.
