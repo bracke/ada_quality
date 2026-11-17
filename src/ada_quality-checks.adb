@@ -64,6 +64,12 @@ package body Ada_Quality.Checks is
       To_Unbounded_String ("coverage"), To_Unbounded_String ("lib"),
       To_Unbounded_String ("gnatprove")];
 
+   Generated_Fingerprint_Suffixes : constant Project_Tools.Files.Name_List :=
+     [To_Unbounded_String (".ali"), To_Unbounded_String (".o"),
+      To_Unbounded_String (".bexch"), To_Unbounded_String (".gcda"),
+      To_Unbounded_String (".gcno"), To_Unbounded_String (".cswi"),
+      To_Unbounded_String (".stdout"), To_Unbounded_String (".stderr")];
+
    Maximum_Tree_Depth : constant Positive :=
      Ada_Quality.Resource_Limits.Maximum_Tree_Depth;
    Maximum_Project_Files : constant Positive :=
@@ -333,6 +339,16 @@ package body Ada_Quality.Checks is
      (Text'Length >= Suffix'Length and then
       Text (Text'Last - Suffix'Length + 1 .. Text'Last) = Suffix);
 
+   function Has_Generated_Fingerprint_Suffix (Name : String) return Boolean is
+   begin
+      for Suffix of Generated_Fingerprint_Suffixes loop
+         if Has_Suffix (Name, To_String (Suffix)) then
+            return True;
+         end if;
+      end loop;
+      return False;
+   end Has_Generated_Fingerprint_Suffix;
+
    function Code_Without_Comments_And_Strings (Path : String) return String is
       Data       : constant String := Project_Tools.Files.Read_Raw_File (Path);
       Normalized : String := Data;
@@ -431,7 +447,9 @@ package body Ada_Quality.Checks is
       Name : constant String := Ada.Directories.Simple_Name (Path);
       Rel  : constant String := "/" & Relative (Root, Path);
    begin
-      if Name in "alr_test_local.log" | "alr_test_local.xml" | "settings.toml" | "build_hash_inputs" then
+      if Name in "alr_test_local.log" | "alr_test_local.xml" | "settings.toml" | "build_hash_inputs" or else
+        Starts_With (Name, ".ada-quality.db") or else Has_Generated_Fingerprint_Suffix (Name)
+      then
          return True;
       elsif Contains (Rel, "/config/") and then
         (Contains (Name, "_config.ads") or else Contains (Name, "_config.gpr") or else

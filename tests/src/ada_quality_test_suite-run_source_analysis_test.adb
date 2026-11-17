@@ -256,6 +256,18 @@ begin
            To_String (First_Fingerprint),
          "runner-local Alire installations do not change portable source identity");
       Project_Tools.Files.Write_Text_File
+        (First_Tree & "/ada_quality-checks.ali", "compiler artifact");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/test.stdout", "temporary test output");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/.ada-quality.db", "local assessment database");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/.ada-quality.db.fts", "local search index");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) =
+           To_String (First_Fingerprint),
+         "generated compiler, test, and database files do not change source identity");
+      Project_Tools.Files.Write_Text_File
         (First_Tree & "/alire.toml", "name = ""fingerprint_fixture""");
       Assert
         (Ada_Quality.Checks.Source_Fingerprint (First_Tree) /=
