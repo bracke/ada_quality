@@ -74,6 +74,27 @@ begin
      (Ada_Quality.Workspaces.Path (Stage) & "/../symlink_outside/outside.ads"),
      "staging accepts quoted path keys and Unicode escapes in TOML basic strings");
    Ada_Quality.Workspaces.Cleanup (Stage);
+   declare
+      Oversized : constant String := Outside & "/oversized.bin";
+      File      : Ada.Streams.Stream_IO.File_Type;
+      Byte      : constant Ada.Streams.Stream_Element_Array (1 .. 1) := [1 => 0];
+   begin
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Oversized);
+      Ada.Streams.Stream_IO.Set_Index
+        (File,
+         Ada.Streams.Stream_IO.Count
+           (Ada_Quality.Resource_Limits.Maximum_Staging_File_Bytes + 1));
+      Ada.Streams.Stream_IO.Write (File, Byte);
+      Ada.Streams.Stream_IO.Close (File);
+      Raised := False;
+      begin
+         Ada_Quality.Workspaces.Prepare (Stage, Root, "oversized-pin-test");
+      exception
+         when Ada_Quality.Workspaces.Workspace_Error => Raised := True;
+      end;
+      Assert (Raised, "staging enforces file-size limits across local pin dependencies");
+      Ada.Directories.Delete_File (Oversized);
+   end;
    Project_Tools.Files.Write_Text_File
      (Root & "/alire/alire.lock",
       "[solution.state.link]" & ASCII.LF &
@@ -117,7 +138,11 @@ begin
    Project_Tools.Files.Delete_Tree (Root & "/src/cycle");
    State_Before := To_Unbounded_String (Ada_Quality.Checks.Project_State_Fingerprint (Root));
    Ada.Directories.Create_Path (Root & "/obj");
+   Ada.Directories.Create_Path (Root & "/coverage");
    Project_Tools.Files.Write_Text_File (Root & "/obj/generated.o", "generated");
+   Project_Tools.Files.Write_Text_File (Root & "/coverage/generated.txt", "generated");
+   Project_Tools.Files.Write_Text_File (Root & "/coverage/gcov-summary.txt", "summary");
+   Project_Tools.Files.Write_Text_File (Root & "/coverage/gcov-stability.txt", "stability");
    Assert
      (State_Before /= To_Unbounded_String (Ada_Quality.Checks.Project_State_Fingerprint (Root)),
       "generated build artifacts participate in the deterministic project-state fingerprint");
@@ -129,6 +154,14 @@ begin
      "staging recursively copies local pin targets without using the original dependency tree");
    Assert (not Project_Tools.Files.Exists (Ada_Quality.Workspaces.Path (Stage) & "/obj"),
      "staging excludes generated build trees");
+   Assert
+     (Project_Tools.Files.File_Exists
+        (Ada_Quality.Workspaces.Path (Stage) & "/coverage/gcov-summary.txt") and then
+      Project_Tools.Files.File_Exists
+        (Ada_Quality.Workspaces.Path (Stage) & "/coverage/gcov-stability.txt") and then
+      not Project_Tools.Files.File_Exists
+        (Ada_Quality.Workspaces.Path (Stage) & "/coverage/generated.txt"),
+      "staging retains canonical coverage evidence without copying generated coverage trees");
    Assert (Project_Tools.Files.File_Exists
      (Ada_Quality.Workspaces.Path (Stage) & "/alire/alire.lock") and then
      not Project_Tools.Files.File_Exists

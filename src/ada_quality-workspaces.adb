@@ -4,28 +4,69 @@ with Ada.Characters.Latin_1;
 with Ada.Strings.Fixed;
 with Project_Tools.Files;
 with Project_Tools.Links;
+with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Workspaces is
-   --  AQ-WAIVER: SRC-03 target=prepare justification=workspace staging keeps one cleanup boundary
+   --  AQ-WAIVER: SRC-03 target=copy_tree justification=staging traversal keeps one audited copy-budget boundary
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
+   use type Ada.Directories.File_Size;
 
    package Path_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Ada.Strings.Unbounded.Unbounded_String);
 
    function Skipped (Name : String) return Boolean is
-     (Name in ".git" | ".alire" | "obj" | "bin" | "cov-obj" | "cov-bin" | "lib" | "gnatprove");
+     (Name in ".git" | ".alire" | "obj" | "bin" | "cov-obj" | "cov-bin" |
+        "lib" | "gnatprove");
 
    procedure Prepare (Item : in out Workspace; Source : String; Identity : String) is
       Canonical_Source : constant String := Ada.Directories.Full_Name (Source);
       Seen : Path_Vectors.Vector;
+      Copied_Files : Natural := 0;
+      Copied_Bytes : Ada.Directories.File_Size := 0;
 
-      procedure Copy_Tree (From, Into : String) is
+      procedure Account_File (Path : String) is
+         Size : constant Ada.Directories.File_Size := Ada.Directories.Size (Path);
+      begin
+         if Copied_Files = Ada_Quality.Resource_Limits.Maximum_Project_Files then
+            raise Workspace_Error with "workspace exceeds maximum file count";
+         elsif Size > Ada.Directories.File_Size
+           (Ada_Quality.Resource_Limits.Maximum_Staging_File_Bytes)
+         then
+            raise Workspace_Error with "workspace file exceeds maximum size: " & Path;
+         elsif Copied_Bytes > Ada.Directories.File_Size
+           (Ada_Quality.Resource_Limits.Maximum_Staging_Aggregate_Bytes) - Size
+         then
+            raise Workspace_Error with "workspace exceeds aggregate byte limit";
+         end if;
+         Copied_Files := Copied_Files + 1;
+         Copied_Bytes := Copied_Bytes + Size;
+      end Account_File;
+
+      procedure Copy_Coverage_Evidence (From, Into : String) is
+         procedure Copy_One (Name : String) is
+            Source_Path : constant String := Project_Tools.Files.Join (From, Name);
+         begin
+            if Project_Tools.Files.File_Exists (Source_Path) then
+               Account_File (Source_Path);
+               Ada.Directories.Create_Path (Into);
+               Ada.Directories.Copy_File
+                 (Source_Path, Project_Tools.Files.Join (Into, Name), Form => "mode=overwrite");
+            end if;
+         end Copy_One;
+      begin
+         Copy_One ("gcov-summary.txt");
+         Copy_One ("gcov-stability.txt");
+      end Copy_Coverage_Evidence;
+
+      procedure Copy_Tree (From, Into : String; Depth : Positive) is
          Search      : Ada.Directories.Search_Type;
          Search_Open : Boolean := False;
          Item        : Ada.Directories.Directory_Entry_Type;
       begin
-         if Project_Tools.Links.Is_Link (From) then
+         if Depth > Ada_Quality.Resource_Limits.Maximum_Tree_Depth then
+            raise Workspace_Error with "workspace exceeds maximum directory depth";
+         elsif Project_Tools.Links.Is_Link (From) then
             raise Workspace_Error with "symbolic link rejected while staging: " & From;
          end if;
          Ada.Directories.Create_Path (Into);
@@ -42,19 +83,25 @@ package body Ada_Quality.Workspaces is
                   null;
                elsif Project_Tools.Links.Is_Link (Source_Path) then
                   raise Workspace_Error with "symbolic link rejected while staging: " & Source_Path;
+               elsif Name = "coverage" and then
+                 Ada.Directories.Kind (Item) = Ada.Directories.Directory
+               then
+                  Copy_Coverage_Evidence (Source_Path, Target_Path);
                elsif Name = "alire" and then Ada.Directories.Kind (Item) = Ada.Directories.Directory then
                   declare
                      Lockfile : constant String := Source_Path & "/alire.lock";
                   begin
                      if Project_Tools.Files.File_Exists (Lockfile) then
+                        Account_File (Lockfile);
                         Ada.Directories.Create_Path (Target_Path);
                         Ada.Directories.Copy_File
                           (Lockfile, Target_Path & "/alire.lock", Form => "mode=overwrite");
                      end if;
                   end;
                elsif Ada.Directories.Kind (Item) = Ada.Directories.Directory then
-                  Copy_Tree (Source_Path, Target_Path);
+                  Copy_Tree (Source_Path, Target_Path, Depth + 1);
                elsif Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
+                  Account_File (Source_Path);
                   Ada.Directories.Copy_File (Source_Path, Target_Path, Form => "mode=overwrite");
                end if;
             end;
@@ -85,9 +132,12 @@ package body Ada_Quality.Workspaces is
            (Tail'Length < 2 or else Tail (Tail'Last - 1 .. Tail'Last) /= "..");
       end Safe_Relative_Pin;
 
-      procedure Copy_Crate (From, Into : String);
+      procedure Copy_Crate (From, Into : String; Pin_Depth : Positive);
 
-      procedure Copy_Pins (Canonical, Into, Manifest : String) is
+      procedure Copy_Pins
+        (Canonical, Into, Manifest : String;
+         Pin_Depth : Positive)
+      is
          Data : constant String := Project_Tools.Files.Read_Raw_File (Manifest);
          type Section_Kind is (Other_Section, Pins_Section, Solution_Link_Section);
          Section         : Section_Kind := Other_Section;
@@ -110,7 +160,10 @@ package body Ada_Quality.Workspaces is
                elsif Project_Tools.Links.Is_Link (Dependency) then
                   raise Workspace_Error with "local pin target is a symbolic link: " & Dependency;
                end if;
-               Copy_Crate (Dependency, Into & "/" & Relative);
+               if Pin_Depth = Ada_Quality.Resource_Limits.Maximum_Tree_Depth then
+                  raise Workspace_Error with "local pin graph exceeds maximum depth";
+               end if;
+               Copy_Crate (Dependency, Into & "/" & Relative, Pin_Depth + 1);
             end;
          end Copy_Pin;
 
@@ -388,22 +441,27 @@ package body Ada_Quality.Workspaces is
          end if;
       end Copy_Pins;
 
-      procedure Copy_Crate (From, Into : String) is
+      procedure Copy_Crate
+        (From, Into : String;
+         Pin_Depth : Positive)
+      is
          Canonical : constant String := Ada.Directories.Full_Name (From);
          Manifest  : constant String := Project_Tools.Files.Join (Canonical, "alire.toml");
          Lockfile  : constant String := Project_Tools.Files.Join (Canonical, "alire/alire.lock");
       begin
          if Seen_Before (Canonical) then
-            if not Project_Tools.Files.Exists (Into) then Copy_Tree (Canonical, Into); end if;
+            if not Project_Tools.Files.Exists (Into) then
+               Copy_Tree (Canonical, Into, 1);
+            end if;
             return;
          end if;
          Seen.Append (To_Unbounded_String (Canonical));
-         Copy_Tree (Canonical, Into);
+         Copy_Tree (Canonical, Into, 1);
          if Project_Tools.Files.File_Exists (Manifest) then
-            Copy_Pins (Canonical, Into, Manifest);
+            Copy_Pins (Canonical, Into, Manifest, Pin_Depth);
          end if;
          if Project_Tools.Files.File_Exists (Lockfile) then
-            Copy_Pins (Canonical, Into, Lockfile);
+            Copy_Pins (Canonical, Into, Lockfile, Pin_Depth);
          end if;
       end Copy_Crate;
    begin
@@ -413,7 +471,7 @@ package body Ada_Quality.Workspaces is
          Target : constant String := Ada_Quality.Temporary_Directories.Child
            (Item.Scratch, Ada.Directories.Simple_Name (Canonical_Source));
       begin
-         Copy_Crate (Canonical_Source, Target);
+         Copy_Crate (Canonical_Source, Target, 1);
          Item.Root := To_Unbounded_String (Target);
       end;
    exception

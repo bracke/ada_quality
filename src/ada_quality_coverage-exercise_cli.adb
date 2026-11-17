@@ -147,8 +147,17 @@ procedure Exercise_CLI is
              ("instrumented release checker", Root,
               Binary ("check_all"),
               Project_Tools.Processes.No_Arguments, Quiet => True);
+         Coverage_Is_Stale : constant Boolean :=
+           Project_Tools.Files.Value_Of (Summary_Path, "source_fingerprint") /=
+             To_String (Current_Source_Fingerprint);
       begin
-         if Release_Run.Status /= 0 then raise Program_Error with "instrumented release checker failed"; end if;
+         --  Exit 2 is reserved by the release checker for stale coverage. It
+         --  is expected only while this driver is generating the replacement.
+         if Release_Run.Status /= 0 and then
+           (Release_Run.Status /= 2 or else not Coverage_Is_Stale)
+         then
+            raise Program_Error with "instrumented release checker failed";
+         end if;
       end;
       Run_CLI
         ("project remove",

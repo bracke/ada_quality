@@ -6,10 +6,12 @@
 | Captured stdout + stderr | policy, maximum 16 MiB | streaming filter; excess discarded and marked truncated |
 | Complete-output byte count | signed 64-bit maximum | streaming accounting independent of retained output |
 | Internal process buffer | 4 KiB | GNAT Expect `Buffer_Size` |
-| Source-tree depth | 128 directories | traversal raises incomplete assessment error |
-| Project entries | 100,000 files or links | traversal raises incomplete assessment error |
-| Individual fingerprint input | 64 MiB | rejected before reading file content |
-| Aggregate fingerprint input | 1 GiB | cumulative pre-read accounting |
+| Source/staging-tree depth | 128 directories or local-pin levels | traversal or staging fails closed |
+| Project/staging entries | 100,000 files or links | traversal or staging fails closed |
+| Individual source input | 64 MiB | rejected before reading file content |
+| Aggregate source input | 1 GiB | cumulative pre-read accounting |
+| Individual staged dependency input | 256 MiB | rejected before copying file content |
+| Aggregate staged dependency input | 4 GiB | cumulative pre-copy accounting across the local-pin graph |
 | Reporting projects/runs | 10,000 / 100,000 | snapshot scan limits |
 | Reporting results/measurements | 2,000,000 each | independent snapshot scan limits |
 | Reporting findings/executions/events | 2,000,000 each | independent snapshot scan limits |

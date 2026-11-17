@@ -299,7 +299,7 @@ package body Ada_Quality.Storage is
       Input_Is_Link : constant Boolean := Project_Tools.Links.Is_Link (Path);
       Canonical : constant String := Ada.Directories.Full_Name (Path);
       Existing  : constant Project_Vectors.Vector := Projects (Item, True);
-      Id        : constant Positive := Next_Id (Item, Projects_Table);
+      Id        : Positive := 1;
       Manifest  : constant String := Canonical & "/alire.toml";
       Tx        : Database.Transactions.Transaction;
       Status    : Database.Status.Result;
@@ -326,6 +326,7 @@ package body Ada_Quality.Storage is
             raise Storage_Error with "project already registered:" & Positive'Image (P.Id);
          end if;
       end loop;
+      Id := Next_Id (Item, Projects_Table);
       Database.Transactions.Begin_Write (Item.DB, Tx);
       Status := Entity_Tables.Insert
         (Tx, Item.DB, Item.Schemas (Projects_Table),
@@ -388,8 +389,8 @@ package body Ada_Quality.Storage is
       Policy_Fingerprint : String) return Positive
    is
       Registered : constant Project_Info := Project (Item, Project_Id);
-      Run_Id   : constant Positive := Next_Id (Item, Assessments_Table);
-      Event_Id : constant Positive := Next_Id (Item, Events_Table);
+      Run_Id   : Positive := 1;
+      Event_Id : Positive := 1;
       Tx       : Database.Transactions.Transaction;
       Status   : Database.Status.Result;
    begin
@@ -400,6 +401,8 @@ package body Ada_Quality.Storage is
       elsif Registered.Removed or else not Registered.Enabled then
          raise Storage_Error with "assessment project must be active and enabled";
       end if;
+      Run_Id := Next_Id (Item, Assessments_Table);
+      Event_Id := Next_Id (Item, Events_Table);
       Database.Transactions.Begin_Write (Item.DB, Tx);
       Status := Entity_Tables.Insert
         (Tx, Item.DB, Item.Schemas (Assessments_Table),
@@ -684,7 +687,6 @@ package body Ada_Quality.Storage is
 
    procedure Recover (Item : in out Store; Count : out Natural) is
       Runs     : constant History_Vectors.Vector := History (Item);
-      Event_Id : Natural := Next_Id (Item, Events_Table);
       Tx     : Database.Transactions.Transaction;
       Row    : Entity;
       Status : Database.Status.Result;
@@ -692,6 +694,8 @@ package body Ada_Quality.Storage is
       Count := 0;
       for Run of Runs loop
          if To_String (Run.Status) = "running" then
+            declare
+               Event_Id : constant Positive := Next_Id (Item, Events_Table);
             begin
                Database.Transactions.Begin_Write (Item.DB, Tx);
                Status := Entity_Tables.Find (Tx, Item.DB, Item.Schemas (Assessments_Table), Run.Id, Row);
@@ -703,12 +707,11 @@ package body Ada_Quality.Storage is
                Require_OK (Status, "mark assessment interrupted");
                Status := Entity_Tables.Insert
                  (Tx, Item.DB, Item.Schemas (Events_Table),
-                  (Id => Positive (Event_Id), Parent_Id => Run.Id, Kind => WW ("recovered"),
+                  (Id => Event_Id, Parent_Id => Run.Id, Kind => WW ("recovered"),
                    State => WW ("interrupted"), Payload => WW ("abandoned running assessment"), Active => True));
                Require_OK (Status, "record assessment recovery");
                Trigger_Testing_Fault (Item, Assessment_Recovery_Commit);
                Require_OK (Database.Transactions.Commit (Tx), "commit recovery");
-               Event_Id := Event_Id + 1;
                Count := Count + 1;
             exception
                when others =>  --  AQ: audited exception boundary

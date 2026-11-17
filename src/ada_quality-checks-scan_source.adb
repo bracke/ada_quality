@@ -7,8 +7,27 @@ procedure Scan_Source
    Policy          : Ada_Quality.Policy.Quality_Policy;
    Result          : out Source_Analysis)
 is
+   Total_Bytes : Ada.Directories.File_Size := 0;
 begin
    Result := (Findings => <>, others => 0);
+   if Files.Length > Ada.Containers.Count_Type (Maximum_Project_Files) then
+      raise Constraint_Error with "source analysis exceeds maximum file count";
+   end if;
+   for Path_Value of Files loop
+      declare
+         Path : constant String := To_String (Path_Value);
+         Size : constant Ada.Directories.File_Size := Ada.Directories.Size (Path);
+      begin
+         if Size > Ada.Directories.File_Size (Maximum_File_Bytes) then
+            raise Constraint_Error with "source file exceeds maximum size: " & Path;
+         elsif Total_Bytes >
+           Ada.Directories.File_Size (Maximum_Fingerprint_Bytes) - Size
+         then
+            raise Constraint_Error with "source analysis exceeds aggregate byte limit";
+         end if;
+         Total_Bytes := Total_Bytes + Size;
+      end;
+   end loop;
    if Count_Generated then
       for Path_Value of All_Files (Root) loop
          declare

@@ -152,6 +152,28 @@ begin
       end;
       Assert (Escaped, "change-scoped source analysis accepted a path outside the project");
    end;
+   declare
+      Path : constant String := Root & "/src/oversized.adb";
+      File : Ada.Streams.Stream_IO.File_Type;
+      Byte : constant Ada.Streams.Stream_Element_Array (1 .. 1) := [1 => 0];
+      Rejected : Boolean := False;
+   begin
+      Ada.Streams.Stream_IO.Create (File, Ada.Streams.Stream_IO.Out_File, Path);
+      Ada.Streams.Stream_IO.Set_Index
+        (File,
+         Ada.Streams.Stream_IO.Count
+           (Ada_Quality.Resource_Limits.Maximum_File_Bytes + 1));
+      Ada.Streams.Stream_IO.Write (File, Byte);
+      Ada.Streams.Stream_IO.Close (File);
+      begin
+         Metrics := Ada_Quality.Checks.Analyze_Changed_Sources
+           (Root, [To_Unbounded_String ("src/oversized.adb")], Policy);
+      exception
+         when Constraint_Error => Rejected := True;
+      end;
+      Assert (Rejected, "change-scoped source analysis enforces the per-file byte limit");
+      Ada.Directories.Delete_File (Path);
+   end;
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
       "--  AQ-WAIVER: SRC-03 target=example justification=fixture reviewed this subprogram" &

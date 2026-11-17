@@ -35,11 +35,31 @@ begin
    Ada_Quality.Storage.Check (Store);
    Assert (Ada_Quality.Storage.Schema_Version (Store) = 3,
      "new databases use the current migrated schema version");
+   Raised := False;
+   begin
+      declare
+         Ignored : constant Positive :=
+           Ada_Quality.Storage.Add_Project (Store, Root & "/missing-project");
+         pragma Unreferenced (Ignored);
+      begin
+         null;
+      end;
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "invalid projects are rejected before identifier reservation");
    Pid := Ada_Quality.Storage.Add_Project (Store, Root);
    Assert (Pid = 1, "first persisted project ID is one");
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
    Assert (Ada_Quality.Storage.Project (Store, 1).Enabled, "project survives close and reopen");
+   Raised := False;
+   begin
+      Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "", "policy");
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "invalid assessment identities are rejected before identifier reservation");
    Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source", "policy");
    Assert (Run_Id = 1, "first assessment ID is one");
    Ada_Quality.Storage.Close (Store);
@@ -268,6 +288,25 @@ begin
    Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "duplicate interruption");
    Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
      "interrupting an already terminal assessment is idempotent");
+   declare
+      First_Abandoned : constant Positive := Ada_Quality.Storage.Start_Assessment
+        (Store, Pid, "multi-recovery-source-1", "policy");
+      Second_Abandoned : constant Positive := Ada_Quality.Storage.Start_Assessment
+        (Store, Pid, "multi-recovery-source-2", "policy");
+      Following : Positive;
+   begin
+      Ada_Quality.Storage.Recover (Store, Count);
+      Assert
+        (Count = 2 and then
+         Ada_Quality.Storage.Events (Store, First_Abandoned).Length = 2 and then
+         Ada_Quality.Storage.Events (Store, Second_Abandoned).Length = 2,
+         "recovery allocates a distinct event identity for every running assessment");
+      Following := Ada_Quality.Storage.Start_Assessment
+        (Store, Pid, "post-recovery-source", "policy");
+      Ada_Quality.Storage.Interrupt_Assessment (Store, Following, "post-recovery verification");
+      Assert (Ada_Quality.Storage.Events (Store, Following).Length = 2,
+        "event allocation remains synchronized after multi-run recovery");
+   end;
    Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
 end;

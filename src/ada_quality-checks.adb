@@ -17,6 +17,7 @@ with Regexp;
 with Ada_Quality.Evaluation;
 with Ada_Quality.Finding_Identity;
 with Ada_Quality.Manifests;
+with Ada_Quality.Resource_Limits;
 with Ada_Quality.Source_Safety;
 with Ada_Quality.Tools;
 with Ada_Quality.Workspaces;
@@ -62,10 +63,14 @@ package body Ada_Quality.Checks is
       To_Unbounded_String ("coverage"), To_Unbounded_String ("lib"),
       To_Unbounded_String ("gnatprove")];
 
-   Maximum_Tree_Depth       : constant := 128;
-   Maximum_Project_Files    : constant := 100_000;
-   Maximum_File_Bytes       : constant := 64 * 1_024 * 1_024;
-   Maximum_Fingerprint_Bytes : constant := 1_024 * 1_024 * 1_024;
+   Maximum_Tree_Depth : constant Positive :=
+     Ada_Quality.Resource_Limits.Maximum_Tree_Depth;
+   Maximum_Project_Files : constant Positive :=
+     Ada_Quality.Resource_Limits.Maximum_Project_Files;
+   Maximum_File_Bytes : constant Positive :=
+     Ada_Quality.Resource_Limits.Maximum_File_Bytes;
+   Maximum_Fingerprint_Bytes : constant Positive :=
+     Ada_Quality.Resource_Limits.Maximum_Aggregate_Bytes;
 
    function Contains (Text, Pattern : String) return Boolean is
      (Ada.Strings.Fixed.Index (Text, Pattern) > 0);
@@ -680,6 +685,9 @@ package body Ada_Quality.Checks is
       Canonical_Root : constant String := Ada.Directories.Full_Name (Root);
       Result         : Text_Vectors.Vector;
    begin
+      if Changed'Length > Maximum_Project_Files then
+         raise Constraint_Error with "changed source set exceeds maximum file count";
+      end if;
       for Value of Changed loop
          declare
             Relative_Path : constant String := To_String (Value);

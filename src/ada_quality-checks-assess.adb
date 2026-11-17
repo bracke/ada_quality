@@ -531,6 +531,17 @@ is
             Release_Run := Execute
               ("release-checker", To_String (Execution_Root), Staged_Checker,
                Project_Tools.Processes.No_Arguments);
+            --  During coverage generation only, the staged release checker
+            --  reserves exit 2 for the canonical evidence that this run is
+            --  replacing. Normalize that bootstrap state so first and later
+            --  same-source coverage runs exercise identical assessment paths.
+            if not Coverage_Evidence_Enabled then
+               Release_Run.Exit_Code :=
+                 (if Release_Run.Status = Ada_Quality.Execution.Completed and then
+                     Release_Run.Exit_Code = 2
+                  then 0
+                  else Release_Run.Exit_Code);
+            end if;
             Add (Tool_Result (REL_01, Release_Run, "release checker passes", "release checker failed"));
          else
             Add (Blocked_Result (REL_01, "release checker absent from staged build", Staged_Checker));

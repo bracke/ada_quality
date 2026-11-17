@@ -32,7 +32,7 @@ separate (Ada_Quality.Checks)
                elsif In_Artifact and then Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
                   Result.Append (To_Unbounded_String (Path));
                end if;
-               if Result.Length > Maximum_Project_Files then
+               if Result.Length > Ada.Containers.Count_Type (Maximum_Project_Files) then
                   raise Constraint_Error with "project artifact tree exceeds maximum file count";
                end if;
             end;

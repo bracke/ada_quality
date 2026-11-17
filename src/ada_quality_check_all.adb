@@ -1,16 +1,19 @@
 with Ada.Command_Line;
 with Ada.Containers;
 with Ada.Directories;
+with Ada.Exceptions;
 with Ada.Text_IO;
 with GNAT.OS_Lib;
 with Project_Tools.Files;
 with Project_Tools.Release_Checks;
+with Ada_Quality.Checks;
 with Ada_Quality.Indicators;
 
 procedure Ada_Quality_Check_All is
    --  Release-checker entry point for required files, registry cardinality, and AUnit execution.
    use type Ada.Containers.Count_Type;
    type String_Access is access constant String;
+   Coverage_Stale : exception;
    type Document_List is array (Positive range <>) of String_Access;
    Required_Phase_Documents : constant Document_List :=
      [new String'("dependency-matrix.md"), new String'("indicator-implementation-matrix.md"),
@@ -76,6 +79,7 @@ begin
    Check.Require_File ("docs/release-readiness.md");
    Check.Require_File ("docs/phase-8-verification.md");
    Check.Require_File ("coverage/gcov-summary.txt");
+   Check.Require_File ("coverage/gcov-stability.txt");
    Check.Require_File ("tests/alire.toml");
    Check.Require_Directory ("src");
    Check.Require_Directory ("tests/src");
@@ -83,6 +87,22 @@ begin
    if Ada_Quality.Indicators.Count /= 33 then
       Project_Tools.Release_Checks.Fail ("indicator registry must contain exactly 33 entries");
    end if;
+   declare
+      Coverage_Path : constant String := Root & "/coverage/gcov-summary.txt";
+      Recorded : constant String :=
+        Project_Tools.Files.Value_Of (Coverage_Path, "source_fingerprint");
+      Current : constant String := Ada_Quality.Checks.Source_Fingerprint (Root);
+   begin
+      if Project_Tools.Files.Read_Raw_File (Coverage_Path) /=
+        Project_Tools.Files.Read_Raw_File (Root & "/coverage/gcov-stability.txt")
+      then
+         Project_Tools.Release_Checks.Fail
+           ("coverage summary and stability evidence do not match");
+      elsif Recorded'Length = 0 or else Recorded /= Current then
+         raise Coverage_Stale with
+           "coverage evidence is stale: expected " & Current & " recorded " & Recorded;
+      end if;
+   end;
    declare
       No_Arguments : GNAT.OS_Lib.Argument_List (1 .. 0);
    begin
@@ -92,6 +112,10 @@ begin
    end;
    Ada.Text_IO.Put_Line ("ada_quality release structure: OK");
 exception
+   when Error : Coverage_Stale =>
+      Ada.Text_IO.Put_Line
+        (Ada.Text_IO.Standard_Error, Ada.Exceptions.Exception_Message (Error));
+      Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Exit_Status (2));
    when Program_Error =>
       Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
 end Ada_Quality_Check_All;
