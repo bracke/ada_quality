@@ -629,8 +629,11 @@ package body Ada_Quality.Reporting is
      (Item : Session; Project_Id : Positive) return Ada_Quality.History.Comparison_Selection is
      (Ada_Quality.History.Select_Comparison (History_Items (Item, Project_Id)));
 
-   function Compare_Project (Item : Session; Project_Id : Positive) return Project_Comparison is
-      Runs : constant Ada_Quality.History_Data.History_Vectors.Vector := History_Items (Item, Project_Id);
+   --  Select and compare the last assessment of Runs, an ordered project history.
+   function Compare_Runs
+     (Item : Session; Project_Id : Positive; Runs : Ada_Quality.History_Data.History_Vectors.Vector)
+      return Project_Comparison
+   is
       Selection : constant Ada_Quality.History.Comparison_Selection :=
         Ada_Quality.History.Select_Comparison (Runs);
       Result : Project_Comparison :=
@@ -678,6 +681,22 @@ package body Ada_Quality.Reporting is
          end;
       end;
       return Result;
+   end Compare_Runs;
+
+   function Compare_Project (Item : Session; Project_Id : Positive) return Project_Comparison is
+     (Compare_Runs (Item, Project_Id, History_Items (Item, Project_Id)));
+
+   function Compare_Project
+     (Item : Session; Project_Id : Positive; Current_Id : Positive) return Project_Comparison
+   is
+      Through : Ada_Quality.History_Data.History_Vectors.Vector;
+   begin
+      for Run of History_Items (Item, Project_Id) loop
+         if Run.Id <= Current_Id then
+            Through.Append (Run);
+         end if;
+      end loop;
+      return Compare_Runs (Item, Project_Id, Through);
    end Compare_Project;
 
    function Read_History_Evidence (Item : Session; Run_Id : Positive) return History_Evidence is

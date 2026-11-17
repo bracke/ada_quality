@@ -243,6 +243,15 @@ package Ada_Quality.Reporting is
    --  @param Project_Id Project whose latest comparable assessments are selected.
    --  @return Selection status and deterministically ordered regressions.
 
+   function Compare_Project
+     (Item : Session; Project_Id : Positive; Current_Id : Positive) return Project_Comparison;
+   --  As Compare_Project, for the project history through Current_Id: the comparison a report makes for a chosen
+   --  current assessment, such as the latest completed one while a newer run has not finished.
+   --  @param Item Open session.
+   --  @param Project_Id Project.
+   --  @param Current_Id Assessment that plays the current role; later runs are ignored.
+   --  @return Selection status and deterministically ordered regressions.
+
    function Select_Project_Comparison
      (Item : Session; Project_Id : Positive) return Ada_Quality.History.Comparison_Selection;
    --  Select the latest comparable assessments without deriving regressions.

@@ -53,6 +53,20 @@ package body Ada_Quality.History is
       Toolchain_Is_Available (Baseline.Toolchain_Fingerprint) and then
       Baseline.Toolchain_Fingerprint = Current.Toolchain_Fingerprint);
 
+   function Incompatibility_Of
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Incompatibility is
+     (if Baseline.Project_Id /= Current.Project_Id then Other_Project
+      elsif To_String (Baseline.Status) /= "completed" or else To_String (Current.Status) /= "completed"
+      then Not_Completed
+      elsif Length (Baseline.Source_Fingerprint) = 0 or else Length (Current.Source_Fingerprint) = 0
+      then Missing_Source_Fingerprint
+      elsif Length (Baseline.Policy_Fingerprint) = 0 or else Baseline.Policy_Fingerprint /= Current.Policy_Fingerprint
+      then Policy_Changed
+      elsif not Toolchain_Is_Available (Baseline.Toolchain_Fingerprint) or else
+        Baseline.Toolchain_Fingerprint /= Current.Toolchain_Fingerprint
+      then Toolchain_Changed
+      else No_Incompatibility);
+
    function Policy_Comparable
      (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean is
      (Baseline.Project_Id = Current.Project_Id and then
@@ -549,4 +563,7 @@ package body Ada_Quality.History is
 
    function Image (Value : Comparison_Status) return String is
      (Normalized (Comparison_Status'Image (Value)));
+
+   function Image (Value : Incompatibility) return String is
+     (Normalized (Incompatibility'Image (Value)));
 end Ada_Quality.History;

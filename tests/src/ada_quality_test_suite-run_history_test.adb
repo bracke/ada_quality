@@ -72,6 +72,27 @@ begin
      "completed assessments with changed policy and stable toolchain are comparable");
    Assert (not Ada_Quality.History.Policy_Comparable (Interrupted, Policy_Changed),
      "an interrupted assessment cannot become a clean policy comparison");
+   declare
+      use type Ada_Quality.History.Incompatibility;
+      Unidentified : Ada_Quality.Storage.History_Item := Baseline;
+      Retooled     : Ada_Quality.Storage.History_Item := Current;
+   begin
+      Unidentified.Source_Fingerprint := Null_Unbounded_String;
+      Retooled.Toolchain_Fingerprint := To_Unbounded_String ("new-toolchain");
+      Assert (Ada_Quality.History.Compatible (Baseline, Current), "the reference assessments are compatible");
+      Assert (Ada_Quality.History.Incompatibility_Of (Baseline, Current) = Ada_Quality.History.No_Incompatibility,
+        "compatible assessments have no incompatibility");
+      Assert (Ada_Quality.History.Incompatibility_Of (Interrupted, Policy_Changed) = Ada_Quality.History.Not_Completed,
+        "an unfinished assessment is named");
+      Assert (Ada_Quality.History.Incompatibility_Of (Unidentified, Current) =
+        Ada_Quality.History.Missing_Source_Fingerprint, "a missing source fingerprint is named");
+      Assert (Ada_Quality.History.Incompatibility_Of (Baseline, Policy_Changed) = Ada_Quality.History.Policy_Changed,
+        "a changed policy is named");
+      Assert (Ada_Quality.History.Incompatibility_Of (Baseline, Retooled) = Ada_Quality.History.Toolchain_Changed,
+        "a changed toolchain is named");
+      Assert (Ada_Quality.History.Image (Ada_Quality.History.Missing_Source_Fingerprint) =
+        "missing-source-fingerprint", "incompatibility reasons have stable spellings");
+   end;
    Old_Results.Append
      (Ada_Quality.Storage.Detail_Info'(Id => 1, Run_Id => 1, Kind => To_Unbounded_String ("TST-03"),
        State => To_Unbounded_String ("succeeded/pass"), Summary => To_Unbounded_String ("96%")));

@@ -83,6 +83,24 @@ package Ada_Quality.History is
    --  @param Current Later assessment.
    --  @return True when project, policy, and toolchain identities are compatible.
 
+   type Incompatibility is
+     (No_Incompatibility, Other_Project, Not_Completed, Missing_Source_Fingerprint, Policy_Changed,
+      Toolchain_Changed);
+   --  The first reason Compatible rejects a baseline, in the order Compatible tests its conditions.
+   --  @enum No_Incompatibility The assessments are compatible.
+   --  @enum Other_Project The assessments belong to different projects.
+   --  @enum Not_Completed One of the assessments did not complete.
+   --  @enum Missing_Source_Fingerprint A source fingerprint is absent.
+   --  @enum Policy_Changed The baseline policy fingerprint is absent or differs.
+   --  @enum Toolchain_Changed The baseline toolchain fingerprint is unavailable or differs.
+
+   function Incompatibility_Of
+     (Baseline, Current : Ada_Quality.History_Data.History_Item) return Incompatibility;
+   --  Explain Compatible: the result is No_Incompatibility exactly when Compatible holds.
+   --  @param Baseline Earlier assessment.
+   --  @param Current Later assessment.
+   --  @return First failing condition, or No_Incompatibility.
+
    function Policy_Comparable
      (Baseline, Current : Ada_Quality.History_Data.History_Item) return Boolean;
    --  Test whether two completed assessments may be compared across a policy change.
@@ -190,6 +208,9 @@ package Ada_Quality.History is
 
    function Image (Value : Comparison_Status) return String;
    --  Return the stable external spelling of a comparison-selection state.
+
+   function Image (Value : Incompatibility) return String;
+   --  Return the stable external spelling of an incompatibility reason.
 private
    package Finding_Key_Sets is new Ada.Containers.Ordered_Sets
      (Element_Type => Unbounded_String,

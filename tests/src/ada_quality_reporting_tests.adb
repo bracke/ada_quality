@@ -682,6 +682,21 @@ package body Ada_Quality_Reporting_Tests is
       Reporting.Close (Session);
    end Limit;
 
+   --  A comparison for a chosen current assessment ignores later runs: the first run has no baseline, and the
+   --  second gives the latest comparison.
+   procedure Chosen_Current
+     (Session : Reporting.Session; Project, First, Second : Positive; Latest : Reporting.Project_Comparison)
+   is
+      use type Ada_Quality.History.Comparison_Status;
+      Earlier : constant Reporting.Project_Comparison := Reporting.Compare_Project (Session, Project, First);
+      Chosen  : constant Reporting.Project_Comparison := Reporting.Compare_Project (Session, Project, Second);
+   begin
+      Assert (Earlier.Selection.Status = Ada_Quality.History.No_Baseline, "an earlier current run has no baseline");
+      Assert (Earlier.Changes.Is_Empty, "and no regressions");
+      Assert (Chosen.Selection = Latest.Selection, "the latest chosen run selects the latest baseline");
+      Assert (Chosen.Changes.Length = Latest.Changes.Length, "and finds the same regressions");
+   end Chosen_Current;
+
    procedure History_Adapter is
       Directory : constant String := Fixture ("history");
       Path      : constant String := Directory & "/quality.db";
@@ -730,6 +745,8 @@ package body Ada_Quality_Reporting_Tests is
             Comparison.Changes.Length = 1 and then
             Comparison.Changes (1).Indicator = DOC_01,
             "selection-only and full reporting comparisons share one baseline decision");
+         Chosen_Current (Session, Project, First, Second, Comparison);
+
          Assert (Trend.Length = 2 and then Trend (1).Value = 9_123, "history adapters feed metric trends");
       end;
       Assert (Ada_Quality.Indicators.Measurement_Unit (TST_03) = "basis_points", "coverage unit is explicit");
