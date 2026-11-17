@@ -248,6 +248,13 @@ begin
         (Ada_Quality.Checks.Source_Fingerprint (First_Tree) =
            To_String (First_Fingerprint),
          "different generated Alire resolutions retain one source identity");
+      Ada.Directories.Create_Path (First_Tree & "/alire_install/bin");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/alire_install/bin/alr", "runner-local Alire executable");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) =
+           To_String (First_Fingerprint),
+         "runner-local Alire installations do not change portable source identity");
       Project_Tools.Files.Write_Text_File
         (First_Tree & "/alire.toml", "name = ""fingerprint_fixture""");
       Assert

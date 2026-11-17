@@ -16,8 +16,8 @@ package body Ada_Quality.Workspaces is
      (Index_Type => Positive, Element_Type => Ada.Strings.Unbounded.Unbounded_String);
 
    function Skipped (Name : String) return Boolean is
-     (Name in ".git" | ".alire" | "obj" | "bin" | "cov-obj" | "cov-bin" |
-        "lib" | "gnatprove");
+     (Name in ".git" | ".alire" | "alire_install" | "obj" | "bin" |
+        "cov-obj" | "cov-bin" | "lib" | "gnatprove");
 
    procedure Prepare (Item : in out Workspace; Source : String; Identity : String) is
       Canonical_Source : constant String := Ada.Directories.Full_Name (Source);

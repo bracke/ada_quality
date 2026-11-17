@@ -58,7 +58,8 @@ package body Ada_Quality.Checks is
 
    Skip_Names : constant Project_Tools.Files.Name_List :=
      [To_Unbounded_String (".git"), To_Unbounded_String (".alire"),
-      To_Unbounded_String ("obj"), To_Unbounded_String ("bin"),
+      To_Unbounded_String ("alire_install"), To_Unbounded_String ("obj"),
+      To_Unbounded_String ("bin"),
       To_Unbounded_String ("cov-obj"), To_Unbounded_String ("cov-bin"),
       To_Unbounded_String ("coverage"), To_Unbounded_String ("lib"),
       To_Unbounded_String ("gnatprove")];

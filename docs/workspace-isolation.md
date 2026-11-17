@@ -8,7 +8,8 @@ ordinary strings, multiline strings, and unrelated `path` keys cannot create dep
 quoted or bare `path` keys, single- and double-quoted values, and TOML Unicode escapes are supported. Relative
 dependency targets are recursively copied into the
 same container, while escaping, absolute, missing, and symbolic-link targets are rejected. Cleanup runs on success
-and exceptions. One shared budget limits directory and local-pin depth, copied files, individual file size, and
+and exceptions. Generated `alire_install` tool directories are excluded with the other build trees. One shared
+budget limits directory and local-pin depth, copied files, individual file size, and
 aggregate bytes across the entire staged dependency graph. Generated coverage and build trees are not copied; only
 the canonical coverage summary and stability evidence are retained for the staged release checker. Original Git
 status, when required by policy, and the source fingerprint are checked before and after.
