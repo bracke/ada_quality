@@ -27,7 +27,10 @@ procedure Ada_Quality_Coverage is
    Root : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
    Tests_Dir : constant String := Project_Tools.Files.Join (Root, "tests");
-   Output_Dir : constant String := Project_Tools.Files.Join (Root, "coverage");
+   Output_Dir : constant String :=
+     (if Ada.Environment_Variables.Exists ("ADA_QUALITY_INTERNAL_COVERAGE_OUTPUT_DIR")
+      then Ada.Environment_Variables.Value ("ADA_QUALITY_INTERNAL_COVERAGE_OUTPUT_DIR")
+      else Project_Tools.Files.Join (Root, "coverage"));
    Summary_Path : constant String := Project_Tools.Files.Join (Output_Dir, "gcov-summary.txt");
    Stability_Path : constant String := Project_Tools.Files.Join (Output_Dir, "gcov-stability.txt");
    Alr : constant String := Project_Tools.Processes.Locate_Command ("alr");

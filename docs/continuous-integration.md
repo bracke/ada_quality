@@ -17,9 +17,12 @@ The required gates are:
 
 1. `alr -n build --validation -- -f`
 2. `alr -n test`
-3. `alr -n exec -- ./bin/coverage`
+3. `ADA_QUALITY_INTERNAL_COVERAGE_OUTPUT_DIR=$RUNNER_TEMP/ada-quality-coverage alr -n exec -- ./bin/coverage`
 4. `alr -n exec -- ./bin/check_all`
 5. `git diff --exit-code`
 
-The final check proves that generated coverage and stability evidence already matches the reviewed source and selected
-toolchain. The job has a 45-minute timeout, and a newer run on the same branch cancels an older in-progress run.
+CI writes its independently measured coverage evidence to a runner-local directory. This enforces the complete
+coverage threshold without replacing the reviewed artifacts with environment-specific branch counts. The release
+checker still proves that the tracked artifact matches the portable source identity, and the final check rejects
+tracked mutations. The job has a 45-minute timeout, and a newer run on the same branch cancels an older in-progress
+run.

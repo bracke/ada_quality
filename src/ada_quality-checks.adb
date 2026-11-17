@@ -437,7 +437,7 @@ package body Ada_Quality.Checks is
          Contains (Name, "_config.h"))
       then
          return True;
-      elsif Contains (Rel, "/alire/") and then Name /= "alire.lock" then
+      elsif Contains (Rel, "/alire/") then
          return True;
       else
          return False;

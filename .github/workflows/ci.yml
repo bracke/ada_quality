@@ -135,6 +135,10 @@ jobs:
 
       - name: Complete coverage gate
         working-directory: ada_quality
+        env:
+          # Measure the checkout independently without replacing reviewed
+          # evidence with runner-specific execution counts.
+          ADA_QUALITY_INTERNAL_COVERAGE_OUTPUT_DIR: ${{ runner.temp }}/ada-quality-coverage
         run: alr -n exec -- ./bin/coverage
 
       - name: Release structure gate

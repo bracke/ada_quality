@@ -219,6 +219,7 @@ begin
    declare
       First_Tree  : constant String := Fixture_Root & "/fingerprint_framing_a";
       Second_Tree : constant String := Fixture_Root & "/fingerprint_framing_b";
+      First_Fingerprint : Ada.Strings.Unbounded.Unbounded_String;
    begin
       Project_Tools.Files.Delete_Tree (First_Tree);
       Project_Tools.Files.Delete_Tree (Second_Tree);
@@ -232,6 +233,27 @@ begin
         (Ada_Quality.Checks.Source_Fingerprint (First_Tree) /=
            Ada_Quality.Checks.Source_Fingerprint (Second_Tree),
          "length-framed source records distinguish formerly ambiguous trees");
+      First_Fingerprint := To_Unbounded_String
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree));
+      Ada.Directories.Create_Path (First_Tree & "/alire");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/alire/alire.lock", "machine-local resolution A");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) =
+           To_String (First_Fingerprint),
+         "generated Alire lock state does not change portable source identity");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/alire/alire.lock", "machine-local resolution B");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) =
+           To_String (First_Fingerprint),
+         "different generated Alire resolutions retain one source identity");
+      Project_Tools.Files.Write_Text_File
+        (First_Tree & "/alire.toml", "name = ""fingerprint_fixture""");
+      Assert
+        (Ada_Quality.Checks.Source_Fingerprint (First_Tree) /=
+           To_String (First_Fingerprint),
+         "the tracked release manifest remains part of source identity");
       Project_Tools.Files.Delete_Tree (First_Tree);
       Project_Tools.Files.Delete_Tree (Second_Tree);
    end;

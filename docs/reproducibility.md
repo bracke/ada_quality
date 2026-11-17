@@ -1,7 +1,9 @@
 # Reproducibility
 
 Stable project IDs are processed in sorted order and one at a time. Source inventories and database queries are
-sorted. Policy and toolchain fingerprints define comparison compatibility. Tool output is bounded and digested.
+sorted. Generated Alire workspace state, including ignored `alire/alire.lock` files, is excluded from source
+identity; the tracked release manifest remains included and DEP-03 measures resolved-dependency consistency
+independently. Policy and toolchain fingerprints define comparison compatibility. Tool output is bounded and digested.
 TST-04 snapshots the staged project after the test build, restores that same baseline before the second execution,
 and requires both executions to have equal normalized output and equal project-state fingerprints. Only
 lines whose normalized text begins with an elapsed-time, duration, timestamp, or `time:` presentation label are
