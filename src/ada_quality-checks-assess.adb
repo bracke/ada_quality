@@ -15,7 +15,8 @@ is
    GPR           : constant String :=
      Project_Tools.Files.Find_File (Root, Ada.Directories.Simple_Name (Root) & ".gpr");
    Any_GPR       : constant Project_Tools.Files.Path_List :=
-     Project_Tools.Files.List_Tree (Root, "*.gpr", Skip_Names);
+     Project_Tools.Files.List_Tree
+       (Root, "*.gpr", Ada_Quality.Project_Inventory.Excluded_Source_Directories);
    function Selected_Project_Files return Text_Vectors.Vector is
       Result : Text_Vectors.Vector := Manifest_Project_Files (Root, Manifest_Data);
       Name   : constant Project_Tools.TOML.String_Parse_Result :=

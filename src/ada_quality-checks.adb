@@ -17,6 +17,7 @@ with Regexp;
 with Ada_Quality.Evaluation;
 with Ada_Quality.Finding_Identity;
 with Ada_Quality.Manifests;
+with Ada_Quality.Project_Inventory;
 with Ada_Quality.Resource_Limits;
 with Ada_Quality.Source_Safety;
 with Ada_Quality.Tools;
@@ -55,20 +56,6 @@ package body Ada_Quality.Checks is
    end record;
    package Dependency_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Dependency_Entry);
-
-   Skip_Names : constant Project_Tools.Files.Name_List :=
-     [To_Unbounded_String (".git"), To_Unbounded_String (".alire"),
-      To_Unbounded_String ("alire_install"), To_Unbounded_String ("obj"),
-      To_Unbounded_String ("bin"),
-      To_Unbounded_String ("cov-obj"), To_Unbounded_String ("cov-bin"),
-      To_Unbounded_String ("coverage"), To_Unbounded_String ("lib"),
-      To_Unbounded_String ("gnatprove")];
-
-   Generated_Fingerprint_Suffixes : constant Project_Tools.Files.Name_List :=
-     [To_Unbounded_String (".ali"), To_Unbounded_String (".o"),
-      To_Unbounded_String (".bexch"), To_Unbounded_String (".gcda"),
-      To_Unbounded_String (".gcno"), To_Unbounded_String (".cswi"),
-      To_Unbounded_String (".stdout"), To_Unbounded_String (".stderr")];
 
    Maximum_Tree_Depth : constant Positive :=
      Ada_Quality.Resource_Limits.Maximum_Tree_Depth;
@@ -328,26 +315,11 @@ package body Ada_Quality.Checks is
    end Dedicated_Proof_Projects;
 
    function Is_Skipped (Name : String) return Boolean is
-   begin
-      for Item of Skip_Names loop
-         if To_String (Item) = Name then return True; end if;
-      end loop;
-      return False;
-   end Is_Skipped;
+     (Ada_Quality.Project_Inventory.Is_Excluded_Source_Directory (Name));
 
    function Has_Suffix (Text, Suffix : String) return Boolean is
      (Text'Length >= Suffix'Length and then
       Text (Text'Last - Suffix'Length + 1 .. Text'Last) = Suffix);
-
-   function Has_Generated_Fingerprint_Suffix (Name : String) return Boolean is
-   begin
-      for Suffix of Generated_Fingerprint_Suffixes loop
-         if Has_Suffix (Name, To_String (Suffix)) then
-            return True;
-         end if;
-      end loop;
-      return False;
-   end Has_Generated_Fingerprint_Suffix;
 
    function Code_Without_Comments_And_Strings (Path : String) return String is
       Data       : constant String := Project_Tools.Files.Read_Raw_File (Path);
@@ -444,24 +416,7 @@ package body Ada_Quality.Checks is
    end Source_Files;
 
    function Is_Generated_Fingerprint_File (Root, Path : String) return Boolean is
-      Name : constant String := Ada.Directories.Simple_Name (Path);
-      Rel  : constant String := "/" & Relative (Root, Path);
-   begin
-      if Name in "alr_test_local.log" | "alr_test_local.xml" | "settings.toml" | "build_hash_inputs" or else
-        Starts_With (Name, ".ada-quality.db") or else Has_Generated_Fingerprint_Suffix (Name)
-      then
-         return True;
-      elsif Contains (Rel, "/config/") and then
-        (Contains (Name, "_config.ads") or else Contains (Name, "_config.gpr") or else
-         Contains (Name, "_config.h"))
-      then
-         return True;
-      elsif Contains (Rel, "/alire/") then
-         return True;
-      else
-         return False;
-      end if;
-   end Is_Generated_Fingerprint_File;
+     (Ada_Quality.Project_Inventory.Is_Generated_File (Root, Path));
 
    function Declares_SPARK (Root : String) return Boolean is
    begin

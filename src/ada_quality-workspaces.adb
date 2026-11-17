@@ -4,6 +4,7 @@ with Ada.Characters.Latin_1;
 with Ada.Strings.Fixed;
 with Project_Tools.Files;
 with Project_Tools.Links;
+with Ada_Quality.Project_Inventory;
 with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Workspaces is
@@ -14,10 +15,6 @@ package body Ada_Quality.Workspaces is
 
    package Path_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Ada.Strings.Unbounded.Unbounded_String);
-
-   function Skipped (Name : String) return Boolean is
-     (Name in ".git" | ".alire" | "alire_install" | "obj" | "bin" |
-        "cov-obj" | "cov-bin" | "lib" | "gnatprove");
 
    procedure Prepare (Item : in out Workspace; Source : String; Identity : String) is
       Canonical_Source : constant String := Ada.Directories.Full_Name (Source);
@@ -55,8 +52,9 @@ package body Ada_Quality.Workspaces is
             end if;
          end Copy_One;
       begin
-         Copy_One ("gcov-summary.txt");
-         Copy_One ("gcov-stability.txt");
+         for Name of Ada_Quality.Project_Inventory.Coverage_Evidence_Files loop
+            Copy_One (To_String (Name));
+         end loop;
       end Copy_Coverage_Evidence;
 
       procedure Copy_Tree (From, Into : String; Depth : Positive) is
@@ -79,7 +77,9 @@ package body Ada_Quality.Workspaces is
                Source_Path : constant String := From & "/" & Name;
                Target_Path : constant String := Into & "/" & Name;
             begin
-               if Name = "." or else Name = ".." or else Skipped (Name) then
+               if Name = "." or else Name = ".." or else
+                 Ada_Quality.Project_Inventory.Is_Excluded_Staging_Directory (Name)
+               then
                   null;
                elsif Project_Tools.Links.Is_Link (Source_Path) then
                   raise Workspace_Error with "symbolic link rejected while staging: " & Source_Path;
@@ -100,7 +100,9 @@ package body Ada_Quality.Workspaces is
                   end;
                elsif Ada.Directories.Kind (Item) = Ada.Directories.Directory then
                   Copy_Tree (Source_Path, Target_Path, Depth + 1);
-               elsif Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File then
+               elsif Ada.Directories.Kind (Item) = Ada.Directories.Ordinary_File and then
+                 not Ada_Quality.Project_Inventory.Is_Generated_File (Canonical_Source, Source_Path)
+               then
                   Account_File (Source_Path);
                   Ada.Directories.Copy_File (Source_Path, Target_Path, Form => "mode=overwrite");
                end if;

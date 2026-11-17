@@ -2,6 +2,7 @@ with Ada.Characters.Handling;
 with Ada.Directories;
 with Ada.Strings.Fixed;
 with Project_Tools.Files;
+with Ada_Quality.Project_Inventory;
 
 package body Ada_Quality.Coverage is
    function Decimal_Digits (Text : String) return Boolean is
@@ -183,7 +184,7 @@ package body Ada_Quality.Coverage is
             declare
                Parent_Stem : constant String := Subunit_Parent_Stem (Path);
             begin
-               if Parent_Stem = "ada_quality_coverage" then
+               if Ada_Quality.Project_Inventory.Is_Coverage_Driver_Stem (Parent_Stem) then
                   return;
                elsif Parent_Stem'Length > 0 then
                   Include_Subunit (Parent_Stem, Path);
@@ -191,7 +192,7 @@ package body Ada_Quality.Coverage is
                end if;
             end;
          end if;
-         if Stem = "ada_quality_coverage" then
+         if Ada_Quality.Project_Inventory.Is_Coverage_Driver_Stem (Stem) then
             return;
          end if;
          for Index in Result.First_Index .. Result.Last_Index loop
@@ -226,6 +227,13 @@ package body Ada_Quality.Coverage is
          end if;
       end Include;
 
+      procedure Include_Source (Path : String; Is_Body : Boolean) is
+      begin
+         if not Ada_Quality.Project_Inventory.Is_Generated_File (Root, Path) then
+            Include (Path, Is_Body);
+         end if;
+      end Include_Source;
+
       function Earlier (Left, Right : Production_Unit) return Boolean is
         (Left.Stem < Right.Stem);
 
@@ -234,10 +242,10 @@ package body Ada_Quality.Coverage is
    begin
       if not Project_Tools.Files.Directory_Exists (Source_Root) then return Result; end if;
       for Path of Project_Tools.Files.List_Tree (Source_Root, "*.adb") loop
-         Include (To_String (Path), Is_Body => True);
+         Include_Source (To_String (Path), Is_Body => True);
       end loop;
       for Path of Project_Tools.Files.List_Tree (Source_Root, "*.ads") loop
-         Include (To_String (Path), Is_Body => False);
+         Include_Source (To_String (Path), Is_Body => False);
       end loop;
       Sorting.Sort (Result);
       return Result;

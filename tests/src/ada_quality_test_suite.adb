@@ -25,6 +25,7 @@ with Ada_Quality.History;
 with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;
+with Ada_Quality.Project_Inventory;
 with Ada_Quality.Presentation;
 with Ada_Quality.Reporting;
 with Ada_Quality.Resource_Limits;

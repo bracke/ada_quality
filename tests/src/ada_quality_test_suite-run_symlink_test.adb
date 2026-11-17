@@ -143,6 +143,9 @@ begin
    Project_Tools.Files.Write_Text_File (Root & "/coverage/generated.txt", "generated");
    Project_Tools.Files.Write_Text_File (Root & "/coverage/gcov-summary.txt", "summary");
    Project_Tools.Files.Write_Text_File (Root & "/coverage/gcov-stability.txt", "stability");
+   Project_Tools.Files.Write_Text_File (Root & "/loose.ali", "compiler artifact");
+   Project_Tools.Files.Write_Text_File (Root & "/test.stdout", "test output");
+   Project_Tools.Files.Write_Text_File (Root & "/.ada-quality.db", "assessment database");
    Assert
      (State_Before /= To_Unbounded_String (Ada_Quality.Checks.Project_State_Fingerprint (Root)),
       "generated build artifacts participate in the deterministic project-state fingerprint");
@@ -154,6 +157,11 @@ begin
      "staging recursively copies local pin targets without using the original dependency tree");
    Assert (not Project_Tools.Files.Exists (Ada_Quality.Workspaces.Path (Stage) & "/obj"),
      "staging excludes generated build trees");
+   Assert
+     (not Project_Tools.Files.File_Exists (Ada_Quality.Workspaces.Path (Stage) & "/loose.ali") and then
+      not Project_Tools.Files.File_Exists (Ada_Quality.Workspaces.Path (Stage) & "/test.stdout") and then
+      not Project_Tools.Files.File_Exists (Ada_Quality.Workspaces.Path (Stage) & "/.ada-quality.db"),
+      "staging and source identity share generated-file exclusions");
    Assert
      (Project_Tools.Files.File_Exists
         (Ada_Quality.Workspaces.Path (Stage) & "/coverage/gcov-summary.txt") and then

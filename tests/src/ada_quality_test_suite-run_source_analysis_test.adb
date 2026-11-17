@@ -276,6 +276,38 @@ begin
       Project_Tools.Files.Delete_Tree (First_Tree);
       Project_Tools.Files.Delete_Tree (Second_Tree);
    end;
+   declare
+      Project_Root : constant String := Project_Tools.Files.Find_Root_Upward
+        (Ada.Directories.Current_Directory, "ada_quality.gpr");
+      Ignore_Text : constant String := Project_Tools.Files.Read_Raw_File (Project_Root & "/.gitignore");
+      Required_Patterns : constant Project_Tools.Files.Name_List :=
+        [To_Unbounded_String ("/.alire/"), To_Unbounded_String ("/alire/"),
+         To_Unbounded_String ("/alire_install/"), To_Unbounded_String ("/bin/"),
+         To_Unbounded_String ("/obj/"), To_Unbounded_String ("/cov-bin/"),
+         To_Unbounded_String ("/cov-obj/"), To_Unbounded_String ("/coverage/*"),
+         To_Unbounded_String ("/lib/"), To_Unbounded_String ("/gnatprove/"),
+         To_Unbounded_String ("/.ada-quality.db.*"), To_Unbounded_String ("*.ali"),
+         To_Unbounded_String ("*.o"), To_Unbounded_String ("*.bexch"),
+         To_Unbounded_String ("*.gcda"), To_Unbounded_String ("*.gcno"),
+         To_Unbounded_String ("*.cswi"), To_Unbounded_String ("*.stdout"),
+         To_Unbounded_String ("*.stderr")];
+   begin
+      Assert
+        (Project_Root'Length > 0 and then
+         not Ada_Quality.Project_Inventory.Is_Excluded_Staging_Directory ("coverage") and then
+         Ada_Quality.Project_Inventory.Is_Excluded_Source_Directory ("coverage"),
+         "the shared inventory retains canonical coverage only while staging");
+      for Name of Ada_Quality.Project_Inventory.Excluded_Source_Directories loop
+         Assert
+           (Ada_Quality.Project_Inventory.Is_Excluded_Source_Directory (To_String (Name)),
+            "every declared source-tree exclusion is classified by the shared inventory");
+      end loop;
+      for Pattern of Required_Patterns loop
+         Assert
+           (Ada.Strings.Fixed.Index (Ignore_Text, To_String (Pattern)) > 0,
+            ".gitignore mirrors the shared generated-state inventory: " & To_String (Pattern));
+      end loop;
+   end;
    Project_Tools.Files.Delete_Tree (Root);
 end;
 end Run_Source_Analysis_Test;

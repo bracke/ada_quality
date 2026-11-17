@@ -1,5 +1,7 @@
-# Alire-generated state
+# Generated-state mirror of Ada_Quality.Project_Inventory; SOURCE_ANALYSIS_TEST enforces the contract
+/.alire/
 /alire/
+/alire_install/
 /config/
 /tests/alire/
 /tests/config/
@@ -7,10 +9,19 @@
 # Build products
 /bin/
 /obj/
+/cov-bin/
+/cov-obj/
+/lib/
+/gnatprove/
 /tests/bin/
 /tests/obj/
 /tests/cov-bin/
 /tests/cov-obj/
+
+# Coverage work products; retain the two reviewed evidence files
+/coverage/*
+!/coverage/gcov-summary.txt
+!/coverage/gcov-stability.txt
 
 # Local assessment databases
 /.ada-quality.db

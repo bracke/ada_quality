@@ -3,9 +3,6 @@ separate (Ada_Quality.Checks)
    function Artifact_Files (Root : String) return Text_Vectors.Vector is
       Result : Text_Vectors.Vector;
 
-      function Is_Artifact_Directory (Name : String) return Boolean is
-        (Name in "obj" | "bin" | "cov-obj" | "cov-bin" | "coverage" | "lib" | "gnatprove");
-
       procedure Walk (Directory : String; Inside_Artifact : Boolean; Depth : Positive) is
          Search      : Ada.Directories.Search_Type;
          Search_Open : Boolean := False;
@@ -21,9 +18,14 @@ separate (Ada_Quality.Checks)
             declare
                Name : constant String := Ada.Directories.Simple_Name (Item);
                Path : constant String := Directory & "/" & Name;
-               In_Artifact : constant Boolean := Inside_Artifact or else Is_Artifact_Directory (Name);
+               In_Artifact : constant Boolean := Inside_Artifact or else
+                 Ada_Quality.Project_Inventory.Is_Artifact_Directory (Name);
             begin
-               if Name in "." | ".." or else (not Inside_Artifact and then Name in ".git" | ".alire") then
+               if Name in "." | ".." or else
+                 (not Inside_Artifact and then
+                  Ada_Quality.Project_Inventory.Is_Excluded_Source_Directory (Name) and then
+                  not Ada_Quality.Project_Inventory.Is_Artifact_Directory (Name))
+               then
                   null;
                elsif Project_Tools.Links.Is_Link (Path) then
                   if In_Artifact then Result.Append (To_Unbounded_String (Path)); end if;
