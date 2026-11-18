@@ -45,7 +45,36 @@ procedure Exercise_CLI is
          end if;
       end Run_CLI;
 
+      function Latest_Completed_Assessment_Id return Positive is
+         Result : constant Project_Tools.Processes.Captured_Process :=
+           Project_Tools.Processes.Capture
+             ("completed assessment identity", Root, CLI_Binary,
+              Project_Tools.Processes.Arguments
+                ([Project_Tools.Processes.Argument ("status"),
+                  Project_Tools.Processes.Argument ("--database"),
+                  Project_Tools.Processes.Argument (DB_Path)]),
+              Quiet => True);
+         Output : constant String := To_String (Result.Output);
+         Marker : constant Natural :=
+           Ada.Strings.Fixed.Index (Output, " project 1 completed", Going => Ada.Strings.Backward);
+         Line_Start : Natural := Marker;
+      begin
+         if Result.Status /= 0 or else Marker = 0 then
+            raise Program_Error with "completed assessment identity is unavailable" & ASCII.LF & Output;
+         end if;
+         while Line_Start > Output'First and then Output (Line_Start - 1) /= ASCII.LF loop
+            Line_Start := Line_Start - 1;
+         end loop;
+         return Positive'Value
+           (Ada.Strings.Fixed.Trim (Output (Line_Start .. Marker - 1), Ada.Strings.Both));
+      end Latest_Completed_Assessment_Id;
+
       procedure Exercise_Happy_Path is
+         First_Assessment  : Positive := 1;
+         Second_Assessment : Positive := 1;
+
+         function Image (Value : Positive) return String is
+           (Ada.Strings.Fixed.Trim (Positive'Image (Value), Ada.Strings.Both));
       begin
       Cleanup_Database;
       Run_CLI ("CLI help", Project_Tools.Processes.Arguments ([Project_Tools.Processes.Argument ("--help")]));
@@ -100,6 +129,7 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
              Project_Tools.Processes.Argument ("--no-color")]),
          Allow_One => True, Allow_Three => True);
+      First_Assessment := Latest_Completed_Assessment_Id;
       Run_CLI
         ("regressions without baseline",
          Project_Tools.Processes.Arguments
@@ -116,6 +146,7 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
              Project_Tools.Processes.Argument ("--no-color")]),
          Allow_One => True, Allow_Three => True);
+      Second_Assessment := Latest_Completed_Assessment_Id;
       Run_CLI
         ("regressions with compatible baseline",
          Project_Tools.Processes.Arguments
@@ -123,6 +154,60 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "no regressions in comparable assessments");
+      Run_CLI
+        ("selected assessment text",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("show"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--no-color")]),
+         Expected_Text => "STR-01");
+      for Format of Project_Tools.Processes.Argument_Items'
+        ([Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("sarif"),
+          Project_Tools.Processes.Argument ("junit")])
+      loop
+         declare
+            Name : constant String := To_String (Format);
+            Expected : constant String :=
+              (if Name = "json" then """assessment_id"""
+               elsif Name = "sarif" then """version"": ""2.1.0"""
+               else "<testsuites tests=""33""");
+         begin
+            Run_CLI
+              ("selected assessment " & Name,
+               Project_Tools.Processes.Arguments
+                 ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("show"),
+                   Project_Tools.Processes.Argument (Image (First_Assessment)),
+                   Project_Tools.Processes.Argument ("--format"), Format,
+                   Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+                   Project_Tools.Processes.Argument ("--no-color")]),
+               Expected_Text => Expected);
+         end;
+      end loop;
+      Run_CLI
+        ("selected assessment regressions",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--current"),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
+      Run_CLI
+        ("metric trend text",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--indicator"),
+             Project_Tools.Processes.Argument ("SRC-03"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "SRC-03=");
+      Run_CLI
+        ("metric trend JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--indicator"),
+             Project_Tools.Processes.Argument ("SRC-03"), Project_Tools.Processes.Argument ("--json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""metric-trend""");
       Run_CLI
         ("JSON report",
          Project_Tools.Processes.Arguments
