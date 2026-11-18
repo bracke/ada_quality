@@ -34,6 +34,7 @@ Every later query is a pure function of that in-memory snapshot. Failures raise 
 | `Results`, `Measurements`, `Findings`, `Events` | Indexed validated detail rows for one run. |
 | `Executions` | Indexed, decoded execution records with tool, redacted command, status, exit, digest, size, and truncation fields. |
 | `Compare_Project` | One shared baseline selection and regression result for CLI and archive consumers. |
+| `Compare_Assessments` | Exact baseline/current comparison without automatic baseline substitution. |
 
 Project-filtered `History_Items` queries use a compact position index and do not duplicate records or rescan unrelated
 runs. The metadata row participates in `Snapshot_Identity`. Archive rendering streams constant-reference details one

@@ -10,3 +10,8 @@ recovery integration, and deterministic ordering across 1,000 runs.
 
 The CLI exposes this series through `trend --project ID --indicator ID`; `--json` emits the versioned
 metric-trend-v1 document with the registry's stable measurement unit.
+
+`trend --project ID --all` emits every indicator whose registry direction is higher-is-better or lower-is-better.
+`--from-run`/`--to-run` and `--since`/`--until` apply inclusive run-ID and completed-time bounds after semantic
+compatibility selection. Single-series JSON remains metric-trend-v1; multi-series JSON is metric-trends-v1, and CSV
+uses `project_id,indicator,unit,run_id,value` in registry and run order.

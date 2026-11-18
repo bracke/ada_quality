@@ -9,4 +9,7 @@ truncation members rather than the private persistence payload. The schemas decl
 reject unknown top-level members.
 
 `metric-trend.schema.json` constrains one project's compatible numeric points for one canonical indicator and records
-the registry measurement unit. SARIF and JUnit use their standard external contracts instead of project-local schemas.
+the registry measurement unit. `metric-trends.schema.json` applies the same point contract to an ordered collection
+of trend-enabled indicators. `assessment-history.schema.json` defines filtered validated run metadata, while
+`assessment-comparison.schema.json` defines exact selected IDs, availability, and classified regressions. SARIF and
+JUnit use their standard external contracts instead of project-local schemas.

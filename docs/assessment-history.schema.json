@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/assessment-history-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "runs"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "assessment-history" },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["assessment_id", "project_id", "status", "started_at", "finished_at", "source_fingerprint", "policy_fingerprint", "toolchain_fingerprint"],
+        "properties": {
+          "assessment_id": { "type": "integer", "minimum": 1 },
+          "project_id": { "type": "integer", "minimum": 1 },
+          "status": { "enum": ["running", "completed", "invalid", "interrupted"] },
+          "started_at": { "type": "string" },
+          "finished_at": { "type": "string" },
+          "source_fingerprint": { "type": "string" },
+          "policy_fingerprint": { "type": "string" },
+          "toolchain_fingerprint": { "type": "string" }
+        }
+      }
+    }
+  }
+}

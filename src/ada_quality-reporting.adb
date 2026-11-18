@@ -23,6 +23,7 @@ package body Ada_Quality.Reporting is
    use type Ada.Directories.File_Kind;
    use type Database.Status_Code;
    use type Ada_Quality.History.Comparison_Status;
+   use type Ada_Quality.History.Incompatibility;
    use type Interfaces.Unsigned_64;
 
    LF : constant Character := Character'Val (10);
@@ -698,6 +699,93 @@ package body Ada_Quality.Reporting is
       end loop;
       return Compare_Runs (Item, Project_Id, Through);
    end Compare_Project;
+
+   function Compare_Assessments
+     (Item : Session; Baseline_Id, Current_Id : Positive) return Project_Comparison
+   is
+      function Selected_Run (Run_Id : Positive) return Run_Record is
+      begin
+         Require_Open (Item);
+         if not Item.Run_Index.Contains (Run_Id) then
+            raise Reporting_Error with "assessment not found:" & Positive'Image (Run_Id);
+         end if;
+         return Item.All_Runs (Item.Run_Index.Element (Run_Id));
+      end Selected_Run;
+
+      Baseline_Run : constant Run_Record := Selected_Run (Baseline_Id);
+      Current_Run  : constant Run_Record := Selected_Run (Current_Id);
+      Runs         : constant Ada_Quality.History_Data.History_Vectors.Vector :=
+        History_Items (Item, Current_Run.Project_Id);
+      Selection    : constant Ada_Quality.History.Comparison_Selection :=
+        (Status => Ada_Quality.History.No_Compatible_Baseline,
+         Current_Id => Current_Id, Baseline_Id => Baseline_Id, Policy_Changed => False);
+      Result       : Project_Comparison :=
+        (Project_Id => Current_Run.Project_Id, Selection => Selection, Changes => <>);
+
+      function Find_Run (Id : Positive) return Ada_Quality.History_Data.History_Item is
+      begin
+         for Run of Runs loop
+            if Run.Id = Id then
+               return Run;
+            end if;
+         end loop;
+         raise Integrity_Error with "selected assessment is absent from project history";
+      end Find_Run;
+   begin
+      if Baseline_Run.Project_Id /= Current_Run.Project_Id then
+         raise Reporting_Error with "selected assessments belong to different projects";
+      elsif Baseline_Id >= Current_Id then
+         raise Reporting_Error with "baseline assessment must precede current assessment";
+      elsif Current_Run.State /= Assessment_Completed then
+         Result.Selection.Status := Ada_Quality.History.Current_Incomplete;
+         return Result;
+      elsif Baseline_Run.State /= Assessment_Completed then
+         Result.Selection.Status := Ada_Quality.History.No_Completed_Baseline;
+         return Result;
+      end if;
+
+      declare
+         Baseline : constant Ada_Quality.History_Data.History_Item := Find_Run (Baseline_Id);
+         Current  : constant Ada_Quality.History_Data.History_Item := Find_Run (Current_Id);
+      begin
+         if Ada_Quality.History.Compatible (Baseline, Current) then
+            Result.Selection.Status := Ada_Quality.History.Comparison_Available;
+         elsif Ada_Quality.History.Policy_Comparable (Baseline, Current) then
+            Result.Selection.Status := Ada_Quality.History.Comparison_Available;
+            Result.Selection.Policy_Changed := True;
+         elsif Ada_Quality.History.Incompatibility_Of (Baseline, Current) =
+           Ada_Quality.History.Toolchain_Changed
+         then
+            Result.Selection.Status := Ada_Quality.History.Toolchain_Changed;
+            return Result;
+         else
+            return Result;
+         end if;
+
+         declare
+            Older_Findings : Ada_Quality.History.Finding_Index;
+            Baseline_Group : Detail_Group renames Item.Details.Constant_Reference (Baseline_Id);
+            Current_Group  : Detail_Group renames Item.Details.Constant_Reference (Current_Id);
+         begin
+            for Run of Runs loop
+               exit when Run.Id = Baseline_Id;
+               if Ada_Quality.History.Compatible (Run, Current) then
+                  declare
+                     Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+                  begin
+                     Ada_Quality.History.Include_Findings (Older_Findings, Group.Findings);
+                  end;
+               end if;
+            end loop;
+            Result.Changes := Ada_Quality.History.Compare
+              (Baseline, Current,
+               Baseline_Group.Results, Current_Group.Results,
+               Baseline_Group.Measurements, Current_Group.Measurements,
+               Baseline_Group.Findings, Current_Group.Findings, Older_Findings);
+         end;
+      end;
+      return Result;
+   end Compare_Assessments;
 
    function Read_History_Evidence (Item : Session; Run_Id : Positive) return History_Evidence is
       Validated : constant Run_Record := Evidence_Run (Item, Run_Id, Allow_Terminal => False);

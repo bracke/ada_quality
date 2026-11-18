@@ -193,6 +193,46 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "no regressions in comparable assessments");
       Run_CLI
+        ("explicit assessment comparison text",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
+      Run_CLI
+        ("explicit assessment comparison JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""assessment-comparison""");
+      Run_CLI
+        ("explicit regression baseline",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--baseline"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("--current"),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
+      Run_CLI
+        ("filtered history JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--status"),
+             Project_Tools.Processes.Argument ("completed"), Project_Tools.Processes.Argument ("--limit"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--since"),
+             Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
+             Project_Tools.Processes.Argument ("--until"),
+             Project_Tools.Processes.Argument ("2099-12-31T23:59:59Z"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""assessment-history""");
+      Run_CLI
         ("metric trend text",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
@@ -208,6 +248,26 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("SRC-03"), Project_Tools.Processes.Argument ("--json"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""metric-trend""");
+      Run_CLI
+        ("multi-metric trend JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--all"),
+             Project_Tools.Processes.Argument ("--from-run"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("--to-run"),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""metric-trends""");
+      Run_CLI
+        ("multi-metric trend CSV",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--all"),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("csv"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "project_id,indicator,unit,run_id,value");
       Run_CLI
         ("JSON report",
          Project_Tools.Processes.Arguments
@@ -348,6 +408,35 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
              Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Missing_Policy)]),
+         Allow_Two => True);
+      Run_CLI
+        ("invalid history status",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--status"),
+             Project_Tools.Processes.Argument ("unknown"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Allow_Two => True);
+      Run_CLI
+        ("invalid history timestamp",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--since"),
+             Project_Tools.Processes.Argument ("yesterday"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Allow_Two => True);
+      Run_CLI
+        ("conflicting trend selectors",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--all"),
+             Project_Tools.Processes.Argument ("--indicator"), Project_Tools.Processes.Argument ("SRC-03"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Allow_Two => True);
+      Run_CLI
+        ("reversed assessment comparison",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument ("2"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Allow_Two => True);
       end Exercise_Error_Paths;
 

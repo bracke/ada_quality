@@ -1,4 +1,6 @@
 with Ada.Command_Line;
+with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Containers;
 with Ada.Environment_Variables;
 with Ada.Exceptions;
@@ -9,6 +11,7 @@ with Terminal_Styles;
 with Ada_Quality.CI_Formats;
 with Ada_Quality.Checks;
 with Ada_Quality.History;
+with Ada_Quality.History_Data;
 with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;
@@ -23,6 +26,7 @@ package body Ada_Quality.CLI is
    use Ada_Quality.Types;
    use type Ada.Containers.Count_Type;
    use type Ada_Quality.History.Comparison_Status;
+   use type Ada_Quality.Indicators.Metric_Direction;
 
    Usage_Error : exception;
 
@@ -52,7 +56,8 @@ package body Ada_Quality.CLI is
             if Skip_Value then
                Skip_Value := False;
             elsif Value in "--database" | "--policy" | "--color" | "--project" | "--format" |
-              "--current" | "--indicator"
+              "--current" | "--baseline" | "--indicator" | "--status" |
+              "--limit" | "--since" | "--until" | "--from-run" | "--to-run"
             then
                Skip_Value := True;
             elsif Value in "--no-color" | "--all" | "--json" then
@@ -71,7 +76,8 @@ package body Ada_Quality.CLI is
 
       function Takes_Value (Name : String) return Boolean is
         (Name in "--database" | "--policy" | "--color" | "--project" | "--format" |
-           "--current" | "--indicator");
+           "--current" | "--baseline" | "--indicator" | "--status" |
+           "--limit" | "--since" | "--until" | "--from-run" | "--to-run");
 
       function Allowed (Name : String) return Boolean is
         (Takes_Value (Name) or else Name in "--no-color" | "--all" | "--json");
@@ -96,7 +102,7 @@ package body Ada_Quality.CLI is
       if Option ("--color", "never") not in "never" | "auto" | "always" then
          raise Usage_Error with "--color requires never, auto, or always";
       end if;
-      if Option ("--project", "") /= "" and then
+      if Positional (1) = "check" and then Option ("--project", "") /= "" and then
         (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all")
       then
          raise Usage_Error with "--all and --project are mutually exclusive";
@@ -128,9 +134,14 @@ package body Ada_Quality.CLI is
       Ada.Text_IO.Put_Line ("  project add PATH | list | show ID | enable ID | disable ID | remove ID");
       Ada.Text_IO.Put_Line ("  check --all | --project ID [--json]");
       Ada.Text_IO.Put_Line ("  assessment show RUN_ID [--format text|json|sarif|junit]");
-      Ada.Text_IO.Put_Line ("  status | findings | history");
+      Ada.Text_IO.Put_Line ("  assessment diff BASELINE_ID CURRENT_ID [--format text|json]");
+      Ada.Text_IO.Put_Line
+        ("  history [--project ID] [--status STATE] [--limit N] [--since TIME] [--until TIME] [--json]");
+      Ada.Text_IO.Put_Line ("  status | findings");
       Ada.Text_IO.Put_Line ("  regressions [--project ID] [--current RUN_ID]");
-      Ada.Text_IO.Put_Line ("  trend --project ID --indicator ID [--json]");
+      Ada.Text_IO.Put_Line
+        ("  trend --project ID (--indicator ID | --all) [--from-run ID] [--to-run ID]" &
+         " [--since TIME] [--until TIME] [--format text|json|csv]");
       Ada.Text_IO.Put_Line ("  report --format json");
       Ada.Text_IO.Put_Line ("  policy validate | show");
       Ada.Text_IO.Put_Line ("  database init | check | recover");
@@ -242,6 +253,278 @@ package body Ada_Quality.CLI is
      (Store : in out Ada_Quality.Storage.Store;
       Policy_Path : String) return Natural is separate;
 
+   function Has_Flag (Name : String) return Boolean is
+     (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = Name);
+
+   function Positive_Option (Name, Kind : String) return Positive is
+   begin
+      return Positive'Value (Option (Name, ""));
+   exception
+      when Constraint_Error =>
+         raise Usage_Error with "a positive " & Kind & " ID is required";
+   end Positive_Option;
+
+   function Timestamp_Option (Name : String) return Ada_Quality.Reporting.Optional_Timestamp is
+      Text : constant String := Option (Name, "");
+
+      function Number_At (First, Last : Positive) return Natural is
+         Result : Natural := 0;
+      begin
+         for Index in First .. Last loop
+            if Text (Index) not in '0' .. '9' then raise Constraint_Error; end if;
+            Result := Result * 10 + Character'Pos (Text (Index)) - Character'Pos ('0');
+         end loop;
+         return Result;
+      end Number_At;
+   begin
+      if Text'Length = 0 then return (Present => False); end if;
+      if Text'Length /= 20 or else Text (Text'First + 4) /= '-' or else
+        Text (Text'First + 7) /= '-' or else Text (Text'First + 10) /= 'T' or else
+        Text (Text'First + 13) /= ':' or else Text (Text'First + 16) /= ':' or else
+        Text (Text'Last) /= 'Z'
+      then
+         raise Constraint_Error;
+      end if;
+      declare
+         First : constant Positive := Text'First;
+      begin
+         return
+           (Present => True,
+            Value => Ada.Calendar.Formatting.Time_Of
+              (Year => Ada.Calendar.Year_Number (Number_At (First, First + 3)),
+               Month => Ada.Calendar.Month_Number (Number_At (First + 5, First + 6)),
+               Day => Ada.Calendar.Day_Number (Number_At (First + 8, First + 9)),
+               Hour => Ada.Calendar.Formatting.Hour_Number (Number_At (First + 11, First + 12)),
+               Minute => Ada.Calendar.Formatting.Minute_Number (Number_At (First + 14, First + 15)),
+               Second => Ada.Calendar.Formatting.Second_Number (Number_At (First + 17, First + 18)),
+               Time_Zone => 0));
+      end;
+   exception
+      when Constraint_Error | Ada.Calendar.Time_Error =>
+         raise Usage_Error with Name & " requires YYYY-MM-DDTHH:MM:SSZ";
+   end Timestamp_Option;
+
+   function In_Time_Range
+     (Value, Since_Time, Until_Time : Ada_Quality.Reporting.Optional_Timestamp) return Boolean
+   is
+      use type Ada.Calendar.Time;
+   begin
+      if not Since_Time.Present and then not Until_Time.Present then return True; end if;
+      return Value.Present and then
+        (not Since_Time.Present or else Value.Value >= Since_Time.Value) and then
+        (not Until_Time.Present or else Value.Value <= Until_Time.Value);
+   end In_Time_Range;
+
+   function Run_History (DB_Path : String) return Natural is
+      Session    : Ada_Quality.Reporting.Session;
+      Project_Id : Natural := 0;
+      Status     : constant String := Option ("--status", "all");
+      Limit      : Natural := 0;
+      Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
+      Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
+      JSON_Mode  : constant Boolean := Has_Flag ("--json");
+      Format     : constant String :=
+        (if JSON_Mode then "json" elsif Option ("--format", "") = "" then "text" else Option ("--format", ""));
+      Filtered   : Ada_Quality.Reporting.Run_Vectors.Vector;
+      use type Ada.Calendar.Time;
+   begin
+      if Option ("--project", "") /= "" then
+         Project_Id := Positive_Option ("--project", "project");
+      end if;
+      if Option ("--limit", "") /= "" then
+         begin
+            Limit := Positive'Value (Option ("--limit", ""));
+         exception
+            when Constraint_Error => raise Usage_Error with "--limit requires a positive count";
+         end;
+      end if;
+      if Status not in "all" | "running" | "completed" | "invalid" | "interrupted" then
+         raise Usage_Error with "--status requires running, completed, invalid, interrupted, or all";
+      elsif JSON_Mode and then Option ("--format", "") not in "" | "json" then
+         raise Usage_Error with "--json conflicts with non-JSON --format";
+      elsif Format not in "text" | "json" then
+         raise Usage_Error with "history format requires text or json";
+      elsif Since_Time.Present and then Until_Time.Present and then Since_Time.Value > Until_Time.Value then
+         raise Usage_Error with "--since must not be later than --until";
+      end if;
+
+      Ada_Quality.Reporting.Open (Session, DB_Path);
+      if Project_Id > 0 then
+         declare
+            P : constant Ada_Quality.Reporting.Project_Record :=
+              Ada_Quality.Reporting.Project (Session, Positive (Project_Id));
+            pragma Unreferenced (P);
+         begin null; end;
+      end if;
+      for Run of Ada_Quality.Reporting.Runs (Session, Project_Id) loop
+         declare
+            State : constant String :=
+              (case Run.State is
+                  when Assessment_Running => "running",
+                  when Assessment_Completed => "completed",
+                  when Assessment_Invalid => "invalid",
+                  when Assessment_Interrupted => "interrupted");
+         begin
+            if (Status = "all" or else Status = State) and then
+              In_Time_Range (Run.Started_At, Since_Time, Until_Time)
+            then
+               Filtered.Append (Run);
+            end if;
+         end;
+      end loop;
+      if Limit > 0 and then Filtered.Length > Ada.Containers.Count_Type (Limit) then
+         Filtered.Delete_First (Filtered.Length - Ada.Containers.Count_Type (Limit));
+      end if;
+      if Format = "json" then
+         Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+         Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_History (Filtered, Pretty => True));
+      else
+         for Run of Filtered loop
+            Ada.Text_IO.Put_Line
+              (Positive'Image (Run.Id) & " project" & Positive'Image (Run.Project_Id) & " " &
+               (case Run.State is
+                  when Assessment_Running => "running",
+                  when Assessment_Completed => "completed",
+                  when Assessment_Invalid => "invalid",
+                  when Assessment_Interrupted => "interrupted") &
+               (if Run.Started_At.Present then " " & Ada_Quality.Reporting.Image (Run.Started_At) else ""));
+         end loop;
+      end if;
+      return 0;
+   end Run_History;
+
+   function Run_Trend (DB_Path : String) return Natural is
+      Session      : Ada_Quality.Reporting.Session;
+      Project_Id   : constant Positive := Positive_Option ("--project", "project");
+      All_Metrics  : constant Boolean := Has_Flag ("--all");
+      JSON_Mode    : constant Boolean := Has_Flag ("--json");
+      Format       : constant String :=
+        (if JSON_Mode then "json" elsif Option ("--format", "") = "" then "text" else Option ("--format", ""));
+      From_Run     : Natural := 0;
+      To_Run       : Natural := 0;
+      Since_Time   : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
+      Until_Time   : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
+      Series       : Ada_Quality.JSON.Metric_Series_Vectors.Vector;
+      Runs         : Ada_Quality.Reporting.Run_Vectors.Vector;
+      Measurements : Ada_Quality.History_Data.Detail_Vectors.Vector;
+      use type Ada.Calendar.Time;
+
+      function Include_Point (Point : Ada_Quality.History.Trend_Point) return Boolean is
+      begin
+         if (From_Run > 0 and then Point.Run_Id < From_Run) or else
+           (To_Run > 0 and then Point.Run_Id > To_Run)
+         then
+            return False;
+         end if;
+         for Run of Runs loop
+            if Run.Id = Point.Run_Id then
+               return In_Time_Range (Run.Finished_At, Since_Time, Until_Time);
+            end if;
+         end loop;
+         return False;
+      end Include_Point;
+
+      procedure Add_Series (Indicator : Indicator_Id) is
+         All_Points : constant Ada_Quality.History.Trend_Vectors.Vector :=
+           Ada_Quality.History.Metric_Trend
+             (Ada_Quality.Reporting.History_Items (Session, Project_Id), Measurements, Indicator);
+         Points : Ada_Quality.History.Trend_Vectors.Vector;
+      begin
+         for Point of All_Points loop
+            if Include_Point (Point) then Points.Append (Point); end if;
+         end loop;
+         Series.Append
+           (Ada_Quality.JSON.Metric_Series'
+              (Indicator => Indicator,
+               Unit_Name => To_Unbounded_String (Ada_Quality.Indicators.Measurement_Unit (Indicator)),
+               Points => Points));
+      end Add_Series;
+   begin
+      if Option ("--from-run", "") /= "" then
+         From_Run := Positive_Option ("--from-run", "from-run assessment");
+      end if;
+      if Option ("--to-run", "") /= "" then
+         To_Run := Positive_Option ("--to-run", "to-run assessment");
+      end if;
+      if All_Metrics = (Option ("--indicator", "") /= "") then
+         raise Usage_Error with "trend requires exactly one of --indicator ID or --all";
+      elsif JSON_Mode and then Option ("--format", "") not in "" | "json" then
+         raise Usage_Error with "--json conflicts with non-JSON --format";
+      elsif Format not in "text" | "json" | "csv" then
+         raise Usage_Error with "trend format requires text, json, or csv";
+      elsif From_Run > 0 and then To_Run > 0 and then From_Run > To_Run then
+         raise Usage_Error with "--from-run must not exceed --to-run";
+      elsif Since_Time.Present and then Until_Time.Present and then Since_Time.Value > Until_Time.Value then
+         raise Usage_Error with "--since must not be later than --until";
+      end if;
+
+      Ada_Quality.Reporting.Open (Session, DB_Path);
+      declare
+         P : constant Ada_Quality.Reporting.Project_Record := Ada_Quality.Reporting.Project (Session, Project_Id);
+         pragma Unreferenced (P);
+      begin null; end;
+      Runs := Ada_Quality.Reporting.Runs (Session, Project_Id);
+      Measurements := Ada_Quality.Reporting.All_Measurements (Session, Project_Id);
+      if All_Metrics then
+         for Indicator in Indicator_Id loop
+            if Ada_Quality.Indicators.Direction_Of (Indicator) /= Ada_Quality.Indicators.No_Trend then
+               Add_Series (Indicator);
+            end if;
+         end loop;
+      else
+         declare
+            Indicator : Indicator_Id;
+         begin
+            if not Ada_Quality.Indicators.Parse_Canonical (Option ("--indicator", ""), Indicator) then
+               raise Usage_Error with "--indicator requires a canonical indicator ID";
+            end if;
+            Add_Series (Indicator);
+         end;
+      end if;
+
+      if Format = "json" then
+         Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+         if All_Metrics then
+            Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Trends (Project_Id, Series, Pretty => True));
+         else
+            declare
+               Series_Item : constant Ada_Quality.JSON.Metric_Series := Series.First_Element;
+            begin
+               Ada.Text_IO.Put_Line
+                 (Ada_Quality.JSON.Render_Trend
+                    (Project_Id, Series_Item.Indicator, To_String (Series_Item.Unit_Name),
+                     Series_Item.Points, Pretty => True));
+            end;
+         end if;
+      elsif Format = "csv" then
+         Ada.Text_IO.Put_Line ("project_id,indicator,unit,run_id,value");
+         for Series_Item of Series loop
+            for Point of Series_Item.Points loop
+               Ada.Text_IO.Put_Line
+                 (Ada.Strings.Fixed.Trim (Positive'Image (Project_Id), Ada.Strings.Both) & "," &
+                  Image (Series_Item.Indicator) & "," & To_String (Series_Item.Unit_Name) & "," &
+                  Ada.Strings.Fixed.Trim (Positive'Image (Point.Run_Id), Ada.Strings.Both) & "," &
+                  Ada.Strings.Fixed.Trim (Long_Long_Integer'Image (Point.Value), Ada.Strings.Both));
+            end loop;
+         end loop;
+      else
+         for Series_Item of Series loop
+            if Series_Item.Points.Is_Empty then
+               Ada.Text_IO.Put_Line
+                 ("project" & Positive'Image (Project_Id) & " " & Image (Series_Item.Indicator) &
+                  ": no compatible numeric trend");
+            else
+               for Point of Series_Item.Points loop
+                  Ada.Text_IO.Put_Line
+                    ("run" & Positive'Image (Point.Run_Id) & " " & Image (Series_Item.Indicator) & "=" &
+                     Long_Long_Integer'Image (Point.Value) & " " & To_String (Series_Item.Unit_Name));
+               end loop;
+            end if;
+         end loop;
+      end if;
+      return 0;
+   end Run_Trend;
+
    function Run return Natural is
       Command     : constant String := Positional (1);
       Subcommand  : constant String := Positional (2);
@@ -253,14 +536,6 @@ package body Ada_Quality.CLI is
       begin
          Ada_Quality.Storage.Open (Store, DB_Path, Create);
       end Open_Store;
-
-      function Positive_Option (Name, Kind : String) return Positive is
-      begin
-         return Positive'Value (Option (Name, ""));
-      exception
-         when Constraint_Error =>
-            raise Usage_Error with "a positive " & Kind & " ID is required";
-      end Positive_Option;
 
       function Assessment_Id_Argument (Index : Positive) return Positive is
       begin
@@ -390,59 +665,74 @@ package body Ada_Quality.CLI is
          end if;
          return 0;
       elsif Command = "assessment" then
-         if Subcommand /= "show" then
-            raise Usage_Error with "assessment requires show RUN_ID";
+         if Subcommand = "diff" then
+            declare
+               Session     : Ada_Quality.Reporting.Session;
+               Baseline_Id : constant Positive := Assessment_Id_Argument (3);
+               Current_Id  : constant Positive := Assessment_Id_Argument (4);
+               JSON_Flag   : constant Boolean := Has_Flag ("--json");
+               Requested   : constant String := Option ("--format", "");
+               Format      : constant String :=
+                 (if JSON_Flag then "json" elsif Requested = "" then "text" else Requested);
+               Comparison  : Ada_Quality.Reporting.Project_Comparison;
+            begin
+               if Baseline_Id >= Current_Id then
+                  raise Usage_Error with "baseline assessment must precede current assessment";
+               elsif JSON_Flag and then Requested not in "" | "json" then
+                  raise Usage_Error with "--json conflicts with non-JSON --format";
+               elsif Format not in "text" | "json" then
+                  raise Usage_Error with "assessment diff format requires text or json";
+               end if;
+               Ada_Quality.Reporting.Open (Session, DB_Path);
+               Comparison := Ada_Quality.Reporting.Compare_Assessments
+                 (Session, Baseline_Id, Current_Id);
+               if Format = "json" then
+                  Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+                  Ada.Text_IO.Put_Line
+                    (Ada_Quality.JSON.Render_Comparison (Comparison, Pretty => True));
+               else
+                  Print_Comparison (Comparison);
+               end if;
+            end;
+         elsif Subcommand = "show" then
+            declare
+               Session : Ada_Quality.Reporting.Session;
+               Value   : Assessment;
+               Run_Id  : constant Positive := Assessment_Id_Argument (3);
+               JSON_Flag : constant Boolean := Has_Flag ("--json");
+               Requested_Format : constant String := Option ("--format", "");
+               Format  : constant String :=
+                 (if JSON_Flag then "json"
+                  elsif Requested_Format'Length > 0 then Requested_Format else "text");
+            begin
+               if JSON_Flag and then Requested_Format'Length > 0 and then Requested_Format /= "json" then
+                  raise Usage_Error with "--json conflicts with non-JSON --format";
+               elsif Format not in "text" | "json" | "sarif" | "junit" then
+                  raise Usage_Error with "assessment format requires text, json, sarif, or junit";
+               end if;
+               if Format /= "text" then
+                  Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+               end if;
+               Ada_Quality.Reporting.Open (Session, DB_Path);
+               Value := Stored_Assessment (Session, Run_Id);
+               if Format = "json" then
+                  Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
+               elsif Format = "sarif" then
+                  Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Value, Pretty => True));
+               elsif Format = "junit" then
+                  Ada.Text_IO.Put (Ada_Quality.CI_Formats.Render_JUnit (Value));
+               else
+                  Print_Assessment (Value);
+               end if;
+            end;
+         else
+            raise Usage_Error with "assessment requires show RUN_ID or diff BASELINE_ID CURRENT_ID";
          end if;
-         declare
-            Session : Ada_Quality.Reporting.Session;
-            Value   : Assessment;
-            Run_Id  : constant Positive := Assessment_Id_Argument (3);
-            JSON_Flag : constant Boolean :=
-              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
-            Requested_Format : constant String := Option ("--format", "");
-            Format  : constant String :=
-              (if JSON_Flag then "json"
-               elsif Requested_Format'Length > 0 then Requested_Format else "text");
-         begin
-            if JSON_Flag and then Requested_Format'Length > 0 and then Requested_Format /= "json" then
-               raise Usage_Error with "--json conflicts with non-JSON --format";
-            elsif Format not in "text" | "json" | "sarif" | "junit" then
-               raise Usage_Error with "assessment format requires text, json, sarif, or junit";
-            end if;
-            if Format /= "text" then
-               Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-            end if;
-            Ada_Quality.Reporting.Open (Session, DB_Path);
-            Value := Stored_Assessment (Session, Run_Id);
-            if Format = "json" then
-               Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
-            elsif Format = "sarif" then
-               Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Value, Pretty => True));
-            elsif Format = "junit" then
-               Ada.Text_IO.Put (Ada_Quality.CI_Formats.Render_JUnit (Value));
-            else
-               Print_Assessment (Value);
-            end if;
-         end;
          return 0;
       elsif Command = "check" then
          return Run_Check (Store, Policy_Path);
       elsif Command = "history" or else Command = "status" then
-         declare
-            Session : Ada_Quality.Reporting.Session;
-         begin
-            Ada_Quality.Reporting.Open (Session, DB_Path);
-            for H of Ada_Quality.Reporting.Runs (Session) loop
-               Ada.Text_IO.Put_Line
-                 (Positive'Image (H.Id) & " project" & Positive'Image (H.Project_Id) & " " &
-                  (case H.State is
-                     when Assessment_Running => "running",
-                     when Assessment_Completed => "completed",
-                     when Assessment_Invalid => "invalid",
-                     when Assessment_Interrupted => "interrupted"));
-            end loop;
-         end;
-         return 0;
+         return Run_History (DB_Path);
       elsif Command = "findings" then
          Print_Findings (DB_Path);
          return 0;
@@ -452,7 +742,21 @@ package body Ada_Quality.CLI is
             Session : Ada_Quality.Reporting.Session;
          begin
             Ada_Quality.Reporting.Open (Session, DB_Path);
-            if Option ("--current", "") /= "" then
+            if Option ("--baseline", "") /= "" then
+               if Option ("--current", "") = "" then
+                  raise Usage_Error with "--baseline requires --current";
+               elsif Positive_Option ("--baseline", "baseline assessment") >=
+                 Positive_Option ("--current", "current assessment")
+               then
+                  raise Usage_Error with "baseline assessment must precede current assessment";
+               end if;
+               Print_Comparison
+                 (Ada_Quality.Reporting.Compare_Assessments
+                    (Session,
+                     Positive_Option ("--baseline", "baseline assessment"),
+                     Positive_Option ("--current", "current assessment")));
+               Projects_Seen := 1;
+            elsif Option ("--current", "") /= "" then
                declare
                   Current_Id : constant Positive := Positive_Option ("--current", "assessment");
                   Selected   : Ada_Quality.Reporting.Run_Record;
@@ -499,45 +803,7 @@ package body Ada_Quality.CLI is
          end;
          return 0;
       elsif Command = "trend" then
-         declare
-            Session    : Ada_Quality.Reporting.Session;
-            Project_Id : constant Positive := Positive_Option ("--project", "project");
-            Indicator  : Indicator_Id;
-            JSON_Mode  : constant Boolean :=
-              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
-         begin
-            if not Ada_Quality.Indicators.Parse_Canonical (Option ("--indicator", ""), Indicator) then
-               raise Usage_Error with "--indicator requires a canonical indicator ID";
-            end if;
-            Ada_Quality.Reporting.Open (Session, DB_Path);
-            declare
-               Project : constant Ada_Quality.Reporting.Project_Record :=
-                 Ada_Quality.Reporting.Project (Session, Project_Id);
-               pragma Unreferenced (Project);
-               Points : constant Ada_Quality.History.Trend_Vectors.Vector :=
-                 Ada_Quality.History.Metric_Trend
-                   (Ada_Quality.Reporting.History_Items (Session, Project_Id),
-                    Ada_Quality.Reporting.All_Measurements (Session, Project_Id), Indicator);
-               Unit_Name : constant String := Ada_Quality.Indicators.Measurement_Unit (Indicator);
-            begin
-               if JSON_Mode then
-                  Ada.Text_IO.Put_Line
-                    (Ada_Quality.JSON.Render_Trend
-                       (Project_Id, Indicator, Unit_Name, Points, Pretty => True));
-               elsif Points.Is_Empty then
-                  Ada.Text_IO.Put_Line
-                    ("project" & Positive'Image (Project_Id) & " " & Image (Indicator) &
-                     ": no compatible numeric trend");
-               else
-                  for Point of Points loop
-                     Ada.Text_IO.Put_Line
-                       ("run" & Positive'Image (Point.Run_Id) & " " & Image (Indicator) & "=" &
-                        Long_Long_Integer'Image (Point.Value) & " " & Unit_Name);
-                  end loop;
-               end if;
-            end;
-         end;
-         return 0;
+         return Run_Trend (DB_Path);
       elsif Command = "report" and then Option ("--format", "") = "json" then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
          declare

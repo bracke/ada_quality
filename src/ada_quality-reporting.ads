@@ -252,6 +252,15 @@ package Ada_Quality.Reporting is
    --  @param Current_Id Assessment that plays the current role; later runs are ignored.
    --  @return Selection status and deterministically ordered regressions.
 
+   function Compare_Assessments
+     (Item : Session; Baseline_Id, Current_Id : Positive) return Project_Comparison;
+   --  Compare exactly two selected assessments without automatic baseline substitution.
+   --  @param Item Open reporting snapshot.
+   --  @param Baseline_Id Earlier assessment selected as the baseline.
+   --  @param Current_Id Later assessment selected as the current evidence.
+   --  @return Compatibility status and deterministically ordered regressions.
+   --  @exception Reporting_Error Either assessment is absent, belongs to another project, or is not ordered.
+
    function Select_Project_Comparison
      (Item : Session; Project_Id : Positive) return Ada_Quality.History.Comparison_Selection;
    --  Select the latest comparable assessments without deriving regressions.

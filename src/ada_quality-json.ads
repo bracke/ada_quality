@@ -50,4 +50,30 @@ package Ada_Quality.JSON is
       Points     : Ada_Quality.History.Trend_Vectors.Vector;
       Pretty     : Boolean := False) return String;
    --  Serialize one compatible metric series as a versioned JSON document.
+
+   type Metric_Series is record
+      Indicator : Ada_Quality.Types.Indicator_Id := Ada_Quality.Types.STR_01;
+      Unit_Name : Ada.Strings.Unbounded.Unbounded_String;
+      Points    : Ada_Quality.History.Trend_Vectors.Vector;
+   end record;
+   --  One named numeric series for multi-metric export.
+
+   package Metric_Series_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Metric_Series);
+
+   function Render_Trends
+     (Project_Id : Positive;
+      Series     : Metric_Series_Vectors.Vector;
+      Pretty     : Boolean := False) return String;
+   --  Serialize multiple compatible metric series as metric-trends-v1.
+
+   function Render_History
+     (Items : Ada_Quality.Reporting.Run_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   --  Serialize a filtered assessment history as assessment-history-v1.
+
+   function Render_Comparison
+     (Item : Ada_Quality.Reporting.Project_Comparison;
+      Pretty : Boolean := False) return String;
+   --  Serialize one selected assessment comparison as assessment-comparison-v1.
 end Ada_Quality.JSON;

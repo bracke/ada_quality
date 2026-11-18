@@ -65,6 +65,11 @@ begin
    Check.Require_File ("docs/ASSESSMENT.md");
    Check.Require_File ("docs/assessment.schema.json");
    Check.Require_File ("docs/archive.schema.json");
+   Check.Require_File ("docs/assessment-batch.schema.json");
+   Check.Require_File ("docs/metric-trend.schema.json");
+   Check.Require_File ("docs/metric-trends.schema.json");
+   Check.Require_File ("docs/assessment-history.schema.json");
+   Check.Require_File ("docs/assessment-comparison.schema.json");
    for Name of Required_Phase_Documents loop
       Check.Require_File ("docs/" & Name.all);
    end loop;

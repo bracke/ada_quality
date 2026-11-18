@@ -132,6 +132,59 @@ begin
          Ada.Strings.Fixed.Index (To_String (Trend), """kind"":""metric-trend""") > 0 and then
          Ada.Strings.Fixed.Index (To_String (Trend), """run_id"":9") > 0,
          "metric trends have a versioned deterministic JSON representation");
+      declare
+         Series : Ada_Quality.JSON.Metric_Series_Vectors.Vector;
+         Runs   : Ada_Quality.Reporting.Run_Vectors.Vector;
+         Comparison : Ada_Quality.Reporting.Project_Comparison :=
+           (Project_Id => 1,
+            Selection =>
+              (Status => Ada_Quality.History.Comparison_Available,
+               Current_Id => 9, Baseline_Id => 7, Policy_Changed => False),
+            Changes => <>);
+         Multi, History_JSON, Comparison_JSON : Ada.Strings.Unbounded.Unbounded_String;
+      begin
+         Series.Append
+           (Ada_Quality.JSON.Metric_Series'
+              (Indicator => TST_03, Unit_Name => To_Unbounded_String ("basis_points"), Points => Points));
+         Series.Append
+           (Ada_Quality.JSON.Metric_Series'
+              (Indicator => SRC_03, Unit_Name => To_Unbounded_String ("decision_points"), Points => <>));
+         Multi := To_Unbounded_String (Ada_Quality.JSON.Render_Trends (1, Series));
+         Jsonlib.Parsers.Parse (To_String (Multi), Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index (To_String (Multi), """kind"":""metric-trends""") > 0 and then
+            Ada.Strings.Fixed.Index (To_String (Multi), """indicator"":""SRC-03""") > 0,
+            "multi-metric trends retain ordered series including empty compatible ranges");
+
+         Runs.Append
+           (Ada_Quality.Reporting.Run_Record'
+              (Id => 9, Project_Id => 1, State => Assessment_Completed,
+               Source_Id => To_Unbounded_String ("source"), Policy_Id => To_Unbounded_String ("policy"),
+               Toolchain_Id => To_Unbounded_String ("toolchain"),
+               Started_At => (Present => False), Finished_At => (Present => False),
+               Format => Ada_Quality.Reporting.Lossless_Evidence));
+         History_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_History (Runs));
+         Jsonlib.Parsers.Parse (To_String (History_JSON), Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index (To_String (History_JSON), """kind"":""assessment-history""") > 0 and then
+            Ada.Strings.Fixed.Index (To_String (History_JSON), """assessment_id"":9") > 0,
+            "filtered history has a versioned deterministic JSON representation");
+
+         Comparison.Changes.Append
+           (Ada_Quality.History.Regression'
+              (Indicator => TST_03, Kind => Ada_Quality.History.Worsened_Metric,
+               Before => To_Unbounded_String ("9250"), After => To_Unbounded_String ("9000")));
+         Comparison_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_Comparison (Comparison));
+         Jsonlib.Parsers.Parse (To_String (Comparison_JSON), Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index
+              (To_String (Comparison_JSON), """kind"":""assessment-comparison""") > 0 and then
+            Ada.Strings.Fixed.Index (To_String (Comparison_JSON), """baseline_id"":7") > 0,
+            "explicit comparisons have a versioned deterministic JSON representation");
+      end;
    end;
    declare
       Root : constant String :=
@@ -149,6 +202,15 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trend.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "metric trend JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trends.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "multi-metric trend JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-history.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "assessment history JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-comparison.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "assessment comparison JSON schema is valid JSON");
    end;
 end;
 end Run_JSON_Test;

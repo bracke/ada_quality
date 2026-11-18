@@ -178,4 +178,119 @@ package body Ada_Quality.JSON is
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Trend;
+
+   procedure Populate_Trend_Points
+     (Doc : in out Document;
+      Parent : Node;
+      Points : Ada_Quality.History.Trend_Vectors.Vector)
+   is
+      Items : constant Node := Doc.New_Array;
+   begin
+      for Point of Points loop
+         declare
+            Item : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Item, "run_id", Doc.New_Integer (Long_Long_Integer (Point.Run_Id)));
+            Doc.Insert (Item, "value", Doc.New_Integer (Point.Value));
+            Doc.Append (Items, Item);
+         end;
+      end loop;
+      Doc.Insert (Parent, "points", Items);
+   end Populate_Trend_Points;
+
+   function Render_Trends
+     (Project_Id : Positive;
+      Series     : Metric_Series_Vectors.Vector;
+      Pretty     : Boolean := False) return String
+   is
+      Doc   : Document;
+      Root  : constant Node := Doc.New_Object;
+      Items : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("metric-trends"));
+      Doc.Insert (Root, "project_id", Doc.New_Integer (Long_Long_Integer (Project_Id)));
+      for Series_Item of Series loop
+         declare
+            Item : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Item, "indicator", Doc.New_String (Image (Series_Item.Indicator)));
+            Doc.Insert (Item, "unit", Doc.New_String (To_String (Series_Item.Unit_Name)));
+            Populate_Trend_Points (Doc, Item, Series_Item.Points);
+            Doc.Append (Items, Item);
+         end;
+      end loop;
+      Doc.Insert (Root, "series", Items);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Trends;
+
+   function Status_Image (Value : Assessment_Status) return String is
+     (case Value is
+         when Assessment_Running => "running",
+         when Assessment_Completed => "completed",
+         when Assessment_Invalid => "invalid",
+         when Assessment_Interrupted => "interrupted");
+
+   function Render_History
+     (Items : Ada_Quality.Reporting.Run_Vectors.Vector;
+      Pretty : Boolean := False) return String
+   is
+      Doc  : Document;
+      Root : constant Node := Doc.New_Object;
+      Runs : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("assessment-history"));
+      for Run of Items loop
+         declare
+            Item : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Item, "assessment_id", Doc.New_Integer (Long_Long_Integer (Run.Id)));
+            Doc.Insert (Item, "project_id", Doc.New_Integer (Long_Long_Integer (Run.Project_Id)));
+            Doc.Insert (Item, "status", Doc.New_String (Status_Image (Run.State)));
+            Doc.Insert (Item, "started_at", Doc.New_String (Ada_Quality.Reporting.Image (Run.Started_At)));
+            Doc.Insert (Item, "finished_at", Doc.New_String (Ada_Quality.Reporting.Image (Run.Finished_At)));
+            Doc.Insert (Item, "source_fingerprint", Doc.New_String (To_String (Run.Source_Id)));
+            Doc.Insert (Item, "policy_fingerprint", Doc.New_String (To_String (Run.Policy_Id)));
+            Doc.Insert (Item, "toolchain_fingerprint", Doc.New_String (To_String (Run.Toolchain_Id)));
+            Doc.Append (Runs, Item);
+         end;
+      end loop;
+      Doc.Insert (Root, "runs", Runs);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_History;
+
+   function Render_Comparison
+     (Item : Ada_Quality.Reporting.Project_Comparison;
+      Pretty : Boolean := False) return String
+   is
+      Doc     : Document;
+      Root    : constant Node := Doc.New_Object;
+      Changes : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("assessment-comparison"));
+      Doc.Insert (Root, "project_id", Doc.New_Integer (Long_Long_Integer (Item.Project_Id)));
+      Doc.Insert
+        (Root, "status", Doc.New_String (Ada_Quality.History.Image (Item.Selection.Status)));
+      Doc.Insert (Root, "baseline_id", Doc.New_Integer (Long_Long_Integer (Item.Selection.Baseline_Id)));
+      Doc.Insert (Root, "current_id", Doc.New_Integer (Long_Long_Integer (Item.Selection.Current_Id)));
+      Doc.Insert (Root, "policy_changed", Doc.New_Boolean (Item.Selection.Policy_Changed));
+      for Change of Item.Changes loop
+         declare
+            Change_Item : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Change_Item, "indicator", Doc.New_String (Image (Change.Indicator)));
+            Doc.Insert (Change_Item, "change", Doc.New_String (Ada_Quality.History.Image (Change.Kind)));
+            Doc.Insert (Change_Item, "before", Doc.New_String (To_String (Change.Before)));
+            Doc.Insert (Change_Item, "after", Doc.New_String (To_String (Change.After)));
+            Doc.Append (Changes, Change_Item);
+         end;
+      end loop;
+      Doc.Insert (Root, "changes", Changes);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Comparison;
 end Ada_Quality.JSON;

@@ -690,11 +690,27 @@ package body Ada_Quality_Reporting_Tests is
       use type Ada_Quality.History.Comparison_Status;
       Earlier : constant Reporting.Project_Comparison := Reporting.Compare_Project (Session, Project, First);
       Chosen  : constant Reporting.Project_Comparison := Reporting.Compare_Project (Session, Project, Second);
+      Exact   : constant Reporting.Project_Comparison := Reporting.Compare_Assessments (Session, First, Second);
    begin
       Assert (Earlier.Selection.Status = Ada_Quality.History.No_Baseline, "an earlier current run has no baseline");
       Assert (Earlier.Changes.Is_Empty, "and no regressions");
       Assert (Chosen.Selection = Latest.Selection, "the latest chosen run selects the latest baseline");
       Assert (Chosen.Changes.Length = Latest.Changes.Length, "and finds the same regressions");
+      Assert
+        (Exact.Selection.Baseline_Id = First and then Exact.Selection.Current_Id = Second and then
+         Exact.Changes.Length = Latest.Changes.Length,
+         "explicit comparisons retain the selected baseline and current assessments");
+      begin
+         declare
+            Invalid : constant Reporting.Project_Comparison :=
+              Reporting.Compare_Assessments (Session, Second, First);
+            pragma Unreferenced (Invalid);
+         begin
+            Assert (False, "reversed explicit comparisons must fail");
+         end;
+      exception
+         when Reporting.Reporting_Error => null;
+      end;
    end Chosen_Current;
 
    procedure History_Adapter is

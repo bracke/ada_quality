@@ -33,7 +33,10 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality check --all
 ./bin/ada-quality history
 ./bin/ada-quality assessment show 1 --format sarif
+./bin/ada-quality assessment diff 1 2 --format json
+./bin/ada-quality history --project 1 --status completed --limit 20 --json
 ./bin/ada-quality trend --project 1 --indicator TST-03 --json
+./bin/ada-quality trend --project 1 --all --format csv
 ./bin/ada-quality report --format json
 ```
 

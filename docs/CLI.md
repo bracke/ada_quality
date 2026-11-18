@@ -7,11 +7,17 @@ ada-quality project show ID
 ada-quality project enable|disable|remove ID
 ada-quality check --all | --project ID [--json]
 ada-quality assessment show RUN_ID [--format text|json|sarif|junit]
+ada-quality assessment diff BASELINE_ID CURRENT_ID [--format text|json]
 ada-quality status
 ada-quality findings
 ada-quality regressions [--project ID] [--current RUN_ID]
-ada-quality history
-ada-quality trend --project ID --indicator TST-03 [--json]
+ada-quality regressions --baseline RUN_ID --current RUN_ID
+ada-quality history [--project ID] [--status STATE] [--limit N]
+                    [--since YYYY-MM-DDTHH:MM:SSZ] [--until YYYY-MM-DDTHH:MM:SSZ] [--json]
+ada-quality trend --project ID (--indicator TST-03 | --all)
+                  [--from-run ID] [--to-run ID]
+                  [--since YYYY-MM-DDTHH:MM:SSZ] [--until YYYY-MM-DDTHH:MM:SSZ]
+                  [--format text|json|csv]
 ada-quality report --format json
 ada-quality policy validate|show
 ada-quality database init|check|recover
@@ -26,6 +32,18 @@ and JUnit maps each indicator to a test case: violations are failures, unavailab
 not-applicable indicators are skipped. `regressions --current` compares the selected assessment with its newest
 compatible predecessor while ignoring later runs. `trend` emits the compatible numeric series for one canonical
 indicator ID; `--json` uses the metric-trend-v1 contract.
+
+`assessment diff` compares exactly the two selected assessments; it never substitutes an automatic baseline.
+The baseline must precede the current assessment and both must belong to the same project. Its JSON output uses the
+assessment-comparison-v1 contract. The equivalent text comparison is available through
+`regressions --baseline ID --current ID`.
+
+`history` filters validated runs by project, lifecycle state, inclusive start-time bounds, and a most-recent result
+limit. Filtered results remain in ascending assessment-ID order. `--json` emits assessment-history-v1.
+
+`trend --all` exports every registry metric with a defined regression direction. Run-ID and finished-time bounds are
+inclusive. Single-indicator JSON remains metric-trend-v1; `--all --format json` emits metric-trends-v1. CSV uses the
+stable columns `project_id,indicator,unit,run_id,value` and emits one header even when the selected range is empty.
 
 Exit status meanings are:
 
