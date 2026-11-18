@@ -2,7 +2,7 @@
 
 Release gates are `alr build --validation -- -f`, `alr test`, `alr exec -- ./bin/coverage`, GNATdoc generation, and
 `./bin/check_all`. The coverage driver is the exact >=90% gate. The standard checker independently requires all
-AQ-000 through AQ-008 records, both JSON schemas, exactly 33 indicators, the coverage artifact, and a passing
+AQ-000 through AQ-008 records, all four JSON schemas, exactly 33 indicators, the coverage artifact, and a passing
 49-case AUnit binary. Keeping these gates
 separate allows a failed coverage artifact to be replaced by a fresh measurement.
 

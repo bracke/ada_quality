@@ -28,6 +28,9 @@ begin
          case Indicator is
             when STR_02 =>
                Result.Measurement := (Kind => Integer_Value, Integer_Data => 17);
+               Result.Compliance := Violation;
+               Result.Summary := To_Unbounded_String ("failed <gate> & check");
+               Result.Evidence := To_Unbounded_String ("expected ""safe"" output");
             when STR_03 =>
                Result.Measurement := (Kind => Decimal_Value, Basis_Points => 9_250);
             when STR_04 =>
@@ -47,7 +50,7 @@ begin
             Result.Findings.Append
               (Finding'(Indicator => Indicator, Rule => To_Unbounded_String ("fixture"), Level => Low,
                 Message => To_Unbounded_String ("finding"),
-                Relative_Path => To_Unbounded_String ("src/example.adb"), Line => 1,
+                Relative_Path => To_Unbounded_String ("src/example file.adb"), Line => 1,
                 Fingerprint => To_Unbounded_String ("fixture-fingerprint")));
          end if;
          Value.Results.Append (Result);
@@ -100,6 +103,37 @@ begin
          "batch JSON retains completed and interrupted project outcomes");
    end;
    declare
+      SARIF : constant String := Ada_Quality.CI_Formats.Render_SARIF (Value);
+      JUnit : constant String := Ada_Quality.CI_Formats.Render_JUnit (Value);
+      Points : Ada_Quality.History.Trend_Vectors.Vector;
+      Trend  : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      Jsonlib.Parsers.Parse (SARIF, Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "SARIF output is strict JSON");
+      Assert
+        (Ada.Strings.Fixed.Index (SARIF, """version"":""2.1.0""") > 0 and then
+         Ada.Strings.Fixed.Index (SARIF, """ruleId"":""STR-01/fixture""") > 0 and then
+         Ada.Strings.Fixed.Index (SARIF, """adaQuality/v1""") > 0 and then
+         Ada.Strings.Fixed.Index (SARIF, "src/example%20file.adb") > 0,
+         "SARIF retains its contract, finding identity, and URI-encoded source location");
+      Assert
+        (Ada.Strings.Fixed.Index (JUnit, "tests=""33""") > 0 and then
+         Ada.Strings.Fixed.Index (JUnit, "failures=""1""") > 0 and then
+         Ada.Strings.Fixed.Index (JUnit, "errors=""1""") > 0 and then
+         Ada.Strings.Fixed.Index (JUnit, "failed &lt;gate&gt; &amp; check") > 0,
+         "JUnit maps every indicator and escapes failure diagnostics");
+      Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 7, Value => 9_000));
+      Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 9, Value => 9_250));
+      Trend := To_Unbounded_String
+        (Ada_Quality.JSON.Render_Trend (1, TST_03, "basis_points", Points));
+      Jsonlib.Parsers.Parse (To_String (Trend), Doc, Error);
+      Assert
+        (not Jsonlib.Errors.Failed (Error) and then
+         Ada.Strings.Fixed.Index (To_String (Trend), """kind"":""metric-trend""") > 0 and then
+         Ada.Strings.Fixed.Index (To_String (Trend), """run_id"":9") > 0,
+         "metric trends have a versioned deterministic JSON representation");
+   end;
+   declare
       Root : constant String :=
         Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
    begin
@@ -112,6 +146,9 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-batch.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "batch assessment JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trend.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "metric trend JSON schema is valid JSON");
    end;
 end;
 end Run_JSON_Test;

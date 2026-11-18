@@ -1,6 +1,7 @@
 with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
 with Ada_Quality.Reporting;
+with Ada_Quality.History;
 with Ada_Quality.Types;
 
 --  Deterministic JSON serialization for assessments and persistent archives.
@@ -41,4 +42,12 @@ package Ada_Quality.JSON is
    --  @param Max_Output_Bytes Maximum serialized archive size.
    --  @return Complete archive JSON document.
    --  @exception Ada_Quality.Reporting.Limit_Error The serialized archive exceeds the output limit.
+
+   function Render_Trend
+     (Project_Id : Positive;
+      Indicator  : Ada_Quality.Types.Indicator_Id;
+      Unit_Name  : String;
+      Points     : Ada_Quality.History.Trend_Vectors.Vector;
+      Pretty     : Boolean := False) return String;
+   --  Serialize one compatible metric series as a versioned JSON document.
 end Ada_Quality.JSON;

@@ -7,3 +7,6 @@ policy, and toolchain. Ordinary source revisions remain comparable when those se
 measurement rows are explicitly interpreted as indicator v1/method v1; malformed semantic identities, unavailable,
 text, and Boolean values are ignored. Fixtures cover interrupted-latest history, independent version changes,
 recovery integration, and deterministic ordering across 1,000 runs.
+
+The CLI exposes this series through `trend --project ID --indicator ID`; `--json` emits the versioned
+metric-trend-v1 document with the registry's stable measurement unit.

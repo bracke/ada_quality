@@ -6,8 +6,10 @@ with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada.Text_IO;
 with Terminal_Styles;
+with Ada_Quality.CI_Formats;
 with Ada_Quality.Checks;
 with Ada_Quality.History;
+with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;
 with Ada_Quality.Presentation;
@@ -49,7 +51,9 @@ package body Ada_Quality.CLI is
          begin
             if Skip_Value then
                Skip_Value := False;
-            elsif Value in "--database" | "--policy" | "--color" | "--project" | "--format" then
+            elsif Value in "--database" | "--policy" | "--color" | "--project" | "--format" |
+              "--current" | "--indicator"
+            then
                Skip_Value := True;
             elsif Value in "--no-color" | "--all" | "--json" then
                null;
@@ -66,7 +70,8 @@ package body Ada_Quality.CLI is
       Index : Positive := 1;
 
       function Takes_Value (Name : String) return Boolean is
-        (Name in "--database" | "--policy" | "--color" | "--project" | "--format");
+        (Name in "--database" | "--policy" | "--color" | "--project" | "--format" |
+           "--current" | "--indicator");
 
       function Allowed (Name : String) return Boolean is
         (Takes_Value (Name) or else Name in "--no-color" | "--all" | "--json");
@@ -122,7 +127,10 @@ package body Ada_Quality.CLI is
       Ada.Text_IO.Put_Line ("Commands:");
       Ada.Text_IO.Put_Line ("  project add PATH | list | show ID | enable ID | disable ID | remove ID");
       Ada.Text_IO.Put_Line ("  check --all | --project ID [--json]");
-      Ada.Text_IO.Put_Line ("  status | findings | regressions | history");
+      Ada.Text_IO.Put_Line ("  assessment show RUN_ID [--format text|json|sarif|junit]");
+      Ada.Text_IO.Put_Line ("  status | findings | history");
+      Ada.Text_IO.Put_Line ("  regressions [--project ID] [--current RUN_ID]");
+      Ada.Text_IO.Put_Line ("  trend --project ID --indicator ID [--json]");
       Ada.Text_IO.Put_Line ("  report --format json");
       Ada.Text_IO.Put_Line ("  policy validate | show");
       Ada.Text_IO.Put_Line ("  database init | check | recover");
@@ -167,6 +175,67 @@ package body Ada_Quality.CLI is
       end loop;
    end Print_Assessment;
 
+   function Stored_Assessment
+     (Session : Ada_Quality.Reporting.Session;
+      Run_Id  : Positive) return Assessment
+   is
+      Stored  : constant Ada_Quality.Reporting.Assessment_Record :=
+        Ada_Quality.Reporting.Read_Assessment (Session, Run_Id);
+      Project : constant Ada_Quality.Reporting.Project_Record :=
+        Ada_Quality.Reporting.Project (Session, Stored.Run.Project_Id);
+      Result  : Assessment;
+   begin
+      Result.Id := Stored.Run.Id;
+      Result.Project_Id := Stored.Run.Project_Id;
+      Result.Project_Path := Project.Path;
+      Result.Source_Fingerprint := Stored.Run.Source_Id;
+      Result.Policy_Fingerprint := Stored.Run.Policy_Id;
+      Result.Toolchain_Fingerprint := Stored.Run.Toolchain_Id;
+      Result.Status := Stored.Run.State;
+      Result.Results := Stored.Results;
+      for Execution of Stored.Executions loop
+         Result.Executions.Append
+           (Tool_Execution'
+              (Tool => Execution.Tool, Command => Execution.Command,
+               Status => Execution.Status, Exit_Code => Execution.Exit_Code,
+               Output_Digest => Execution.Output_Digest,
+               Output_Bytes => Execution.Output_Bytes, Truncated => Execution.Truncated));
+      end loop;
+      return Result;
+   end Stored_Assessment;
+
+   procedure Print_Comparison
+     (Comparison : Ada_Quality.Reporting.Project_Comparison)
+   is
+   begin
+      if Comparison.Selection.Status = Ada_Quality.History.Comparison_Available then
+         if Comparison.Changes.Is_Empty then
+            Ada.Text_IO.Put_Line
+              ("project" & Positive'Image (Comparison.Project_Id) &
+               ": no regressions in comparable assessments");
+         else
+            for Change of Comparison.Changes loop
+               Ada.Text_IO.Put_Line
+                 ("project" & Positive'Image (Comparison.Project_Id) & " " &
+                  Image (Change.Indicator) & " " & Ada_Quality.History.Image (Change.Kind) & ": " &
+                  To_String (Change.Before) & " -> " & To_String (Change.After));
+            end loop;
+         end if;
+      else
+         Ada.Text_IO.Put_Line
+           ("project" & Positive'Image (Comparison.Project_Id) &
+            ": comparison unavailable: " &
+            (case Comparison.Selection.Status is
+                when Ada_Quality.History.No_Assessments => "no assessments exist",
+                when Ada_Quality.History.No_Baseline => "no baseline assessment exists",
+                when Ada_Quality.History.Current_Incomplete => "current assessment is not completed",
+                when Ada_Quality.History.No_Completed_Baseline => "no completed baseline exists",
+                when Ada_Quality.History.Toolchain_Changed => "toolchain fingerprint changed",
+                when Ada_Quality.History.No_Compatible_Baseline => "no compatible baseline exists",
+                when Ada_Quality.History.Comparison_Available => "comparison is available"));
+      end if;
+   end Print_Comparison;
+
    procedure Print_Findings (DB_Path : String) is separate;
 
    function Run_Check
@@ -184,6 +253,22 @@ package body Ada_Quality.CLI is
       begin
          Ada_Quality.Storage.Open (Store, DB_Path, Create);
       end Open_Store;
+
+      function Positive_Option (Name, Kind : String) return Positive is
+      begin
+         return Positive'Value (Option (Name, ""));
+      exception
+         when Constraint_Error =>
+            raise Usage_Error with "a positive " & Kind & " ID is required";
+      end Positive_Option;
+
+      function Assessment_Id_Argument (Index : Positive) return Positive is
+      begin
+         return Positive'Value (Positional (Index));
+      exception
+         when Constraint_Error =>
+            raise Usage_Error with "a positive assessment ID is required";
+      end Assessment_Id_Argument;
 
       function Id_Argument (Index : Positive) return Positive is
       begin
@@ -304,6 +389,42 @@ package body Ada_Quality.CLI is
             raise Usage_Error with "unknown project subcommand";
          end if;
          return 0;
+      elsif Command = "assessment" then
+         if Subcommand /= "show" then
+            raise Usage_Error with "assessment requires show RUN_ID";
+         end if;
+         declare
+            Session : Ada_Quality.Reporting.Session;
+            Value   : Assessment;
+            Run_Id  : constant Positive := Assessment_Id_Argument (3);
+            JSON_Flag : constant Boolean :=
+              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
+            Requested_Format : constant String := Option ("--format", "");
+            Format  : constant String :=
+              (if JSON_Flag then "json"
+               elsif Requested_Format'Length > 0 then Requested_Format else "text");
+         begin
+            if JSON_Flag and then Requested_Format'Length > 0 and then Requested_Format /= "json" then
+               raise Usage_Error with "--json conflicts with non-JSON --format";
+            elsif Format not in "text" | "json" | "sarif" | "junit" then
+               raise Usage_Error with "assessment format requires text, json, sarif, or junit";
+            end if;
+            if Format /= "text" then
+               Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+            end if;
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            Value := Stored_Assessment (Session, Run_Id);
+            if Format = "json" then
+               Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
+            elsif Format = "sarif" then
+               Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Value, Pretty => True));
+            elsif Format = "junit" then
+               Ada.Text_IO.Put (Ada_Quality.CI_Formats.Render_JUnit (Value));
+            else
+               Print_Assessment (Value);
+            end if;
+         end;
+         return 0;
       elsif Command = "check" then
          return Run_Check (Store, Policy_Path);
       elsif Command = "history" or else Command = "status" then
@@ -331,47 +452,90 @@ package body Ada_Quality.CLI is
             Session : Ada_Quality.Reporting.Session;
          begin
             Ada_Quality.Reporting.Open (Session, DB_Path);
-            for P of Ada_Quality.Reporting.Projects (Session) loop
-               Projects_Seen := Projects_Seen + 1;
+            if Option ("--current", "") /= "" then
                declare
-                  Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
-                    Ada_Quality.Reporting.Compare_Project (Session, P.Id);
+                  Current_Id : constant Positive := Positive_Option ("--current", "assessment");
+                  Selected   : Ada_Quality.Reporting.Run_Record;
+                  Found      : Boolean := False;
                begin
-                  if Comparison.Selection.Status = Ada_Quality.History.Comparison_Available then
-                     if Comparison.Changes.Is_Empty then
-                        Ada.Text_IO.Put_Line
-                          ("project" & Positive'Image (P.Id) &
-                           ": no regressions in comparable assessments");
-                     else
-                        for Change of Comparison.Changes loop
-                           Ada.Text_IO.Put_Line
-                             ("project" & Positive'Image (P.Id) & " " & Image (Change.Indicator) & " " &
-                              Ada_Quality.History.Image (Change.Kind) & ": " &
-                              To_String (Change.Before) & " -> " & To_String (Change.After));
-                        end loop;
+                  for Run of Ada_Quality.Reporting.Runs (Session) loop
+                     if Run.Id = Current_Id then
+                        Selected := Run;
+                        Found := True;
                      end if;
-                  else
-                     Ada.Text_IO.Put_Line
-                       ("project" & Positive'Image (P.Id) &
-                        ": comparison unavailable: " &
-                        (case Comparison.Selection.Status is
-                           when Ada_Quality.History.No_Assessments => "no assessments exist",
-                           when Ada_Quality.History.No_Baseline => "no baseline assessment exists",
-                           when Ada_Quality.History.Current_Incomplete =>
-                             "current assessment is not completed",
-                           when Ada_Quality.History.No_Completed_Baseline =>
-                             "no completed baseline exists",
-                           when Ada_Quality.History.Toolchain_Changed =>
-                             "toolchain fingerprint changed",
-                           when Ada_Quality.History.No_Compatible_Baseline =>
-                             "no compatible baseline exists",
-                           when Ada_Quality.History.Comparison_Available => "comparison is available"));
+                  end loop;
+                  if not Found then
+                     raise Ada_Quality.Reporting.Reporting_Error with
+                       "assessment not found:" & Positive'Image (Current_Id);
+                  elsif Option ("--project", "") /= "" and then
+                    Positive_Option ("--project", "project") /= Selected.Project_Id
+                  then
+                     raise Usage_Error with "--current assessment does not belong to --project";
                   end if;
+                  Print_Comparison
+                    (Ada_Quality.Reporting.Compare_Project
+                       (Session, Selected.Project_Id, Current_Id));
+                  Projects_Seen := 1;
                end;
-            end loop;
+            elsif Option ("--project", "") /= "" then
+               declare
+                  Project_Id : constant Positive := Positive_Option ("--project", "project");
+                  Project    : constant Ada_Quality.Reporting.Project_Record :=
+                    Ada_Quality.Reporting.Project (Session, Project_Id);
+                  pragma Unreferenced (Project);
+               begin
+                  Print_Comparison (Ada_Quality.Reporting.Compare_Project (Session, Project_Id));
+                  Projects_Seen := 1;
+               end;
+            else
+               for P of Ada_Quality.Reporting.Projects (Session) loop
+                  Projects_Seen := Projects_Seen + 1;
+                  Print_Comparison (Ada_Quality.Reporting.Compare_Project (Session, P.Id));
+               end loop;
+            end if;
             if Projects_Seen = 0 then
                Ada.Text_IO.Put_Line ("comparison unavailable: no projects are registered");
             end if;
+         end;
+         return 0;
+      elsif Command = "trend" then
+         declare
+            Session    : Ada_Quality.Reporting.Session;
+            Project_Id : constant Positive := Positive_Option ("--project", "project");
+            Indicator  : Indicator_Id;
+            JSON_Mode  : constant Boolean :=
+              (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--json");
+         begin
+            if not Ada_Quality.Indicators.Parse_Canonical (Option ("--indicator", ""), Indicator) then
+               raise Usage_Error with "--indicator requires a canonical indicator ID";
+            end if;
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            declare
+               Project : constant Ada_Quality.Reporting.Project_Record :=
+                 Ada_Quality.Reporting.Project (Session, Project_Id);
+               pragma Unreferenced (Project);
+               Points : constant Ada_Quality.History.Trend_Vectors.Vector :=
+                 Ada_Quality.History.Metric_Trend
+                   (Ada_Quality.Reporting.History_Items (Session, Project_Id),
+                    Ada_Quality.Reporting.All_Measurements (Session, Project_Id), Indicator);
+               Unit_Name : constant String := Ada_Quality.Indicators.Measurement_Unit (Indicator);
+            begin
+               if JSON_Mode then
+                  Ada.Text_IO.Put_Line
+                    (Ada_Quality.JSON.Render_Trend
+                       (Project_Id, Indicator, Unit_Name, Points, Pretty => True));
+               elsif Points.Is_Empty then
+                  Ada.Text_IO.Put_Line
+                    ("project" & Positive'Image (Project_Id) & " " & Image (Indicator) &
+                     ": no compatible numeric trend");
+               else
+                  for Point of Points loop
+                     Ada.Text_IO.Put_Line
+                       ("run" & Positive'Image (Point.Run_Id) & " " & Image (Indicator) & "=" &
+                        Long_Long_Integer'Image (Point.Value) & " " & Unit_Name);
+                  end loop;
+               end if;
+            end;
          end;
          return 0;
       elsif Command = "report" and then Option ("--format", "") = "json" then

@@ -6,10 +6,12 @@ ada-quality project list
 ada-quality project show ID
 ada-quality project enable|disable|remove ID
 ada-quality check --all | --project ID [--json]
+ada-quality assessment show RUN_ID [--format text|json|sarif|junit]
 ada-quality status
 ada-quality findings
-ada-quality regressions
+ada-quality regressions [--project ID] [--current RUN_ID]
 ada-quality history
+ada-quality trend --project ID --indicator TST-03 [--json]
 ada-quality report --format json
 ada-quality policy validate|show
 ada-quality database init|check|recover
@@ -17,6 +19,13 @@ ada-quality database init|check|recover
 
 Global options are `--database PATH`, `--policy PATH`, `--no-color`, and `--color never`. Environment variables
 `ADA_QUALITY_DATABASE` and `ADA_QUALITY_POLICY` provide defaults. JSON never contains ANSI styling.
+
+`assessment show` reads one completed immutable assessment. Text prints the 33 indicator outcomes, JSON uses the
+assessment-v1 contract, SARIF 2.1.0 exports structured findings with their stable fingerprints and source locations,
+and JUnit maps each indicator to a test case: violations are failures, unavailable evidence is an error, and
+not-applicable indicators are skipped. `regressions --current` compares the selected assessment with its newest
+compatible predecessor while ignoring later runs. `trend` emits the compatible numeric series for one canonical
+indicator ID; `--json` uses the metric-trend-v1 contract.
 
 Exit status meanings are:
 

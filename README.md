@@ -32,6 +32,8 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality project add /absolute/path/to/an/alire/crate
 ./bin/ada-quality check --all
 ./bin/ada-quality history
+./bin/ada-quality assessment show 1 --format sarif
+./bin/ada-quality trend --project 1 --indicator TST-03 --json
 ./bin/ada-quality report --format json
 ```
 

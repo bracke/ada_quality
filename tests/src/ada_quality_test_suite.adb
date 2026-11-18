@@ -17,6 +17,7 @@ with Jsonlib.Parsers;
 with Project_Tools.Processes;
 with Project_Tools.Files;
 with Ada_Quality.Execution;
+with Ada_Quality.CI_Formats;
 with Ada_Quality.Evaluation;
 with Ada_Quality.Finding_Identity;
 with Ada_Quality.Checks;
