@@ -1,3 +1,4 @@
+with Ada.Calendar;
 separate (Ada_Quality_Test_Suite)
 --  AQ-WAIVER: SRC-03 target=set_coverage justification=one-component-fixture-matrix
 procedure Run_Storage_Test is
@@ -8,6 +9,8 @@ declare
    Export_Path : constant String := Fixture_Root & "/storage_test.export";
    Restored_Path : constant String := Fixture_Root & "/storage_test_restored.db";
    Imported_Path : constant String := Fixture_Root & "/storage_test_imported.db";
+   Retention_Path : constant String := Fixture_Root & "/storage_test_retention.export";
+   Retention_Restore_Path : constant String := Fixture_Root & "/storage_test_retention_restore.db";
    Relocated_Root : constant String := Fixture_Root & "/relocated-project";
    Root  : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
@@ -41,6 +44,10 @@ begin
    if Ada.Directories.Exists (Export_Path) then Ada.Directories.Delete_File (Export_Path); end if;
    if Ada.Directories.Exists (Restored_Path) then Ada.Directories.Delete_File (Restored_Path); end if;
    if Ada.Directories.Exists (Imported_Path) then Ada.Directories.Delete_File (Imported_Path); end if;
+   if Ada.Directories.Exists (Retention_Path) then Ada.Directories.Delete_File (Retention_Path); end if;
+   if Ada.Directories.Exists (Retention_Restore_Path) then
+      Ada.Directories.Delete_File (Retention_Restore_Path);
+   end if;
    if Ada.Directories.Exists (Relocated_Root) then Project_Tools.Files.Delete_Tree (Relocated_Root); end if;
    Ada_Quality.Storage.Open (Store, Path);
    Ada_Quality.Storage.Check (Store);
@@ -399,11 +406,34 @@ begin
      (Ada_Quality.Storage.Projects (Store).Length = 1 and then
       Ada_Quality.Storage.History (Store, Pid).Length > 0,
       "a logical import retains registry and assessment history");
+   declare
+      Before_Count : constant Natural := Natural (Ada_Quality.Storage.History (Store, Pid).Length);
+      Removed : Natural;
+      use type Ada.Calendar.Time;
+   begin
+      Ada_Quality.Storage.Archive_And_Prune
+        (Store, Retention_Path, Ada.Calendar.Clock + 86_400.0, Keep => 2, Removed => Removed);
+      Ada_Quality.Storage.Check (Store);
+      Assert
+        (Removed = Before_Count - 2 and then
+         Ada_Quality.Storage.History (Store, Pid).Length = 2 and then
+         Ada.Directories.Exists (Retention_Path),
+         "retention archives the complete database before keeping the newest terminal assessments");
+      Ada_Quality.Storage.Close (Store);
+      Ada_Quality.Storage.Import (Retention_Path, Retention_Restore_Path);
+      Ada_Quality.Storage.Open (Store, Retention_Restore_Path, Create_If_Missing => False);
+      Ada_Quality.Storage.Check (Store);
+      Assert
+        (Natural (Ada_Quality.Storage.History (Store, Pid).Length) = Before_Count,
+         "the verified retention archive restores every assessment removed from the live database");
+   end;
    Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
    Ada.Directories.Delete_File (Export_Path);
    Ada.Directories.Delete_File (Restored_Path);
    Ada.Directories.Delete_File (Imported_Path);
+   Ada.Directories.Delete_File (Retention_Path);
+   Ada.Directories.Delete_File (Retention_Restore_Path);
    Project_Tools.Files.Delete_Tree (Backup_Path);
    Project_Tools.Files.Delete_Tree (Relocated_Root);
 end;

@@ -7,11 +7,21 @@ procedure Exercise_CLI is
       Export_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.export");
       Restored_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-restored.db");
       Imported_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-imported.db");
+      Archive_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "retention.export");
       HTML_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "portfolio.html");
       Assessment_HTML_Path : constant String :=
         Ada_Quality.Temporary_Directories.Child (Scratch, "assessment.html");
       Changed_List_Path : constant String :=
         Ada_Quality.Temporary_Directories.Child (Scratch, "changed-files.txt");
+      Reuse_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "reuse.json");
+      Scan_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "scan.json");
+      Diff_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "comparison.json");
+      Trend_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "trend.csv");
+      Findings_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "findings.json");
+      Policy_Base : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "generated-policy.toml");
+      Policy_Profile : constant String := Ada_Quality.Temporary_Directories.Child
+        (Scratch, "generated-policy.ci.toml");
+      Effective_Output : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "effective.toml");
       Missing_Policy : constant String :=
         Ada_Quality.Temporary_Directories.Child (Scratch, "missing-policy.toml");
       Missing_Read_DB : constant String :=
@@ -38,9 +48,18 @@ procedure Exercise_CLI is
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".wal");
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".fts");
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (Archive_Path);
          Project_Tools.Files.Delete_File_If_Present (HTML_Path);
          Project_Tools.Files.Delete_File_If_Present (Assessment_HTML_Path);
          Project_Tools.Files.Delete_File_If_Present (Changed_List_Path);
+         Project_Tools.Files.Delete_File_If_Present (Reuse_Output);
+         Project_Tools.Files.Delete_File_If_Present (Scan_Output);
+         Project_Tools.Files.Delete_File_If_Present (Diff_Output);
+         Project_Tools.Files.Delete_File_If_Present (Trend_Output);
+         Project_Tools.Files.Delete_File_If_Present (Findings_Output);
+         Project_Tools.Files.Delete_File_If_Present (Policy_Base);
+         Project_Tools.Files.Delete_File_If_Present (Policy_Profile);
+         Project_Tools.Files.Delete_File_If_Present (Effective_Output);
          Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB);
          Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB & ".wal");
          Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB & ".fts");
@@ -188,6 +207,25 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
       Run_CLI
+        ("policy init",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("init"),
+             Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base)]),
+         Expected_Text => "created ");
+      Run_CLI
+        ("policy profile init",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("init"),
+             Project_Tools.Processes.Argument ("--profile"), Project_Tools.Processes.Argument ("ci"),
+             Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base)]),
+         Expected_Text => "created ");
+      Run_CLI
+        ("policy profiles",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("profiles"),
+             Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base)]),
+         Expected_Text => "ci");
+      Run_CLI
         ("explain indicator",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("explain"), Project_Tools.Processes.Argument ("SRC-03")]),
@@ -212,6 +250,18 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""project-list""");
+      Run_CLI
+        ("effective project policy",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("effective"),
+             Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--profile"), Project_Tools.Processes.Argument ("ci"),
+             Project_Tools.Processes.Argument ("--output"), Project_Tools.Processes.Argument (Effective_Output),
+             Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      if not Project_Tools.Files.File_Exists (Effective_Output) then
+         raise Program_Error with "effective policy output was not created";
+      end if;
       for Operation of Operations loop
          declare
             Name : constant String := Ada.Strings.Unbounded.To_String (Operation);
@@ -299,6 +349,24 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
          Allow_One => True, Expected_Text => "changed source(s)");
+      Run_CLI
+        ("Git working tree modes",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("scan"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--staged"),
+             Project_Tools.Processes.Argument ("--unstaged"), Project_Tools.Processes.Argument ("--untracked"),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
+             Project_Tools.Processes.Argument ("--output"), Project_Tools.Processes.Argument (Scan_Output),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_One => True);
+      if not Project_Tools.Files.File_Exists (Scan_Output) or else
+        Ada.Strings.Fixed.Index
+          (Project_Tools.Files.Read_Raw_File (Scan_Output), "changed-source-scan") = 0
+      then
+         raise Program_Error with "Git working tree scan output was not created";
+      end if;
       Run_Completed_Assessment ("full assessment");
       First_Assessment := Latest_Completed_Assessment_Id;
       Run_CLI
@@ -336,6 +404,22 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
          Allow_Three => True, Expected_Text => "reused assessment");
+      Run_CLI
+        ("reuse unchanged assessment JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--reuse-unchanged"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--output"),
+             Project_Tools.Processes.Argument (Reuse_Output),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_Three => True);
+      if not Project_Tools.Files.File_Exists (Reuse_Output) or else
+        Ada.Strings.Fixed.Index (Project_Tools.Files.Read_Raw_File (Reuse_Output), "assessment-reuse") = 0
+      then
+         raise Program_Error with "reuse JSON output was not created";
+      end if;
       Run_CLI
         ("second assessment alias",
          Project_Tools.Processes.Arguments
@@ -440,6 +524,15 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""assessment-comparison""");
       Run_CLI
+        ("assessment comparison file output",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
+             Project_Tools.Processes.Argument ("--output"), Project_Tools.Processes.Argument (Diff_Output),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      Run_CLI
         ("aliased assessment comparison",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
@@ -507,6 +600,14 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "project_id,indicator,unit,run_id,value");
       Run_CLI
+        ("metric trend file output",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--all"),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("csv"),
+             Project_Tools.Processes.Argument ("--output"), Project_Tools.Processes.Argument (Trend_Output),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      Run_CLI
         ("JSON report",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("report"), Project_Tools.Processes.Argument ("--format"),
@@ -539,6 +640,19 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""findings""");
+      Run_CLI
+        ("findings file output",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("findings"), Project_Tools.Processes.Argument ("--format"),
+             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--output"),
+             Project_Tools.Processes.Argument (Findings_Output),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      if not Project_Tools.Files.File_Exists (Diff_Output) or else
+        not Project_Tools.Files.File_Exists (Trend_Output) or else
+        not Project_Tools.Files.File_Exists (Findings_Output)
+      then
+         raise Program_Error with "structured file output was not created";
+      end if;
       Run_CLI
         ("portfolio status JSON",
          Project_Tools.Processes.Arguments
@@ -609,6 +723,15 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "export created");
+      Run_CLI
+        ("database retention archive",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("archive"),
+             Project_Tools.Processes.Argument (Archive_Path), Project_Tools.Processes.Argument ("--before"),
+             Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
+             Project_Tools.Processes.Argument ("--keep"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "archived database");
       Run_CLI
         ("database restore",
          Project_Tools.Processes.Arguments

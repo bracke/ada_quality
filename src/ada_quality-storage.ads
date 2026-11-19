@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
@@ -111,6 +112,14 @@ package Ada_Quality.Storage is
 
    procedure Import (Source, Destination : String);
    --  Import a database-native logical export into a new database file.
+
+   procedure Archive_And_Prune
+     (Item        : in out Store;
+      Destination : String;
+      Before      : Ada.Calendar.Time;
+      Keep        : Natural;
+      Removed     : out Natural);
+   --  Verify a full logical archive, then transactionally remove old terminal assessments.
 
    procedure Compact (Item : in out Store);
    --  Reclaim unused database pages inside one exclusive transaction.

@@ -4,6 +4,9 @@ All notable changes are recorded here. This project follows semantic versioning.
 
 ## Unreleased
 
+- Added JSON reuse reports, file output parity, policy management, and dynamic shell completion.
+- Added verified archive-before-prune retention and staged, unstaged, and untracked Git scan modes.
+
 - Added historical metric trends and JSON trend output.
 - Added SARIF and JUnit exports for stored assessments.
 - Added changed-source preflight scanning and indicator explanations.

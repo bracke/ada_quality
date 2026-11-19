@@ -38,3 +38,8 @@ the eight-table catalog, and schema metadata version.
 Logical export/import is symmetric: `database import SOURCE --database DESTINATION` creates a new database from the
 native export format and performs a complete integrity check before reporting success. Existing destinations are
 never overwritten. Transactional compaction is likewise checked before and after vacuuming.
+
+`database archive DEST --before UTC [--keep N]` first creates and verifies a complete logical export. It then
+transactionally removes terminal assessments older than UTC, retaining at least the newest N terminal assessments
+per project and every running assessment. Owned evidence and aliases are removed with their archived assessment;
+the resulting live database is checked and compacted, and the archive remains importable.

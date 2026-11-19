@@ -6,17 +6,11 @@ function Run_Check
 is
    function Profile_Path return String is
       Name : constant String := Option ("--profile", "");
-      Dot  : Natural := 0;
    begin
-      if Name = "" then return Policy_Path; end if;
-      for Index in reverse Policy_Path'Range loop
-         if Policy_Path (Index) = '.' then Dot := Index; exit; end if;
-      end loop;
-      return
-        (if Dot > Policy_Path'First
-         then Policy_Path (Policy_Path'First .. Dot - 1) & "." & Name &
-           Policy_Path (Dot .. Policy_Path'Last)
-         else Policy_Path & "." & Name);
+      if Name /= "" and then not Ada_Quality.Policy.Is_Profile_Name (Name) then
+         raise Usage_Error with "--profile requires letters, digits, underscores, or hyphens";
+      end if;
+      return Ada_Quality.Policy.Profile_Path (Policy_Path, Name);
    end Profile_Path;
 
    Loaded : constant Ada_Quality.Policy.Load_Result :=
@@ -135,7 +129,7 @@ is
                   Status => Ada_Quality.JSON.Batch_Completed,
                   Diagnostic => Null_Unbounded_String, Value => Result.Value));
          elsif JSON_Mode then
-            Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Result.Value, Pretty => True));
+            Emit_Document (Ada_Quality.JSON.Render (Result.Value, Pretty => True));
          else
             Print_Assessment (Result.Value);
          end if;
@@ -174,9 +168,19 @@ is
          end if;
       end loop;
       Exit_Code := Natural'Max (Exit_Code, Project_Exit);
-      Ada.Text_IO.Put_Line
-        ("project" & Positive'Image (Project.Id) & " unchanged; reused assessment" &
-         Positive'Image (Run_Id));
+      if Batch_Mode then
+         Outcomes.Append
+           (Ada_Quality.JSON.Batch_Outcome'
+              (Project_Id => Project.Id, Assessment_Id => Run_Id,
+               Status => Ada_Quality.JSON.Batch_Reused,
+               Diagnostic => Null_Unbounded_String, Value => <>));
+      elsif JSON_Mode then
+         Emit_Document (Ada_Quality.JSON.Render_Reuse (Project.Id, Run_Id, Pretty => True));
+      else
+         Ada.Text_IO.Put_Line
+           ("project" & Positive'Image (Project.Id) & " unchanged; reused assessment" &
+            Positive'Image (Run_Id));
+      end if;
    end Reuse;
 
    function Project_Id return Positive is
@@ -197,9 +201,10 @@ begin
       end;
       if Jobs > 64 then raise Usage_Error with "--jobs must not exceed 64"; end if;
    end if;
-   if Reuse_Unchanged and then JSON_Mode then
-      raise Usage_Error with "--reuse-unchanged is currently a text-output workflow";
-   elsif Option ("--project", "") /= "" then
+   if Option ("--output", "") /= "" and then not JSON_Mode then
+      raise Usage_Error with "check --output requires --json";
+   end if;
+   if Option ("--project", "") /= "" then
       declare
          Project : constant Ada_Quality.Storage.Project_Info :=
            Ada_Quality.Storage.Project (Store, Project_Id);
@@ -293,7 +298,7 @@ begin
       end loop;
    end;
    if Batch_Mode then
-      Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Batch (Outcomes, Pretty => True));
+      Emit_Document (Ada_Quality.JSON.Render_Batch (Outcomes, Pretty => True));
    end if;
    return Exit_Code;
 end Run_Check;

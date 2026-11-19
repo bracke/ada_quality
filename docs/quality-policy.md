@@ -5,3 +5,6 @@ One strict root-level TOML policy applies to all projects. Supported keys set co
 `check --profile NAME` selects `quality-policy.NAME.toml` beside the configured base path. `--project-policy` then
 applies an optional partial `quality-policy.override.toml` from each project root. Overlay files use the same strict
 validation and inherit every key they omit. Persisted fingerprints always describe the resulting effective policy.
+
+`policy init [--profile NAME]` creates a complete default policy, `policy profiles` discovers safe sibling profile
+names, and `policy effective --project ID [--profile NAME]` renders the fully resolved central/profile/project policy.

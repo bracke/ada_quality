@@ -1,7 +1,8 @@
 # Architecture
 
 Ada Quality is a single-process Ada 2022 CLI. The command layer loads one central policy, reads the enabled project
-registry in stable database order, and assesses projects sequentially. `Ada_Quality.Checks` owns the fixed 33-result
+registry in stable database order, and coordinates a bounded set of assessment workers. Run creation, publication,
+and batch output remain serialized in project order. `Ada_Quality.Checks` owns the fixed 33-result
 assessment pipeline; `Ada_Quality.Execution` owns bounded, timed external command execution; and
 `Ada_Quality.Storage` owns typed persistence and transaction boundaries.
 

@@ -45,6 +45,15 @@ package Ada_Quality.Policy is
      (Path : String; Base : Quality_Policy) return Load_Result;
    --  Load a partial policy overlay on top of an already validated policy.
 
+   function Profile_Path (Base_Path, Name : String) return String;
+   --  Return the sibling profile path formed by inserting Name before the file extension.
+
+   function Is_Profile_Name (Name : String) return Boolean;
+   --  Return whether Name is a safe portable profile identifier.
+
+   function Render (Item : Quality_Policy) return String;
+   --  Render a complete deterministic TOML policy document.
+
    function Fingerprint (Item : Quality_Policy) return String;
    --  Compute the deterministic identity of a policy.
    --  @param Item Policy to identify.

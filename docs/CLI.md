@@ -94,15 +94,26 @@ the roff manual is installed from `docs/ada-quality.1`.
 
 `check --jobs N` runs up to 64 project assessments concurrently while database publication and batch output remain
 ordered. `--reuse-unchanged` skips execution only when source, effective-policy, and live-toolchain fingerprints
-exactly match a completed assessment; it is a text-output workflow. `--profile NAME` selects
+exactly match a completed assessment. JSON emits a reuse document for one project or a reused batch outcome for
+`--all`. `--profile NAME` selects
 `quality-policy.NAME.toml`. With `--project-policy`, project-local `quality-policy.override.toml` files partially
 overlay the selected base policy.
 
 `project sync` adds discovered crates and reports registered paths under the selected root that are no longer found;
-`--remove-missing` tombstones them. `scan --git-diff BASE` uses Git's ACMR name-only diff without a shell. Findings
+`--remove-missing` tombstones them. `scan --git-diff BASE` uses Git's ACMR name-only diff without a shell;
+`--staged`, `--unstaged`, and `--untracked` may be combined and deduplicate Ada paths. Findings
 can be filtered by project, indicator, minimum severity, path substring, and inclusive run time, then emitted as
 text, findings-v1 JSON, or SARIF. HTML assessment and portfolio reports are self-contained and may be streamed or
 written with `--output`. Logical import creates and validates a new database from a native export.
+
+Findings, scans, trends, and assessment diffs accept `--output FILE`. `policy init [--profile NAME]` creates a
+complete policy without overwriting, `policy profiles` lists sibling profiles, and `policy effective --project ID
+[--profile NAME]` renders the resolved policy. `database archive DEST --before TIME [--keep N]` verifies a full
+logical archive before pruning old terminal assessments, retains the newest N per project, and never removes running
+work.
+
+Generated Bash, Zsh, and Fish completions query the active database and policy location for project IDs, assessment
+aliases, indicator IDs, and named profiles, while falling back cleanly when those files do not yet exist.
 
 Exit status meanings are:
 

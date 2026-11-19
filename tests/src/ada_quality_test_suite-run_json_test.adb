@@ -91,6 +91,11 @@ begin
       Outcomes.Append
         (Ada_Quality.JSON.Batch_Outcome'
            (Project_Id => 3, Assessment_Id => 3,
+            Status => Ada_Quality.JSON.Batch_Reused,
+            Diagnostic => Null_Unbounded_String, Value => <>));
+      Outcomes.Append
+        (Ada_Quality.JSON.Batch_Outcome'
+           (Project_Id => 4, Assessment_Id => 4,
             Status => Ada_Quality.JSON.Batch_Completed,
             Diagnostic => Null_Unbounded_String, Value => Value));
       Batch := To_Unbounded_String (Ada_Quality.JSON.Render_Batch (Outcomes));
@@ -99,8 +104,18 @@ begin
         "a multi-project assessment is one strict JSON document");
       Assert
         (Jsonlib.Documents.Length
-           (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "outcomes")) = 3,
-         "batch JSON retains completed and interrupted project outcomes");
+           (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "outcomes")) = 4 and then
+         Ada.Strings.Fixed.Index (To_String (Batch), """status"":""reused""") > 0,
+         "batch JSON retains completed, reused, and interrupted project outcomes");
+      declare
+         Reuse : constant String := Ada_Quality.JSON.Render_Reuse (3, 3);
+      begin
+         Jsonlib.Parsers.Parse (Reuse, Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index (Reuse, """kind"":""assessment-reuse""") > 0,
+            "single-project unchanged reuse has strict versioned JSON output");
+      end;
    end;
    declare
       SARIF : constant String := Ada_Quality.CI_Formats.Render_SARIF (Value);
@@ -241,6 +256,9 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-batch.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "batch assessment JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-reuse.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "assessment reuse JSON schema is valid JSON");
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trend.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "metric trend JSON schema is valid JSON");

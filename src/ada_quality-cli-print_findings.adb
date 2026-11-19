@@ -1,5 +1,5 @@
 separate (Ada_Quality.CLI)
---  AQ-WAIVER: SRC-03 target=print_findings justification=filtered-and-lifecycle-reporting-share-one-read-snapshot
+--  AQ-WAIVER: SRC-03 target=put_line justification=filtered-and-lifecycle-reporting-share-one-read-snapshot
 procedure Print_Findings (DB_Path : String) is
    Session : Ada_Quality.Reporting.Session;
    Requested : constant String := Option ("--format", "");
@@ -10,6 +10,12 @@ procedure Print_Findings (DB_Path : String) is
      Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
      Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
      Option ("--since", "") /= "" or else Option ("--until", "") /= "";
+   Output : Ada.Strings.Unbounded.Unbounded_String;
+
+   procedure Put_Line (Text : String) is
+   begin
+      Append (Output, Text & ASCII.LF);
+   end Put_Line;
 begin
    Ada_Quality.Reporting.Open (Session, DB_Path);
    if Structured then
@@ -73,18 +79,19 @@ begin
          end loop;
          if Format = "json" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-            Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Findings (Items, Pretty => True));
+            Emit_Document (Ada_Quality.JSON.Render_Findings (Items, Pretty => True));
          elsif Format = "sarif" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-            Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Items, Pretty => True));
+            Emit_Document (Ada_Quality.CI_Formats.Render_SARIF (Items, Pretty => True));
          else
             for Finding of Items loop
-               Ada.Text_IO.Put_Line
+               Put_Line
                  (Image (Finding.Indicator) & " " & Severity'Image (Finding.Level) & " " &
                   To_String (Finding.Relative_Path) &
                   (if Finding.Line = 0 then "" else ":" & Natural'Image (Finding.Line)) &
                   " " & To_String (Finding.Message));
             end loop;
+            Emit_Document (To_String (Output));
          end if;
          return;
       end;
@@ -138,7 +145,7 @@ begin
                begin
                   Ada_Quality.History.Include_Findings (Current_Findings, Current);
                   for Finding of Current loop
-                     Ada.Text_IO.Put_Line
+                     Put_Line
                        (Ada_Quality.History.Image
                           (Ada_Quality.History.Classify_Finding
                              (Classifier, Finding.Kind, To_String (Latest.Status) = "completed")) & " " &
@@ -154,7 +161,7 @@ begin
                                   Successfully_Remeasured (Finding.Kind));
                         begin
                            if Lifecycle in Ada_Quality.History.Resolved | Ada_Quality.History.Unconfirmed then
-                              Ada.Text_IO.Put_Line
+                              Put_Line
                                 (Ada_Quality.History.Image (Lifecycle) & " " &
                                  To_String (Finding.State) & " " & To_String (Finding.Summary));
                            end if;
@@ -166,4 +173,5 @@ begin
          end if;
       end;
    end loop;
+   Emit_Document (To_String (Output));
 end Print_Findings;

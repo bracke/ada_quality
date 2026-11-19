@@ -123,7 +123,10 @@ package body Ada_Quality.JSON is
             Doc.Insert
               (Outcome, "status",
                Doc.New_String
-                 ((if Item.Status = Batch_Completed then "completed" else "interrupted")));
+                 ((case Item.Status is
+                     when Batch_Completed => "completed",
+                     when Batch_Reused => "reused",
+                     when Batch_Interrupted => "interrupted")));
             Doc.Insert (Outcome, "diagnostic", Doc.New_String (To_String (Item.Diagnostic)));
             if Item.Status = Batch_Completed then
                declare
@@ -140,6 +143,21 @@ package body Ada_Quality.JSON is
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Batch;
+
+   function Render_Reuse
+     (Project_Id, Assessment_Id : Positive; Pretty : Boolean := False) return String
+   is
+      Doc  : Document;
+      Root : constant Node := Doc.New_Object;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("assessment-reuse"));
+      Doc.Insert (Root, "project_id", Doc.New_Integer (Long_Long_Integer (Project_Id)));
+      Doc.Insert (Root, "assessment_id", Doc.New_Integer (Long_Long_Integer (Assessment_Id)));
+      Doc.Insert (Root, "status", Doc.New_String ("reused"));
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Reuse;
 
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;

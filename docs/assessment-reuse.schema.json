@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/assessment-reuse-v1.schema.json",
+  "title": "Ada Quality exact assessment reuse v1",
+  "type": "object",
+  "required": ["schema_version", "kind", "project_id", "assessment_id", "status"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "assessment-reuse" },
+    "project_id": { "type": "integer", "minimum": 1 },
+    "assessment_id": { "type": "integer", "minimum": 1 },
+    "status": { "const": "reused" }
+  },
+  "additionalProperties": false
+}

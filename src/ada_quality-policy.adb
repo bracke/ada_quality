@@ -144,6 +144,37 @@ package body Ada_Quality.Policy is
    function Load (Path : String) return Load_Result is
      (Load_Overlay (Path, Default));
 
+   function Profile_Path (Base_Path, Name : String) return String is
+      Dot : Natural := 0;
+   begin
+      if Name = "" then return Base_Path; end if;
+      for Index in reverse Base_Path'Range loop
+         if Base_Path (Index) = '.' then Dot := Index; exit; end if;
+      end loop;
+      return
+        (if Dot > Base_Path'First
+         then Base_Path (Base_Path'First .. Dot - 1) & "." & Name & Base_Path (Dot .. Base_Path'Last)
+         else Base_Path & "." & Name);
+   end Profile_Path;
+
+   function Is_Profile_Name (Name : String) return Boolean is
+     (Name'Length in 1 .. 64 and then
+      (for all C of Name => C in 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '-'));
+
+   function Render (Item : Quality_Policy) return String is
+      function Image (Value : Natural) return String is
+        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+   begin
+      return
+        ("coverage_minimum_basis_points = " & Image (Item.Coverage_Minimum_Basis_Points) & ASCII.LF &
+         "maximum_source_lines = " & Image (Item.Maximum_Source_Lines) & ASCII.LF &
+         "maximum_complexity = " & Image (Item.Maximum_Complexity) & ASCII.LF &
+         "process_timeout_seconds = " & Image (Item.Process_Timeout_Seconds) & ASCII.LF &
+         "maximum_output_bytes = " & Image (Item.Maximum_Output_Bytes) & ASCII.LF &
+         "require_clean_worktree = " &
+           (if Item.Require_Clean_Worktree then "true" else "false") & ASCII.LF);
+   end Render;
+
    function Fingerprint (Item : Quality_Policy) return String is
       Text : constant String :=
         Natural'Image (Item.Coverage_Minimum_Basis_Points) & ":" &

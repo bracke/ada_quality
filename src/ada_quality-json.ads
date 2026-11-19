@@ -15,7 +15,7 @@ package Ada_Quality.JSON is
    --  @param Pretty Whether to indent the resulting document.
    --  @return Complete JSON document.
 
-   type Batch_Outcome_Status is (Batch_Completed, Batch_Interrupted);
+   type Batch_Outcome_Status is (Batch_Completed, Batch_Reused, Batch_Interrupted);
    --  Terminal outcome of one project in a multi-project assessment.
 
    type Batch_Outcome is record
@@ -33,6 +33,10 @@ package Ada_Quality.JSON is
    function Render_Batch
      (Items : Batch_Outcome_Vectors.Vector; Pretty : Boolean := False) return String;
    --  Serialize a multi-project run as one versioned JSON document.
+
+   function Render_Reuse
+     (Project_Id, Assessment_Id : Positive; Pretty : Boolean := False) return String;
+   --  Serialize one exact unchanged-assessment reuse reference.
 
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;

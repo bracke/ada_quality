@@ -15,7 +15,7 @@
         "properties": {
           "project_id": { "type": "integer", "minimum": 1 },
           "assessment_id": { "type": "integer", "minimum": 1 },
-          "status": { "enum": ["completed", "interrupted"] },
+          "status": { "enum": ["completed", "reused", "interrupted"] },
           "diagnostic": { "type": "string" },
           "assessment": { "$ref": "assessment.schema.json" }
         },

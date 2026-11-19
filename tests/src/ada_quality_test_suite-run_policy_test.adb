@@ -22,6 +22,27 @@ begin
    Loaded := Ada_Quality.Policy.Load (Path);
    Assert (Loaded.Success, "valid policy loads");
    Assert (Loaded.Value.Maximum_Source_Lines = 800, "policy values are decoded");
+   Assert
+     (Ada_Quality.Policy.Profile_Path (Path, "ci") = Fixture_Root & "/policy_test.ci.toml" and then
+      Ada_Quality.Policy.Is_Profile_Name ("release_1") and then
+      not Ada_Quality.Policy.Is_Profile_Name ("../release") and then
+      Ada.Strings.Fixed.Index
+        (Ada_Quality.Policy.Render (Loaded.Value), "maximum_source_lines = 800") > 0,
+      "policy rendering and sibling profile naming are deterministic and path-safe");
+   declare
+      Round_Trip_Path : constant String := Fixture_Root & "/policy_round_trip.toml";
+      Round_Trip : Ada_Quality.Policy.Load_Result;
+   begin
+      Project_Tools.Files.Write_Text_File
+        (Round_Trip_Path, Ada_Quality.Policy.Render (Loaded.Value));
+      Round_Trip := Ada_Quality.Policy.Load (Round_Trip_Path);
+      Assert
+        (Round_Trip.Success and then
+         Ada_Quality.Policy.Fingerprint (Round_Trip.Value) =
+           Ada_Quality.Policy.Fingerprint (Loaded.Value),
+         "rendered complete policies load with the same effective fingerprint");
+      Ada.Directories.Delete_File (Round_Trip_Path);
+   end;
    declare
       Base : constant Ada_Quality.Policy.Quality_Policy := Loaded.Value;
    begin

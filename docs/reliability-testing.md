@@ -10,10 +10,10 @@ The coverage workflow builds separate instrumented test/CLI/release binaries, ru
 all project lifecycle operations, database init/check/recover, policy validate/show, JSON archive reporting, history,
 status, findings, regressions, invalid commands, invalid IDs, missing projects, and missing policy files.
 
-Determinism controls include sorted source paths, stable database IDs under the single-process assessment model,
-sorted JSON object members, two consecutive test actions, and a before/after source fingerprint. Projects are assessed
-sequentially by design.
+Determinism controls include sorted source paths, stable database IDs reserved before worker launch, ordered
+publication and batch output, sorted JSON object members, two consecutive test actions, and a before/after source
+fingerprint. The workflow also exercises bounded multi-project assessment with an interrupted middle project.
 
 The tests deliberately use `/tmp` fixtures with explicit names and safe link-aware cleanup. They do not modify tracked
-project sources. Because those names are fixed, independent copies of the suite must run sequentially; this matches
-the product's explicit single-assessment execution model.
+project sources. Because those names are fixed, independent copies of the suite must still run sequentially even
+though one product invocation can coordinate multiple project workers.
