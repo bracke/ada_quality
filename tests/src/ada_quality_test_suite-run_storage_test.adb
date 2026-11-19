@@ -7,6 +7,7 @@ declare
    Backup_Path : constant String := Fixture_Root & "/storage_test.backup";
    Export_Path : constant String := Fixture_Root & "/storage_test.export";
    Restored_Path : constant String := Fixture_Root & "/storage_test_restored.db";
+   Imported_Path : constant String := Fixture_Root & "/storage_test_imported.db";
    Relocated_Root : constant String := Fixture_Root & "/relocated-project";
    Root  : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
@@ -39,6 +40,7 @@ begin
    if Ada.Directories.Exists (Backup_Path) then Project_Tools.Files.Delete_Tree (Backup_Path); end if;
    if Ada.Directories.Exists (Export_Path) then Ada.Directories.Delete_File (Export_Path); end if;
    if Ada.Directories.Exists (Restored_Path) then Ada.Directories.Delete_File (Restored_Path); end if;
+   if Ada.Directories.Exists (Imported_Path) then Ada.Directories.Delete_File (Imported_Path); end if;
    if Ada.Directories.Exists (Relocated_Root) then Project_Tools.Files.Delete_Tree (Relocated_Root); end if;
    Ada_Quality.Storage.Open (Store, Path);
    Ada_Quality.Storage.Check (Store);
@@ -390,9 +392,18 @@ begin
      Ada_Quality.Storage.History (Store, Pid).Length > 0,
      "a restored backup retains registry and assessment history");
    Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Import (Export_Path, Imported_Path);
+   Ada_Quality.Storage.Open (Store, Imported_Path, Create_If_Missing => False);
+   Ada_Quality.Storage.Check (Store);
+   Assert
+     (Ada_Quality.Storage.Projects (Store).Length = 1 and then
+      Ada_Quality.Storage.History (Store, Pid).Length > 0,
+      "a logical import retains registry and assessment history");
+   Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
    Ada.Directories.Delete_File (Export_Path);
    Ada.Directories.Delete_File (Restored_Path);
+   Ada.Directories.Delete_File (Imported_Path);
    Project_Tools.Files.Delete_Tree (Backup_Path);
    Project_Tools.Files.Delete_Tree (Relocated_Root);
 end;

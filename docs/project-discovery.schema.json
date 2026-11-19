@@ -7,6 +7,7 @@
     "projects": { "type": "array", "items": { "type": "object",
       "required": ["path", "project_id", "status"],
       "properties": { "path": { "type": "string" }, "project_id": { "type": "integer", "minimum": 0 },
-        "status": { "enum": ["registered", "found", "added"] } }, "additionalProperties": false } }
+        "status": { "enum": ["registered", "found", "added", "missing", "removed"] } },
+      "additionalProperties": false } }
   }, "additionalProperties": false
 }

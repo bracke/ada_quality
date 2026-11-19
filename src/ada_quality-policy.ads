@@ -41,6 +41,10 @@ package Ada_Quality.Policy is
    --  @param Path Policy TOML file to read.
    --  @return Structured parse result.
 
+   function Load_Overlay
+     (Path : String; Base : Quality_Policy) return Load_Result;
+   --  Load a partial policy overlay on top of an already validated policy.
+
    function Fingerprint (Item : Quality_Policy) return String;
    --  Compute the deterministic identity of a policy.
    --  @param Item Policy to identify.

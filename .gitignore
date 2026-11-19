@@ -17,6 +17,7 @@
 /tests/obj/
 /tests/cov-bin/
 /tests/cov-obj/
+/dist/
 
 # Coverage work products; retain the two reviewed evidence files
 /coverage/*

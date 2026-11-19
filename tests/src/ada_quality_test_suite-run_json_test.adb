@@ -121,6 +121,7 @@ begin
          Metrics : Ada_Quality.Checks.Source_Analysis;
          Scan_JSON : Ada.Strings.Unbounded.Unbounded_String;
          Scan_SARIF : Ada.Strings.Unbounded.Unbounded_String;
+         Findings_JSON : Ada.Strings.Unbounded.Unbounded_String;
       begin
          Metrics.File_Count := 1;
          Metrics.Long_Lines := 1;
@@ -129,6 +130,8 @@ begin
          Scan_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_Scan (1, Metrics));
          Scan_SARIF := To_Unbounded_String
            (Ada_Quality.CI_Formats.Render_SARIF (Metrics.Findings));
+         Findings_JSON := To_Unbounded_String
+           (Ada_Quality.JSON.Render_Findings (Metrics.Findings));
          Jsonlib.Parsers.Parse (To_String (Scan_JSON), Doc, Error);
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
@@ -138,6 +141,15 @@ begin
          Jsonlib.Parsers.Parse (To_String (Scan_SARIF), Doc, Error);
          Assert (not Jsonlib.Errors.Failed (Error),
            "arbitrary changed-source findings have strict SARIF output");
+         Jsonlib.Parsers.Parse (To_String (Findings_JSON), Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index (To_String (Findings_JSON), """kind"":""findings""") > 0,
+            "filtered findings have versioned strict JSON output");
+         Assert
+           (Ada.Strings.Fixed.Index
+              (Ada_Quality.HTML.Render_Assessment (Value), "<!doctype html>") = 1,
+            "assessments have a self-contained HTML representation");
       end;
       Assert
         (Ada.Strings.Fixed.Index (JUnit, "tests=""33""") > 0 and then
@@ -262,6 +274,9 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/database-statistics.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "database statistics JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/findings.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "filtered findings JSON schema is valid JSON");
    end;
 end;
 end Run_JSON_Test;

@@ -13,8 +13,9 @@ package body Ada_Quality.Policy is
    function Trim (Text : String) return String is
      (Ada.Strings.Fixed.Trim (Text, Ada.Strings.Both));
 
-   function Load (Path : String) return Load_Result is
-      Result  : Load_Result := (Success => True, Value => Default, Error => Null_Unbounded_String);
+   function Load_Overlay
+     (Path : String; Base : Quality_Policy) return Load_Result is
+      Result  : Load_Result := (Success => True, Value => Base, Error => Null_Unbounded_String);
       Content : Unbounded_String;
       Start   : Positive := 1;
       type Policy_Key is
@@ -115,7 +116,7 @@ package body Ada_Quality.Policy is
       end Apply;
    begin
       if not Project_Tools.Files.File_Exists (Path) then
-         return (Success => False, Value => Default, Error => To_Unbounded_String ("policy file not found: " & Path));
+         return (Success => False, Value => Base, Error => To_Unbounded_String ("policy file not found: " & Path));
       end if;
 
       Content := To_Unbounded_String (Project_Tools.Files.Read_Raw_File (Path));
@@ -138,7 +139,10 @@ package body Ada_Quality.Policy is
          Result.Success := False;
          Result.Error := To_Unbounded_String (Ada.Exceptions.Exception_Message (E));
          return Result;
-   end Load;
+   end Load_Overlay;
+
+   function Load (Path : String) return Load_Result is
+     (Load_Overlay (Path, Default));
 
    function Fingerprint (Item : Quality_Policy) return String is
       Text : constant String :=

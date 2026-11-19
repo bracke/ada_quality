@@ -34,3 +34,7 @@ legacy v1/v1 interpretation for trend compatibility.
 
 Opening a persistent database acquires the storage engine's process lock. `database check` verifies the open handle,
 the eight-table catalog, and schema metadata version.
+
+Logical export/import is symmetric: `database import SOURCE --database DESTINATION` creates a new database from the
+native export format and performs a complete integrity check before reporting success. Existing destinations are
+never overwritten. Transactional compaction is likewise checked before and after vacuuming.

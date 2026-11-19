@@ -15,3 +15,4 @@ Schemas are `assessment.schema.json`, `assessment-batch.schema.json`, `archive.s
 latest-project summary and registry-discovery surfaces. SARIF uses the external SARIF 2.1.0 contract; JUnit is emitted
 as XML rather than JSON. The additional contracts are `changed-source-scan.schema.json`, `project-list.schema.json`,
 `project-discovery.schema.json`, `assessment-aliases.schema.json`, and `database-statistics.schema.json`.
+Filtered finding collections use `findings.schema.json`; SARIF remains available for the same selected records.

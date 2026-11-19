@@ -98,7 +98,12 @@ package Ada_Quality.JSON is
       Pretty     : Boolean := False) return String;
    --  Serialize changed-source analysis as changed-source-scan-v1.
 
-   type Discovery_Status is (Already_Registered, Discovered, Added);
+   function Render_Findings
+     (Items : Ada_Quality.Types.Finding_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   --  Serialize a filtered finding collection as findings-v1.
+
+   type Discovery_Status is (Already_Registered, Discovered, Added, Missing, Removed);
    type Discovery_Item is record
       Path       : Ada.Strings.Unbounded.Unbounded_String;
       Project_Id : Natural := 0;

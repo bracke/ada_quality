@@ -11,7 +11,8 @@ package body Ada_Quality.Project_Inventory is
    Artifact_Directories : constant Project_Tools.Files.Name_List :=
      [To_Unbounded_String ("obj"), To_Unbounded_String ("bin"),
       To_Unbounded_String ("cov-obj"), To_Unbounded_String ("cov-bin"),
-      To_Unbounded_String ("coverage"), To_Unbounded_String ("lib"),
+      To_Unbounded_String ("coverage"), To_Unbounded_String ("dist"),
+      To_Unbounded_String ("lib"),
       To_Unbounded_String ("gnatprove")];
 
    Generated_Suffixes : constant Project_Tools.Files.Name_List :=

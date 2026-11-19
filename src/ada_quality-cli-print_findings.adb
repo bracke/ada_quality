@@ -1,8 +1,94 @@
 separate (Ada_Quality.CLI)
+--  AQ-WAIVER: SRC-03 target=print_findings justification=filtered-and-lifecycle-reporting-share-one-read-snapshot
 procedure Print_Findings (DB_Path : String) is
    Session : Ada_Quality.Reporting.Session;
+   Requested : constant String := Option ("--format", "");
+   JSON_Mode : constant Boolean := Has_Flag ("--json");
+   Format : constant String :=
+     (if JSON_Mode then "json" elsif Requested = "" then "text" else Requested);
+   Structured : constant Boolean := Requested /= "" or else JSON_Mode or else
+     Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
+     Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
+     Option ("--since", "") /= "" or else Option ("--until", "") /= "";
 begin
    Ada_Quality.Reporting.Open (Session, DB_Path);
+   if Structured then
+      declare
+         Project_Id : Natural := 0;
+         Indicator : Indicator_Id := Indicator_Id'First;
+         Filter_Indicator : constant Boolean := Option ("--indicator", "") /= "";
+         Minimum : Severity := Severity'First;
+         Path_Filter : constant String := Option ("--path", "");
+         Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
+         Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
+         Items : Finding_Vectors.Vector;
+         use type Ada.Calendar.Time;
+      begin
+         if Format not in "text" | "json" | "sarif" then
+            raise Usage_Error with "findings format requires text, json, or sarif";
+         elsif JSON_Mode and then Requested not in "" | "json" then
+            raise Usage_Error with "--json conflicts with non-JSON --format";
+         elsif Since_Time.Present and then Until_Time.Present and then
+           Since_Time.Value > Until_Time.Value
+         then
+            raise Usage_Error with "--since must not be later than --until";
+         end if;
+         if Option ("--project", "") /= "" then
+            Project_Id := Positive_Option ("--project", "project");
+         end if;
+         if Filter_Indicator and then
+           not Ada_Quality.Indicators.Parse_Canonical (Option ("--indicator", ""), Indicator)
+         then
+            raise Usage_Error with "--indicator requires a canonical indicator ID";
+         end if;
+         if Option ("--severity", "") /= "" then
+            begin
+               Minimum := Severity'Value (Option ("--severity", ""));
+            exception
+               when Constraint_Error =>
+                  raise Usage_Error with "--severity requires info, low, medium, high, or critical";
+            end;
+         end if;
+         for Run of Ada_Quality.Reporting.Runs (Session, Project_Id) loop
+            if Run.State = Assessment_Completed and then
+              In_Time_Range (Run.Started_At, Since_Time, Until_Time)
+            then
+               declare
+                  Value : constant Ada_Quality.Reporting.Assessment_Record :=
+                    Ada_Quality.Reporting.Read_Assessment (Session, Run.Id);
+               begin
+                  for Result of Value.Results loop
+                     for Finding of Result.Findings loop
+                        if (not Filter_Indicator or else Finding.Indicator = Indicator) and then
+                          Finding.Level >= Minimum and then
+                          (Path_Filter = "" or else Ada.Strings.Fixed.Index
+                             (To_String (Finding.Relative_Path), Path_Filter) > 0)
+                        then
+                           Items.Append (Finding);
+                        end if;
+                     end loop;
+                  end loop;
+               end;
+            end if;
+         end loop;
+         if Format = "json" then
+            Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+            Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Findings (Items, Pretty => True));
+         elsif Format = "sarif" then
+            Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
+            Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Items, Pretty => True));
+         else
+            for Finding of Items loop
+               Ada.Text_IO.Put_Line
+                 (Image (Finding.Indicator) & " " & Severity'Image (Finding.Level) & " " &
+                  To_String (Finding.Relative_Path) &
+                  (if Finding.Line = 0 then "" else ":" & Natural'Image (Finding.Line)) &
+                  " " & To_String (Finding.Message));
+            end loop;
+         end if;
+         return;
+      end;
+   end if;
    for Project of Ada_Quality.Reporting.Projects (Session, Include_Removed => True) loop
       declare
          Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=

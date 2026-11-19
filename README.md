@@ -31,6 +31,7 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality database init
 ./bin/ada-quality project add /absolute/path/to/an/alire/crate
 ./bin/ada-quality check --all
+./bin/ada-quality check --all --jobs 4 --reuse-unchanged
 ./bin/ada-quality history
 ./bin/ada-quality status --json
 ./bin/ada-quality assessment show 1 --format sarif
@@ -40,13 +41,16 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality trend --project 1 --all --format csv
 ./bin/ada-quality scan --project 1 --changed-file src/example.adb
 ./bin/ada-quality scan --project 1 --files-from changed-files.txt
+./bin/ada-quality scan --project 1 --git-diff origin/main
 ./bin/ada-quality explain SRC-03
 ./bin/ada-quality indicator list --category source --format json
 ./bin/ada-quality regressions --project 1 --fail-on-regression
 ./bin/ada-quality assessment alias release-1 1
 ./bin/ada-quality project discover /absolute/path/to/projects
+./bin/ada-quality project sync /absolute/path/to/projects --remove-missing
 ./bin/ada-quality database stats
 ./bin/ada-quality report --format json
+./bin/ada-quality report --format html --output quality-report.html
 ```
 
 The default database is `.ada-quality.db`; `ADA_QUALITY_DATABASE` or `--database` selects another path. The default
@@ -55,3 +59,6 @@ central policy is `quality-policy.toml`; `ADA_QUALITY_POLICY` or `--policy` sele
 See [`docs/CLI.md`](docs/CLI.md), [`docs/ASSESSMENT.md`](docs/ASSESSMENT.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for operational details. Development and disclosure guidance is in
 [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md).
+
+`make install` installs the binary, manpage, JSON schemas, and generated Bash, Zsh, and Fish completions.
+`make package` creates a self-contained binary archive under `dist/`.

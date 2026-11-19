@@ -487,6 +487,29 @@ package body Ada_Quality.Checks is
       return "";
    end Toolchain_Fingerprint;
 
+   function Current_Toolchain_Fingerprint (Root : String) return String is
+      Alr : constant String := Project_Tools.Processes.Locate_Command
+        (Ada_Quality.Tools.Program (Ada_Quality.Tools.Alire));
+   begin
+      if Alr'Length = 0 then return ""; end if;
+      declare
+         Run : constant Project_Tools.Processes.Captured_Process :=
+           Project_Tools.Processes.Capture
+             ("toolchain identity", Root, Alr,
+              Project_Tools.Processes.Arguments
+                ([Project_Tools.Processes.Argument ("exec"),
+                  Project_Tools.Processes.Argument ("--"),
+                  Project_Tools.Processes.Argument ("gnatls"),
+                  Project_Tools.Processes.Argument ("--version")]),
+              Quiet => True);
+      begin
+         return
+           (if Run.Status = 0 then Toolchain_Fingerprint (To_String (Run.Output)) else "");
+      end;
+   exception
+      when others => return "";
+   end Current_Toolchain_Fingerprint;
+
    function Finding_Fingerprint
      (Indicator : Indicator_Id;
       Rule, Path, Message : String;

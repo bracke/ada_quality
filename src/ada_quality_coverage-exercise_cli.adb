@@ -1,10 +1,15 @@
 separate (Ada_Quality_Coverage)
+--  AQ-WAIVER: SRC-03 target=image justification=coverage-driver-exercises-one-ordered-cli-workflow-matrix
 procedure Exercise_CLI is
       CLI_Binary : constant String := Binary ("ada-quality");
       DB_Path    : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.db");
       Backup_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.backup");
       Export_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.export");
       Restored_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-restored.db");
+      Imported_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-imported.db");
+      HTML_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "portfolio.html");
+      Assessment_HTML_Path : constant String :=
+        Ada_Quality.Temporary_Directories.Child (Scratch, "assessment.html");
       Changed_List_Path : constant String :=
         Ada_Quality.Temporary_Directories.Child (Scratch, "changed-files.txt");
       Missing_Policy : constant String :=
@@ -29,7 +34,17 @@ procedure Exercise_CLI is
          Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".wal");
          Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".fts");
          Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (Imported_Path);
+         Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".wal");
+         Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".fts");
+         Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (HTML_Path);
+         Project_Tools.Files.Delete_File_If_Present (Assessment_HTML_Path);
          Project_Tools.Files.Delete_File_If_Present (Changed_List_Path);
+         Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB);
+         Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB & ".wal");
+         Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB & ".fts");
+         Project_Tools.Files.Delete_File_If_Present (Missing_Read_DB & ".lock");
          if Project_Tools.Files.Exists (Backup_Path) then
             Project_Tools.Files.Delete_Tree (Backup_Path);
          end if;
@@ -225,6 +240,13 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""project-discovery""");
       Run_CLI
+        ("project registry sync",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("sync"),
+             Project_Tools.Processes.Argument (Root), Project_Tools.Processes.Argument ("--json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""project-discovery""");
+      Run_CLI
         ("project relocate",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("relocate"),
@@ -268,6 +290,15 @@ procedure Exercise_CLI is
             Allow_One => True,
             Expected_Text => (if To_String (Format) = "json" then "changed-source-scan" else "2.1.0"));
       end loop;
+      Run_CLI
+        ("Git changed source scan",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("scan"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--git-diff"),
+             Project_Tools.Processes.Argument ("HEAD"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_One => True, Expected_Text => "changed source(s)");
       Run_Completed_Assessment ("full assessment");
       First_Assessment := Latest_Completed_Assessment_Id;
       Run_CLI
@@ -296,6 +327,15 @@ procedure Exercise_CLI is
          Allow_Three => True, Expected_Text => "comparison unavailable");
       Run_Completed_Assessment ("second full assessment");
       Second_Assessment := Latest_Completed_Assessment_Id;
+      Run_CLI
+        ("reuse unchanged assessment",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--reuse-unchanged"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_Three => True, Expected_Text => "reused assessment");
       Run_CLI
         ("second assessment alias",
          Project_Tools.Processes.Arguments
@@ -362,6 +402,18 @@ procedure Exercise_CLI is
                Expected_Text => Expected);
          end;
       end loop;
+      Run_CLI
+        ("selected assessment HTML",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("show"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("html"),
+             Project_Tools.Processes.Argument ("--output"),
+             Project_Tools.Processes.Argument (Assessment_HTML_Path),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      if not Project_Tools.Files.File_Exists (Assessment_HTML_Path) then
+         raise Program_Error with "assessment HTML output was not created";
+      end if;
       Run_CLI
         ("selected assessment regressions",
          Project_Tools.Processes.Arguments
@@ -470,6 +522,24 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """schema_version"": 2");
       Run_CLI
+        ("portfolio HTML report",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("report"), Project_Tools.Processes.Argument ("--format"),
+             Project_Tools.Processes.Argument ("html"), Project_Tools.Processes.Argument ("--output"),
+             Project_Tools.Processes.Argument (HTML_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]));
+      if not Project_Tools.Files.File_Exists (HTML_Path) then
+         raise Program_Error with "portfolio HTML output was not created";
+      end if;
+      Run_CLI
+        ("filtered findings JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("findings"), Project_Tools.Processes.Argument ("--severity"),
+             Project_Tools.Processes.Argument ("high"), Project_Tools.Processes.Argument ("--format"),
+             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""findings""");
+      Run_CLI
         ("portfolio status JSON",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--json"),
@@ -552,6 +622,19 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("check"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Restored_Path)]),
          Expected_Text => "integrity check passed");
+      Run_CLI
+        ("database logical import",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("import"),
+             Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (Imported_Path)]),
+         Expected_Text => "imported ");
+      Run_CLI
+        ("imported database check",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("check"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Imported_Path)]),
+         Expected_Text => "integrity check passed");
       for Query of Queries loop
          Run_CLI
            (Ada.Strings.Unbounded.To_String (Query),
@@ -605,7 +688,7 @@ procedure Exercise_CLI is
         ("check empty registry",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Missing_Read_DB),
              Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
       Run_CLI
@@ -759,6 +842,7 @@ procedure Exercise_CLI is
            ("three-project assessment",
             Project_Tools.Processes.Arguments
               ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--all"),
+                Project_Tools.Processes.Argument ("--jobs"), Project_Tools.Processes.Argument ("2"),
                 Project_Tools.Processes.Argument ("--json"),
                 Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
                 Project_Tools.Processes.Argument ("--policy"),

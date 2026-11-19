@@ -23,6 +23,7 @@ with Ada_Quality.Finding_Identity;
 with Ada_Quality.Checks;
 with Ada_Quality.Coverage;
 with Ada_Quality.History;
+with Ada_Quality.HTML;
 with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;

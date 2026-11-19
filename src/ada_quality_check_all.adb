@@ -61,6 +61,7 @@ begin
    Check.Require_File ("CHANGELOG.md");
    Check.Require_File ("CONTRIBUTING.md");
    Check.Require_File ("SECURITY.md");
+   Check.Require_File ("Makefile");
    Check.Require_File ("LICENSE");
    Check.Require_File ("docs/ARCHITECTURE.md");
    Check.Require_File ("docs/DATABASE.md");
@@ -80,6 +81,7 @@ begin
    Check.Require_File ("docs/project-discovery.schema.json");
    Check.Require_File ("docs/assessment-aliases.schema.json");
    Check.Require_File ("docs/database-statistics.schema.json");
+   Check.Require_File ("docs/findings.schema.json");
    Check.Require_File ("docs/ada-quality.1");
    for Name of Required_Phase_Documents loop
       Check.Require_File ("docs/" & Name.all);

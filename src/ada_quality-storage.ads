@@ -109,6 +109,9 @@ package Ada_Quality.Storage is
    --  @param Source Existing physical backup directory.
    --  @param Destination New database file.
 
+   procedure Import (Source, Destination : String);
+   --  Import a database-native logical export into a new database file.
+
    procedure Compact (Item : in out Store);
    --  Reclaim unused database pages inside one exclusive transaction.
    --  @param Item Open store.

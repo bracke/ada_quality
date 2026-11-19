@@ -90,6 +90,9 @@ package Ada_Quality.Checks is
    --  @return A lowercase hexadecimal fingerprint, or empty when no GNATLS
    --  version banner is present.
 
+   function Current_Toolchain_Fingerprint (Root : String) return String;
+   --  Query the project's selected Alire/GNAT toolchain and return its stable identity.
+
    function Test_Project_File (Root : String) return String;
    --  Locate the project file of a project's AUnit tests crate from Root/tests/alire.toml.
    --  @param Root Canonical project root.

@@ -15,6 +15,7 @@ with Ada_Quality.CI_Formats;
 with Ada_Quality.Checks;
 with Ada_Quality.History;
 with Ada_Quality.History_Data;
+with Ada_Quality.HTML;
 with Ada_Quality.Indicators;
 with Ada_Quality.JSON;
 with Ada_Quality.Policy;
@@ -26,6 +27,7 @@ with Ada_Quality.Storage;
 with Ada_Quality.Types;
 with Project_Tools.Files;
 with Project_Tools.Links;
+with Project_Tools.Processes;
 
 --  AQ-WAIVER: SRC-03 target=id_argument justification=command parsing and dispatch share one bounded pass
 package body Ada_Quality.CLI is
@@ -75,10 +77,13 @@ package body Ada_Quality.CLI is
             elsif Value in "--database" | "--policy" | "--color" | "--project" | "--format" |
               "--current" | "--baseline" | "--indicator" | "--changed-file" | "--status" |
               "--files-from" | "--category" | "--limit" | "--since" | "--until" |
-              "--from-run" | "--to-run" | "--only"
+              "--from-run" | "--to-run" | "--only" | "--jobs" | "--profile" |
+              "--severity" | "--path" | "--git-diff" | "--output"
             then
                Skip_Value := True;
-            elsif Value in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression" then
+            elsif Value in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression" |
+              "--reuse-unchanged" | "--project-policy" | "--remove-missing"
+            then
                null;
             else
                Count := Count + 1;
@@ -96,11 +101,13 @@ package body Ada_Quality.CLI is
         (Name in "--database" | "--policy" | "--color" | "--project" | "--format" |
            "--current" | "--baseline" | "--indicator" | "--changed-file" | "--status" |
            "--files-from" | "--category" | "--limit" | "--since" | "--until" |
-           "--from-run" | "--to-run" | "--only");
+           "--from-run" | "--to-run" | "--only" | "--jobs" | "--profile" |
+           "--severity" | "--path" | "--git-diff" | "--output");
 
       function Allowed (Name : String) return Boolean is
         (Takes_Value (Name) or else
-         Name in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression");
+         Name in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression" |
+           "--reuse-unchanged" | "--project-policy" | "--remove-missing");
    begin
       while Index <= Ada.Command_Line.Argument_Count loop
          declare
@@ -152,17 +159,24 @@ package body Ada_Quality.CLI is
       Ada.Text_IO.Put_Line ("");
       Ada.Text_IO.Put_Line ("Commands:");
       Ada.Text_IO.Put_Line
-        ("  project add PATH | discover ROOT [--add] | list | show ID | enable ID | disable ID |");
+        ("  project add PATH | discover ROOT [--add] | sync ROOT [--remove-missing] | list | show ID |");
       Ada.Text_IO.Put_Line ("          relocate ID PATH | remove ID");
-      Ada.Text_IO.Put_Line ("  check --all | --project ID [--json]");
       Ada.Text_IO.Put_Line
-        ("  scan --project ID (--changed-file PATH ... | --files-from FILE|-) [--format text|json|sarif]");
-      Ada.Text_IO.Put_Line ("  assessment show RUN_REF [--format text|json|sarif|junit]");
+        ("  check --all | --project ID [--jobs N] [--reuse-unchanged] [--profile NAME]" &
+         " [--project-policy] [--json]");
+      Ada.Text_IO.Put_Line
+        ("  scan --project ID (--changed-file PATH ... | --files-from FILE|- | --git-diff BASE)" &
+         " [--format text|json|sarif]");
+      Ada.Text_IO.Put_Line
+        ("  assessment show RUN_REF [--format text|json|sarif|junit|html] [--output FILE]");
       Ada.Text_IO.Put_Line ("  assessment diff BASELINE_REF CURRENT_REF [--format text|json]");
       Ada.Text_IO.Put_Line ("  assessment alias NAME RUN_ID | aliases [RUN_REF]");
       Ada.Text_IO.Put_Line
         ("  history [--project ID] [--status STATE] [--limit N] [--since TIME] [--until TIME] [--json]");
-      Ada.Text_IO.Put_Line ("  status [--only unhealthy|stale|regressed] [--since TIME] [--json] | findings");
+      Ada.Text_IO.Put_Line ("  status [--only unhealthy|stale|regressed] [--since TIME] [--json]");
+      Ada.Text_IO.Put_Line
+        ("  findings [--project ID] [--indicator ID] [--severity LEVEL] [--path TEXT]" &
+         " [--format text|json|sarif]");
       Ada.Text_IO.Put_Line
         ("  regressions [--project ID] [--current RUN_REF] [--baseline RUN_REF] [--fail-on-regression]");
       Ada.Text_IO.Put_Line
@@ -170,11 +184,13 @@ package body Ada_Quality.CLI is
          " [--since TIME] [--until TIME] [--format text|json|csv]");
       Ada.Text_IO.Put_Line ("  explain INDICATOR_ID");
       Ada.Text_IO.Put_Line ("  indicator list [--category CATEGORY] [--format text|json]");
-      Ada.Text_IO.Put_Line ("  report --format json [--project ID] [--since TIME] [--until TIME]");
+      Ada.Text_IO.Put_Line
+        ("  report --format json|html [--project ID] [--since TIME] [--until TIME] [--output FILE]");
       Ada.Text_IO.Put_Line ("  completion bash | zsh | fish");
       Ada.Text_IO.Put_Line ("  policy validate | show");
       Ada.Text_IO.Put_Line
-        ("  database init | check | recover | compact | stats | backup PATH | export PATH | restore PATH");
+        ("  database init | check | recover | compact | stats | backup PATH | export PATH | import PATH |" &
+         " restore PATH");
       Ada.Text_IO.Put_Line ("");
       Ada.Text_IO.Put_Line ("Global options: --database PATH --policy PATH --no-color");
    end Help;
@@ -215,6 +231,18 @@ package body Ada_Quality.CLI is
                  (Terminal_Styles.Marker (Role), Image (R.Indicator), To_String (R.Summary)), Role));
       end loop;
    end Print_Assessment;
+
+   procedure Emit_Document (Text : String) is
+   begin
+      if Option ("--output", "") = "" then
+         Ada.Text_IO.Put (Text);
+         if Text'Length = 0 or else Text (Text'Last) /= ASCII.LF then
+            Ada.Text_IO.New_Line;
+         end if;
+      else
+         Project_Tools.Files.Write_Text_File (Option ("--output", ""), Text);
+      end if;
+   end Emit_Document;
 
    function Stored_Assessment
      (Session : Ada_Quality.Reporting.Session;
@@ -276,6 +304,11 @@ package body Ada_Quality.CLI is
                 when Ada_Quality.History.Comparison_Available => "comparison is available"));
       end if;
    end Print_Comparison;
+
+   function Positive_Option (Name, Kind : String) return Positive;
+   function Timestamp_Option (Name : String) return Ada_Quality.Reporting.Optional_Timestamp;
+   function In_Time_Range
+     (Value, Since_Time, Until_Time : Ada_Quality.Reporting.Optional_Timestamp) return Boolean;
 
    procedure Print_Findings (DB_Path : String) is separate;
 
@@ -423,14 +456,21 @@ package body Ada_Quality.CLI is
          Open_Store (False);
          Ada_Quality.Storage.Check (Store);
          Ada.Text_IO.Put_Line ("restored " & DB_Path);
+      elsif Operation = "import" then
+         if Positional (3) = "" then raise Usage_Error with "database import requires a source path"; end if;
+         Ada_Quality.Storage.Import (Positional (3), DB_Path);
+         Open_Store (False);
+         Ada_Quality.Storage.Check (Store);
+         Ada.Text_IO.Put_Line ("imported " & DB_Path);
       else
-         raise Usage_Error with "database requires init, check, recover, compact, stats, backup, export, or restore";
+         raise Usage_Error with
+           "database requires init, check, recover, compact, stats, backup, export, import, or restore";
       end if;
       return 0;
    end Run_Database;
 
    function Run_Scan (DB_Path, Policy_Path : String) return Natural is
-      Files      : constant Text_Vectors.Vector := Changed_Files;
+      Files      : Text_Vectors.Vector := Changed_Files;
       Session    : Ada_Quality.Reporting.Session;
       Project_Id : Positive;
       Loaded     : constant Ada_Quality.Policy.Load_Result := Ada_Quality.Policy.Load (Policy_Path);
@@ -438,10 +478,11 @@ package body Ada_Quality.CLI is
       Requested  : constant String := Option ("--format", "");
       Format     : constant String :=
         (if JSON_Mode then "json" elsif Requested = "" then "text" else Requested);
+
+      function Is_Ada_Source (Path : String) return Boolean is
+        (Path'Length >= 4 and then
+         Path (Path'Last - 3 .. Path'Last) in ".adb" | ".ads");
    begin
-      if Files.Is_Empty then
-         raise Usage_Error with "scan requires --changed-file or --files-from";
-      end if;
       begin
          Project_Id := Positive'Value (Option ("--project", ""));
       exception
@@ -458,16 +499,60 @@ package body Ada_Quality.CLI is
       end if;
       Ada_Quality.Reporting.Open (Session, DB_Path);
       declare
-         Changed : Project_Tools.Files.Path_List (1 .. Natural (Files.Length));
-         Next    : Positive := Changed'First;
+         Project : constant Ada_Quality.Reporting.Project_Record :=
+           Ada_Quality.Reporting.Project (Session, Project_Id);
+         Git_Base : constant String := Option ("--git-diff", "");
       begin
-         for File of Files loop
-            Changed (Next) := File;
-            Next := Next + 1;
-         end loop;
+         if Git_Base'Length > 0 then
+            declare
+               Git : constant String := Project_Tools.Processes.Locate_Command ("git");
+            begin
+               if Git'Length = 0 then raise Usage_Error with "git is not available"; end if;
+               declare
+                  Run : constant Project_Tools.Processes.Captured_Process :=
+                    Project_Tools.Processes.Capture
+                      ("changed files", To_String (Project.Path), Git,
+                       Project_Tools.Processes.Arguments
+                         ([Project_Tools.Processes.Argument ("diff"),
+                           Project_Tools.Processes.Argument ("--name-only"),
+                           Project_Tools.Processes.Argument ("--diff-filter=ACMR"),
+                           Project_Tools.Processes.Argument (Git_Base),
+                           Project_Tools.Processes.Argument ("--")]), Quiet => True);
+                  Output : constant String := To_String (Run.Output);
+                  Start : Positive := 1;
+               begin
+                  if Run.Status /= 0 then
+                     raise Usage_Error with "git diff failed for base " & Git_Base;
+                  end if;
+                  for Index in Output'Range loop
+                     if Output (Index) = ASCII.LF then
+                        if Index > Start and then Is_Ada_Source (Output (Start .. Index - 1)) then
+                           Files.Append (To_Unbounded_String (Output (Start .. Index - 1)));
+                        end if;
+                        Start := Index + 1;
+                     end if;
+                  end loop;
+                  if Output'Length > 0 and then Start <= Output'Last and then
+                    Is_Ada_Source (Output (Start .. Output'Last))
+                  then
+                     Files.Append (To_Unbounded_String (Output (Start .. Output'Last)));
+                  end if;
+               end;
+            end;
+         end if;
+         if Files.Is_Empty then
+            raise Usage_Error with
+              "scan requires --changed-file, --files-from, or --git-diff";
+         end if;
          declare
-            Project : constant Ada_Quality.Reporting.Project_Record :=
-              Ada_Quality.Reporting.Project (Session, Project_Id);
+            Changed : Project_Tools.Files.Path_List (1 .. Natural (Files.Length));
+            Next : Positive := Changed'First;
+         begin
+            for File of Files loop
+               Changed (Next) := File;
+               Next := Next + 1;
+            end loop;
+            declare
             Metrics : constant Ada_Quality.Checks.Source_Analysis :=
               Ada_Quality.Checks.Analyze_Changed_Sources (To_String (Project.Path), Changed, Loaded.Value);
             Violations : constant Natural :=
@@ -496,6 +581,7 @@ package body Ada_Quality.CLI is
                end loop;
             end if;
             return (if Violations = 0 then 0 else 1);
+            end;
          end;
       end;
    exception
@@ -536,8 +622,6 @@ package body Ada_Quality.CLI is
       end;
       return 0;
    end Run_Explain;
-
-   function Timestamp_Option (Name : String) return Ada_Quality.Reporting.Optional_Timestamp;
 
    function Run_Status (DB_Path : String) return Natural is
       Session   : Ada_Quality.Reporting.Session;
@@ -684,7 +768,9 @@ package body Ada_Quality.CLI is
    end Run_Indicator_List;
 
    function Run_Project_Discover
-     (Store : in out Ada_Quality.Storage.Store; Root : String; Add : Boolean) return Natural
+     (Store : in out Ada_Quality.Storage.Store;
+      Root : String;
+      Add, Remove_Missing : Boolean) return Natural
    is
       Found : Text_Vectors.Vector;
       Seen_Entries : Natural := 0;
@@ -779,6 +865,35 @@ package body Ada_Quality.CLI is
             end if;
          end;
       end loop;
+      declare
+         Canonical_Root : constant String := Ada.Directories.Full_Name (Root);
+      begin
+         for Project of Registered loop
+            declare
+               Name : constant String := To_String (Project.Path);
+               Under_Root : constant Boolean :=
+                 Name = Canonical_Root or else
+                 (Name'Length > Canonical_Root'Length and then
+                  Name (Name'First .. Name'First + Canonical_Root'Length - 1) = Canonical_Root and then
+                  Name (Name'First + Canonical_Root'Length) = '/');
+               Present : Boolean := False;
+            begin
+               for Path of Found loop
+                  Present := Present or else To_String (Path) = Name;
+               end loop;
+               if Under_Root and then not Project.Removed and then not Present then
+                  if Remove_Missing then
+                     Ada_Quality.Storage.Remove_Project (Store, Project.Id);
+                  end if;
+                  Results.Append
+                    (Ada_Quality.JSON.Discovery_Item'
+                       (Path => Project.Path, Project_Id => Project.Id,
+                        Status => (if Remove_Missing then Ada_Quality.JSON.Removed
+                                   else Ada_Quality.JSON.Missing)));
+               end if;
+            end;
+         end loop;
+      end;
       if JSON_Mode then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
          Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Discovery (Results, Pretty => True));
@@ -791,7 +906,9 @@ package body Ada_Quality.CLI is
                   when Ada_Quality.JSON.Already_Registered =>
                     "registered" & Natural'Image (Item.Project_Id),
                   when Ada_Quality.JSON.Added => "added" & Natural'Image (Item.Project_Id),
-                  when Ada_Quality.JSON.Discovered => "found") &
+                  when Ada_Quality.JSON.Discovered => "found",
+                  when Ada_Quality.JSON.Missing => "missing" & Natural'Image (Item.Project_Id),
+                  when Ada_Quality.JSON.Removed => "removed" & Natural'Image (Item.Project_Id)) &
                " " & To_String (Item.Path));
          end loop;
       end if;
@@ -1077,16 +1194,42 @@ package body Ada_Quality.CLI is
    begin
       if Shell = "bash" then
          Ada.Text_IO.Put_Line ("_ada_quality_complete() {");
-         Ada.Text_IO.Put_Line ("  local cur=${COMP_WORDS[COMP_CWORD]}");
-         Ada.Text_IO.Put_Line ("  COMPREPLY=($(compgen -W '" & Commands & "' -- ""$cur""))");
+         Ada.Text_IO.Put_Line ("  local cur=${COMP_WORDS[COMP_CWORD]} words");
+         Ada.Text_IO.Put_Line ("  case ""${COMP_WORDS[1]}"" in");
+         Ada.Text_IO.Put_Line
+           ("    project) words='add discover sync list show enable disable relocate remove " &
+            "--add --remove-missing --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    assessment) words='show diff alias aliases --format --output --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    database) words='init check recover compact stats backup export import restore --format --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    check) words='--all --project --jobs --reuse-unchanged --profile --project-policy --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    scan) words='--project --changed-file --files-from --git-diff --format --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    findings) words='--project --indicator --severity --path --since --until --format --json' ;;");
+         Ada.Text_IO.Put_Line
+           ("    *) words='" & Commands & " --database --policy --format --json --no-color' ;;");
+         Ada.Text_IO.Put_Line ("  esac");
+         Ada.Text_IO.Put_Line ("  COMPREPLY=($(compgen -W ""$words"" -- ""$cur""))");
          Ada.Text_IO.Put_Line ("}");
          Ada.Text_IO.Put_Line ("complete -F _ada_quality_complete ada-quality");
       elsif Shell = "zsh" then
          Ada.Text_IO.Put_Line ("#compdef ada-quality");
-         Ada.Text_IO.Put_Line ("_arguments '1:command:(" & Commands & ")' '*:argument:_files'");
+         Ada.Text_IO.Put_Line
+           ("_arguments '--database[database path]:file:_files' '--policy[policy path]:file:_files' " &
+            "'--format[output format]:(text json sarif junit csv html)' " &
+            "'1:command:(" & Commands & ")' '*:argument:_files'");
       elsif Shell = "fish" then
          Ada.Text_IO.Put_Line
            ("complete -c ada-quality -f -n '__fish_use_subcommand' -a '" & Commands & "'");
+         Ada.Text_IO.Put_Line
+           ("complete -c ada-quality -l database -r -d 'Database path'; " &
+            "complete -c ada-quality -l policy -r -d 'Policy path'");
+         Ada.Text_IO.Put_Line
+           ("complete -c ada-quality -n '__fish_seen_subcommand_from check' -l jobs -r; " &
+            "complete -c ada-quality -n '__fish_seen_subcommand_from scan' -l git-diff -r");
       else
          raise Usage_Error with "completion requires bash, zsh, or fish";
       end if;
@@ -1167,7 +1310,7 @@ package body Ada_Quality.CLI is
 
       if Command = "check" or else
         (Command = "project" and then
-         Subcommand in "add" | "discover" | "enable" | "disable" | "relocate" | "remove") or else
+         Subcommand in "add" | "discover" | "sync" | "enable" | "disable" | "relocate" | "remove") or else
         (Command = "assessment" and then Subcommand = "alias")
       then
          Open_Store;
@@ -1184,7 +1327,12 @@ package body Ada_Quality.CLI is
                Ada.Text_IO.Put_Line ("registered project" & Positive'Image (Id));
             end;
          elsif Subcommand = "discover" then
-            return Run_Project_Discover (Store, Positional (3), Has_Flag ("--add"));
+            return Run_Project_Discover
+              (Store, Positional (3), Has_Flag ("--add"), Remove_Missing => False);
+         elsif Subcommand = "sync" then
+            return Run_Project_Discover
+              (Store, Positional (3), Add => True,
+               Remove_Missing => Has_Flag ("--remove-missing"));
          elsif Subcommand = "list" then
             declare
                Session : Ada_Quality.Reporting.Session;
@@ -1277,8 +1425,8 @@ package body Ada_Quality.CLI is
             begin
                if JSON_Flag and then Requested_Format'Length > 0 and then Requested_Format /= "json" then
                   raise Usage_Error with "--json conflicts with non-JSON --format";
-               elsif Format not in "text" | "json" | "sarif" | "junit" then
-                  raise Usage_Error with "assessment format requires text, json, sarif, or junit";
+               elsif Format not in "text" | "json" | "sarif" | "junit" | "html" then
+                  raise Usage_Error with "assessment format requires text, json, sarif, junit, or html";
                end if;
                if Format /= "text" then
                   Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
@@ -1290,11 +1438,13 @@ package body Ada_Quality.CLI is
                Run_Id := Ada_Quality.Reporting.Resolve_Assessment (Session, Positional (3));
                Value := Stored_Assessment (Session, Run_Id);
                if Format = "json" then
-                  Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render (Value, Pretty => True));
+                  Emit_Document (Ada_Quality.JSON.Render (Value, Pretty => True));
                elsif Format = "sarif" then
-                  Ada.Text_IO.Put_Line (Ada_Quality.CI_Formats.Render_SARIF (Value, Pretty => True));
+                  Emit_Document (Ada_Quality.CI_Formats.Render_SARIF (Value, Pretty => True));
                elsif Format = "junit" then
-                  Ada.Text_IO.Put (Ada_Quality.CI_Formats.Render_JUnit (Value));
+                  Emit_Document (Ada_Quality.CI_Formats.Render_JUnit (Value));
+               elsif Format = "html" then
+                  Emit_Document (Ada_Quality.HTML.Render_Assessment (Value));
                else
                   Print_Assessment (Value);
                end if;
@@ -1446,8 +1596,8 @@ package body Ada_Quality.CLI is
       elsif Command = "indicator" and then Subcommand = "list" then
          return Run_Indicator_List;
       elsif Command = "report" then
-         if Option ("--format", "") /= "json" then
-            raise Usage_Error with "report requires --format json";
+         if Option ("--format", "") not in "json" | "html" then
+            raise Usage_Error with "report requires --format json or html";
          end if;
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
          declare
@@ -1473,10 +1623,32 @@ package body Ada_Quality.CLI is
                   pragma Unreferenced (P);
                begin null; end;
             end if;
-            Ada.Text_IO.Put_Line
-              (Ada_Quality.JSON.Render_Archive
-                 (Session, Pretty => True, Project_Id => Project_Id,
-                  Since_Time => Since_Time, Until_Time => Until_Time));
+            if Option ("--format", "") = "json" then
+               Emit_Document
+                 (Ada_Quality.JSON.Render_Archive
+                    (Session, Pretty => True, Project_Id => Project_Id,
+                     Since_Time => Since_Time, Until_Time => Until_Time));
+            else
+               declare
+                  Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+               begin
+                  for P of Ada_Quality.Reporting.Projects (Session) loop
+                     if Project_Id = 0 or else P.Id = Project_Id then
+                        if not Since_Time.Present and then not Until_Time.Present then
+                           Projects.Append (P);
+                        else
+                           for Run of Ada_Quality.Reporting.Runs (Session, P.Id) loop
+                              if In_Time_Range (Run.Started_At, Since_Time, Until_Time) then
+                                 Projects.Append (P);
+                                 exit;
+                              end if;
+                           end loop;
+                        end if;
+                     end if;
+                  end loop;
+                  Emit_Document (Ada_Quality.HTML.Render_Portfolio (Session, Projects));
+               end;
+            end if;
          end;
          return 0;
       else

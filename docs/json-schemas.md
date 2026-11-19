@@ -16,3 +16,4 @@ of trend-enabled indicators. `assessment-history.schema.json` defines filtered v
 `indicator-catalog.schema.json` defines registry discovery output. SARIF and JUnit use their standard external
 contracts instead of project-local schemas. Changed-source scans, project list/discovery, assessment aliases, and
 database statistics are constrained by their correspondingly named v1 schema files.
+`findings.schema.json` constrains structured finding queries independently of a complete assessment.

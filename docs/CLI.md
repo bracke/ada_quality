@@ -3,19 +3,23 @@
 ```
 ada-quality project add PATH
 ada-quality project discover ROOT [--add] [--format text|json]
+ada-quality project sync ROOT [--remove-missing] [--format text|json]
 ada-quality project list [--format text|json]
 ada-quality project show ID
 ada-quality project enable|disable|remove ID
 ada-quality project relocate ID PATH
-ada-quality check --all | --project ID [--json]
+ada-quality check --all | --project ID [--jobs N] [--reuse-unchanged]
+                  [--profile NAME] [--project-policy] [--json]
 ada-quality scan --project ID --changed-file PATH [--changed-file PATH ...] [--format text|json|sarif]
 ada-quality scan --project ID --files-from FILE|- [--format text|json|sarif]
-ada-quality assessment show RUN_REF [--format text|json|sarif|junit]
+ada-quality scan --project ID --git-diff BASE [--format text|json|sarif]
+ada-quality assessment show RUN_REF [--format text|json|sarif|junit|html] [--output FILE]
 ada-quality assessment diff BASELINE_REF CURRENT_REF [--format text|json]
 ada-quality assessment alias NAME RUN_ID
 ada-quality assessment aliases [RUN_REF] [--format text|json]
 ada-quality status [--only unhealthy|stale|regressed] [--since TIME] [--json]
-ada-quality findings
+ada-quality findings [--project ID] [--indicator ID] [--severity LEVEL] [--path TEXT]
+                     [--since TIME] [--until TIME] [--format text|json|sarif]
 ada-quality regressions [--project ID] [--current RUN_REF] [--fail-on-regression]
 ada-quality regressions --baseline RUN_REF --current RUN_REF [--fail-on-regression]
 ada-quality history [--project ID] [--status STATE] [--limit N]
@@ -26,11 +30,12 @@ ada-quality trend --project ID (--indicator TST-03 | --all)
                   [--format text|json|csv]
 ada-quality explain INDICATOR_ID
 ada-quality indicator list [--category CATEGORY] [--format text|json]
-ada-quality report --format json [--project ID] [--since TIME] [--until TIME]
+ada-quality report --format json|html [--project ID] [--since TIME] [--until TIME] [--output FILE]
 ada-quality policy validate|show
 ada-quality database init|check|recover|compact
 ada-quality database stats [--format text|json]
 ada-quality database backup|export DESTINATION
+ada-quality database import SOURCE --database DESTINATION
 ada-quality database restore SOURCE --database DESTINATION
 ada-quality completion bash|zsh|fish
 ```
@@ -86,6 +91,18 @@ database from a physical backup. Existing destinations are not overwritten. `dat
 counts plus total row and UTF-8 text consumption against the reporting snapshot limits. `database compact` performs
 an integrity check before and after transactional vacuuming. `completion` prints a definition for the named shell;
 the roff manual is installed from `docs/ada-quality.1`.
+
+`check --jobs N` runs up to 64 project assessments concurrently while database publication and batch output remain
+ordered. `--reuse-unchanged` skips execution only when source, effective-policy, and live-toolchain fingerprints
+exactly match a completed assessment; it is a text-output workflow. `--profile NAME` selects
+`quality-policy.NAME.toml`. With `--project-policy`, project-local `quality-policy.override.toml` files partially
+overlay the selected base policy.
+
+`project sync` adds discovered crates and reports registered paths under the selected root that are no longer found;
+`--remove-missing` tombstones them. `scan --git-diff BASE` uses Git's ACMR name-only diff without a shell. Findings
+can be filtered by project, indicator, minimum severity, path substring, and inclusive run time, then emitted as
+text, findings-v1 JSON, or SARIF. HTML assessment and portfolio reports are self-contained and may be streamed or
+written with `--output`. Logical import creates and validates a new database from a native export.
 
 Exit status meanings are:
 

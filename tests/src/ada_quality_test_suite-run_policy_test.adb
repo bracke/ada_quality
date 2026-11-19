@@ -22,6 +22,18 @@ begin
    Loaded := Ada_Quality.Policy.Load (Path);
    Assert (Loaded.Success, "valid policy loads");
    Assert (Loaded.Value.Maximum_Source_Lines = 800, "policy values are decoded");
+   declare
+      Base : constant Ada_Quality.Policy.Quality_Policy := Loaded.Value;
+   begin
+      Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+      Ada.Text_IO.Put_Line (File, "maximum_complexity = 7");
+      Ada.Text_IO.Close (File);
+      Loaded := Ada_Quality.Policy.Load_Overlay (Path, Base);
+      Assert
+        (Loaded.Success and then Loaded.Value.Maximum_Complexity = 7 and then
+         Loaded.Value.Maximum_Source_Lines = 800,
+         "partial policy overlays replace only explicitly supplied values");
+   end;
    Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
    Ada.Text_IO.Put_Line (File, "maximum_source_lines = 700 # bounded source size");
    Ada.Text_IO.Put_Line (File, "require_clean_worktree = false # explicit TOML boolean");

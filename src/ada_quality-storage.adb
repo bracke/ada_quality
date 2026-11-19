@@ -12,6 +12,7 @@ with Ada_Quality.Persistence;
 with Database.Catalog;
 with Database.Backup;
 with Database.Export;
+with Database.Import;
 with Database.Predicates;
 with Database.Restore;
 with Database.Status;
@@ -463,6 +464,31 @@ package body Ada_Quality.Storage is
         (Database.Restore.Restore_Physical_Backup (Encode (Source), Encode (Destination)),
          "restore database backup");
    end Restore;
+
+   procedure Import (Source, Destination : String) is
+      DB : Database.Handle;
+      Tx : Database.Transactions.Transaction;
+   begin
+      if Ada.Directories.Exists (Destination) then
+         raise Storage_Error with "import destination already exists: " & Destination;
+      elsif not Ada.Directories.Exists (Source) then
+         raise Storage_Error with "logical export not found: " & Source;
+      end if;
+      Database.Create (DB, Encode (Destination));
+      Require_OK (Database.Last_Result (DB), "create import destination");
+      Database.Transactions.Begin_Write (DB, Tx);
+      Require_OK (Database.Import.Import_Database (Tx, Encode (Source)), "import database");
+      Require_OK (Database.Transactions.Commit (Tx), "commit database import");
+      Database.Close (DB);
+   exception
+      when others =>
+         if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+         if Database.Is_Open (DB) then Database.Close (DB); end if;
+         Project_Tools.Files.Delete_File_If_Present (Destination);
+         Project_Tools.Files.Delete_File_If_Present (Destination & ".wal");
+         Project_Tools.Files.Delete_File_If_Present (Destination & ".lock");
+         raise;
+   end Import;
 
    function Assessment_Status_Image (Value : Assessment_Status) return String is
    begin

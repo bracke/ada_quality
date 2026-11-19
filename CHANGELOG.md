@@ -12,6 +12,10 @@ All notable changes are recorded here. This project follows semantic versioning.
 - Added portfolio status reports and a regression-only CI gate.
 - Added changed-file list input, indicator catalog discovery, and bounded local project discovery.
 - Added database resource statistics and append-only human-readable assessment aliases.
+- Added bounded parallel and unchanged-assessment reuse workflows.
+- Added named policy profiles and partial per-project policy overlays.
+- Added filtered findings JSON/SARIF, Git-derived changed-file scans, and registry synchronization.
+- Added logical database import, standalone HTML reports, richer completions, and install/package tooling.
 
 ## 0.1.0
 
