@@ -32,8 +32,8 @@ private package Ada_Quality.Persistence is
    Metadata_Table          : constant Positive := 8;
    --  Schema metadata table index.
 
-   Current_Schema_Version : constant Positive := 4;
-   --  Logical schema version written by this implementation. Version 4 adds validated append-only alias events.
+   Current_Schema_Version : constant Positive := 5;
+   --  Logical schema version written by this implementation. Version 5 adds canonical project tags.
 
    Lossless_Evidence_Format : constant String := "3";
    --  Run payload marker for escaped key-value result and finding payloads.
@@ -120,6 +120,16 @@ private package Ada_Quality.Persistence is
 
    function Project_Row_Is_Valid (Row : Entity) return Boolean;
    --  Validate a project registry row independently of cross-row ownership.
+
+   function Project_Tag_Is_Valid (Name : String) return Boolean;
+   --  Validate one canonical project tag.
+
+   function Project_Payload (Path, Tags : String) return String;
+   --  Encode a project path and sorted comma-separated tags.
+
+   function Decode_Project_Payload
+     (Payload : String; Path, Tags : out Ada.Strings.Unbounded.Unbounded_String) return Boolean;
+   --  Decode and validate a canonical version-5 project payload.
 
    function Has_Field (Payload, Name : String) return Boolean;
    --  Test whether a line-oriented payload contains a named field.

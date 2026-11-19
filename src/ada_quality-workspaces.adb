@@ -8,7 +8,7 @@ with Ada_Quality.Project_Inventory;
 with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Workspaces is
-   --  AQ-WAIVER: SRC-03 target=copy_tree justification=staging traversal keeps one audited copy-budget boundary
+   --  AQ-WAIVER: SRC-03 target=copy_tree owner=aq expires=2099-12-31 justification=copy-budget-boundary
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
    use type Ada.Directories.File_Size;

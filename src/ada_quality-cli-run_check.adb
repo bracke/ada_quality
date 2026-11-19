@@ -1,5 +1,5 @@
 separate (Ada_Quality.CLI)
---  AQ-WAIVER: SRC-03 target=project_id justification=parallel-check-coordination-boundary
+--  AQ-WAIVER: SRC-03 target=project_id owner=core expires=2099-12-31 justification=parallel-check-coordination-boundary
 function Run_Check
   (Store : in out Ada_Quality.Storage.Store;
    Policy_Path : String) return Natural
@@ -20,6 +20,8 @@ is
    All_Mode : constant Boolean := Has_Flag ("--all");
    Batch_Mode : constant Boolean := JSON_Mode and then All_Mode;
    Reuse_Unchanged : constant Boolean := Has_Flag ("--reuse-unchanged");
+   Dry_Run : constant Boolean := Has_Flag ("--dry-run");
+   Selected_Tag : constant String := Option ("--tag", "");
    Use_Project_Policy : constant Boolean := Has_Flag ("--project-policy");
    Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
    Selected : Ada_Quality.Storage.Project_Vectors.Vector;
@@ -42,7 +44,8 @@ is
 
    task body Worker is
       Current_Project : Ada_Quality.Storage.Project_Info :=
-        (Id => 1, Path => Null_Unbounded_String, Enabled => True, Removed => False);
+        (Id => 1, Path => Null_Unbounded_String, Tags => Null_Unbounded_String,
+         Enabled => True, Removed => False);
       Current_Run_Id : Positive := 1;
       Current_Policy : Ada_Quality.Policy.Quality_Policy := Ada_Quality.Policy.Default;
       Work_Result : Job_Result;
@@ -201,8 +204,11 @@ begin
       end;
       if Jobs > 64 then raise Usage_Error with "--jobs must not exceed 64"; end if;
    end if;
-   if Option ("--output", "") /= "" and then not JSON_Mode then
+   if Option ("--output", "") /= "" and then not JSON_Mode and then not Dry_Run then
       raise Usage_Error with "check --output requires --json";
+   end if;
+   if Selected_Tag /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Selected_Tag) then
+      raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
    end if;
    if Option ("--project", "") /= "" then
       declare
@@ -218,8 +224,16 @@ begin
       for Project of Ada_Quality.Storage.Projects (Store) loop
          if Project.Enabled and then not Project.Removed then Selected.Append (Project); end if;
       end loop;
+   elsif Selected_Tag /= "" then
+      for Project of Ada_Quality.Storage.Projects (Store) loop
+         if Project.Enabled and then not Project.Removed and then
+           Ada_Quality.Storage.Has_Project_Tag (Project, Selected_Tag)
+         then
+            Selected.Append (Project);
+         end if;
+      end loop;
    else
-      raise Usage_Error with "check requires --all or --project ID";
+      raise Usage_Error with "check requires --all, --project ID, or --tag NAME";
    end if;
 
    declare
@@ -229,7 +243,8 @@ begin
       type Policy_Array is array (Natural range <>) of Ada_Quality.Policy.Quality_Policy;
       Workers : Worker_Array (1 .. Jobs) := [others => null];
       Projects : Project_Array (1 .. Jobs) :=
-        [others => (Id => 1, Path => Null_Unbounded_String, Enabled => True, Removed => False)];
+        [others => (Id => 1, Path => Null_Unbounded_String, Tags => Null_Unbounded_String,
+                    Enabled => True, Removed => False)];
       Run_Ids : Run_Array (1 .. Jobs) := [others => 0];
       Policies : Policy_Array (1 .. Natural (Selected.Length));
       Next : Positive := (if Selected.Is_Empty then 1 else Selected.First_Index);
@@ -242,6 +257,44 @@ begin
             Policies (Index) := Result.Value;
          end;
       end loop;
+      if Dry_Run then
+         declare
+            Plan : Ada_Quality.JSON.Check_Plan_Vectors.Vector;
+            Text : Ada.Strings.Unbounded.Unbounded_String;
+         begin
+            for Index in Policies'Range loop
+               declare
+                  Project : constant Ada_Quality.Storage.Project_Info := Selected (Index);
+                  Source : constant String :=
+                    Ada_Quality.Checks.Source_Fingerprint (To_String (Project.Path));
+                  Policy_Id : constant String := Ada_Quality.Policy.Fingerprint (Policies (Index));
+                  Toolchain : constant String := Ada_Quality.Checks.Current_Toolchain_Fingerprint
+                    (To_String (Project.Path));
+                  Cached : constant Natural := Cached_Run (Project, Source, Policy_Id, Toolchain);
+               begin
+                  Plan.Append
+                    (Ada_Quality.JSON.Check_Plan_Item'
+                       (Project_Id => Project.Id, Path => Project.Path,
+                        Source_Fingerprint => To_Unbounded_String (Source),
+                        Policy_Fingerprint => To_Unbounded_String (Policy_Id),
+                        Toolchain_Fingerprint => To_Unbounded_String (Toolchain),
+                        Reusable_Assessment => Cached,
+                        Will_Reuse => Reuse_Unchanged and then Cached > 0));
+                  Append
+                    (Text, "project" & Positive'Image (Project.Id) & " " & To_String (Project.Path) &
+                     " action=" & (if Reuse_Unchanged and then Cached > 0 then "reuse" else "assess") &
+                     " source=" & Source & " policy=" & Policy_Id & " toolchain=" & Toolchain &
+                     (if Cached > 0 then " reusable_assessment=" & Natural'Image (Cached) else "") & ASCII.LF);
+               end;
+            end loop;
+            if JSON_Mode then
+               Emit_Document (Ada_Quality.JSON.Render_Check_Plan (Plan, Pretty => True));
+            else
+               Emit_Document (To_String (Text));
+            end if;
+            return 0;
+         end;
+      end if;
       while not Selected.Is_Empty and then Next <= Selected.Last_Index loop
          Workers := [others => null];
          Run_Ids := [others => 0];

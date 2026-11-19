@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_integrity_test justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_integrity_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Integrity_Test is
 begin
 declare
@@ -325,8 +325,8 @@ begin
    Assert (Raised and then not Ada_Quality.Storage.Is_Open (Store),
      "a migration commit fault leaves the database closed at its prior version");
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-   Assert (Ada_Quality.Storage.Schema_Version (Store) = 4,
-     "opening a version-1 database runs the explicit migration to version 4");
+   Assert (Ada_Quality.Storage.Schema_Version (Store) = 5,
+     "opening a version-1 database runs the explicit migration to version 5");
    Ada_Quality.Storage.Testing.Set_Schema_Version (Store, 99);
    Raised := False;
    begin

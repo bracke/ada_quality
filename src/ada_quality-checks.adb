@@ -1,3 +1,5 @@
+with Ada.Calendar;
+with Ada.Calendar.Formatting;
 with Ada.Characters.Handling;
 with Ada.Characters.Latin_1;
 with Ada.Containers.Vectors;
@@ -23,7 +25,8 @@ with Ada_Quality.Source_Safety;
 with Ada_Quality.Tools;
 with Ada_Quality.Workspaces;
 
---  AQ-WAIVER: SRC-03 target=manifest_strings justification=manifest helpers share one bounded parse
+--  AQ-WAIVER: SRC-03 target=manifest_strings owner=aq expires=2099-12-31 justification=manifest-parse-boundary
+--  AQ-WAIVER: SRC-03 target=valid_date owner=aq expires=2099-12-31 justification=waiver-parse-boundary
 package body Ada_Quality.Checks is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
@@ -579,16 +582,49 @@ package body Ada_Quality.Checks is
         (Id, Not_Applicable, False, False, "not applicable", "not applicable", Evidence));
 
    type Review_Waiver is record
+      Found         : Boolean := False;
       Valid         : Boolean := False;
+      Expired       : Boolean := False;
       Target        : Ada.Strings.Unbounded.Unbounded_String;
+      Owner         : Ada.Strings.Unbounded.Unbounded_String;
+      Expires       : Ada.Strings.Unbounded.Unbounded_String;
       Justification : Ada.Strings.Unbounded.Unbounded_String;
    end record;
 
    function Find_Review_Waiver (Data, Rule, Expected_Target : String) return Review_Waiver is
       Prefix : constant String := "aq-waiver: " & Lower (Rule) & " target=";
+      Owner_Tag : constant String := " owner=";
+      Expires_Tag : constant String := " expires=";
       Justification_Tag : constant String := " justification=";
       Wanted : constant String := Lower (Expected_Target);
       Cursor : Natural := Data'First;
+
+      function Valid_Owner (Text : String) return Boolean is
+      begin
+         if Text'Length not in 1 .. 64 then return False; end if;
+         for C of Text loop
+            if C not in 'a' .. 'z' | '0' .. '9' | '-' | '_' | '.' | '@' then return False; end if;
+         end loop;
+         return True;
+      end Valid_Owner;
+
+      function Valid_Date (Text : String) return Boolean is
+      begin
+         if Text'Length /= 10 or else Text (Text'First + 4) /= '-' or else Text (Text'First + 7) /= '-' then
+            return False;
+         end if;
+         declare
+            Stamp : constant Ada.Calendar.Time := Ada.Calendar.Time_Of
+              (Integer'Value (Text (Text'First .. Text'First + 3)),
+               Integer'Value (Text (Text'First + 5 .. Text'First + 6)),
+               Integer'Value (Text (Text'First + 8 .. Text'Last)));
+            pragma Unreferenced (Stamp);
+         begin
+            return True;
+         end;
+      exception
+         when Constraint_Error | Ada.Calendar.Time_Error => return False;
+      end Valid_Date;
    begin
       if Data'Length = 0 then return (others => <>); end if;
       while Cursor <= Data'Last loop
@@ -605,22 +641,49 @@ package body Ada_Quality.Checks is
                   declare
                      Payload : constant String := Ada.Strings.Fixed.Trim
                        (Line (Line'First + 2 .. Line'Last), Ada.Strings.Both);
+                     Owner_At : constant Natural := Ada.Strings.Fixed.Index (Payload, Owner_Tag);
+                     Expires_At : constant Natural := Ada.Strings.Fixed.Index (Payload, Expires_Tag);
                      Justification_At : constant Natural := Ada.Strings.Fixed.Index (Payload, Justification_Tag);
                   begin
                      if Payload'Length > Prefix'Length and then
                        Payload (Payload'First .. Payload'First + Prefix'Length - 1) = Prefix and then
-                       Justification_At > Payload'First + Prefix'Length
+                       Owner_At > Payload'First + Prefix'Length
                      then
                         declare
                            Target : constant String := Ada.Strings.Fixed.Trim
-                             (Payload (Payload'First + Prefix'Length .. Justification_At - 1), Ada.Strings.Both);
-                           Justification : constant String := Ada.Strings.Fixed.Trim
-                             (Payload (Justification_At + Justification_Tag'Length .. Payload'Last), Ada.Strings.Both);
+                             (Payload (Payload'First + Prefix'Length .. Owner_At - 1), Ada.Strings.Both);
                         begin
-                           if Target = Wanted and then Justification'Length > 0 then
-                              return
-                                (Valid => True, Target => To_Unbounded_String (Target),
-                                 Justification => To_Unbounded_String (Justification));
+                           if Target = Wanted then
+                              if Expires_At > Owner_At + Owner_Tag'Length and then
+                                Justification_At > Expires_At + Expires_Tag'Length
+                              then
+                                 declare
+                                    Owner : constant String := Payload
+                                      (Owner_At + Owner_Tag'Length .. Expires_At - 1);
+                                    Expires : constant String := Payload
+                                      (Expires_At + Expires_Tag'Length .. Justification_At - 1);
+                                    Justification : constant String := Ada.Strings.Fixed.Trim
+                                      (Payload (Justification_At + Justification_Tag'Length .. Payload'Last),
+                                       Ada.Strings.Both);
+                                    Today_Image : constant String := Ada.Calendar.Formatting.Image
+                                      (Ada.Calendar.Clock, Include_Time_Fraction => False, Time_Zone => 0);
+                                    Expired : constant Boolean := Valid_Date (Expires) and then
+                                      Expires < Today_Image (Today_Image'First .. Today_Image'First + 9);
+                                 begin
+                                    return
+                                      (Found => True,
+                                       Valid => Valid_Owner (Owner) and then Valid_Date (Expires) and then
+                                         Justification'Length > 0 and then not Expired,
+                                       Expired => Expired,
+                                       Target => To_Unbounded_String (Target),
+                                       Owner => To_Unbounded_String (Owner),
+                                       Expires => To_Unbounded_String (Expires),
+                                       Justification => To_Unbounded_String (Justification));
+                                 end;
+                              else
+                                 return
+                                   (Found => True, Target => To_Unbounded_String (Target), others => <>);
+                              end if;
                            end if;
                         end;
                      end if;

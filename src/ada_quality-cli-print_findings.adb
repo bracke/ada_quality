@@ -1,5 +1,5 @@
 separate (Ada_Quality.CLI)
---  AQ-WAIVER: SRC-03 target=put_line justification=filtered-and-lifecycle-reporting-share-one-read-snapshot
+--  AQ-WAIVER: SRC-03 target=put_line owner=aq expires=2099-12-31 justification=one-reporting-snapshot
 procedure Print_Findings (DB_Path : String) is
    Session : Ada_Quality.Reporting.Session;
    Requested : constant String := Option ("--format", "");
@@ -9,7 +9,8 @@ procedure Print_Findings (DB_Path : String) is
    Structured : constant Boolean := Requested /= "" or else JSON_Mode or else
      Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
      Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
-     Option ("--since", "") /= "" or else Option ("--until", "") /= "";
+     Option ("--since", "") /= "" or else Option ("--until", "") /= "" or else
+     Option ("--limit", "") /= "" or else Option ("--offset", "") /= "";
    Output : Ada.Strings.Unbounded.Unbounded_String;
 
    procedure Put_Line (Text : String) is
@@ -77,6 +78,26 @@ begin
                end;
             end if;
          end loop;
+         declare Offset : Natural := 0; Limit : Natural := 0; begin
+            begin
+               if Option ("--offset", "") /= "" then
+                  Offset := Natural'Value (Option ("--offset", ""));
+               end if;
+               if Option ("--limit", "") /= "" then
+                  Limit := Positive'Value (Option ("--limit", ""));
+               end if;
+            exception
+               when Constraint_Error =>
+                  raise Usage_Error with "--offset and --limit require nonnegative and positive counts";
+            end;
+            if Offset > 0 then
+               Items.Delete_First
+                 (Ada.Containers.Count_Type'Min (Items.Length, Ada.Containers.Count_Type (Offset)));
+            end if;
+            if Limit > 0 and then Items.Length > Ada.Containers.Count_Type (Limit) then
+               Items.Delete_Last (Items.Length - Ada.Containers.Count_Type (Limit));
+            end if;
+         end;
          if Format = "json" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
             Emit_Document (Ada_Quality.JSON.Render_Findings (Items, Pretty => True));

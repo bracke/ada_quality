@@ -19,12 +19,14 @@ package Ada_Quality.Storage is
    type Project_Info is record
       Id      : Positive;
       Path    : Unbounded_String;
+      Tags    : Unbounded_String;
       Enabled : Boolean := True;
       Removed : Boolean := False;
    end record;
    --  Persistent project registry row.
    --  @field Id Positive project identity.
    --  @field Path Canonical project root.
+   --  @field Tags Sorted comma-separated project tags.
    --  @field Enabled Whether bulk assessment includes the project.
    --  @field Removed Whether the registry row is a retained tombstone.
 
@@ -95,6 +97,18 @@ package Ada_Quality.Storage is
    --  @param Id Project identity.
    --  @param Path New project root.
 
+   procedure Add_Project_Tag (Item : in out Store; Id : Positive; Name : String);
+   --  Add one canonical tag to a registered project; an existing tag is accepted.
+
+   procedure Remove_Project_Tag (Item : in out Store; Id : Positive; Name : String);
+   --  Remove one tag from a registered project; an absent tag is accepted.
+
+   function Has_Project_Tag (Project : Project_Info; Name : String) return Boolean;
+   --  Return whether Project has the exact canonical tag.
+
+   function Is_Project_Tag_Name (Name : String) return Boolean;
+   --  Return whether Name is a canonical project tag.
+
    procedure Backup (Item : in out Store; Destination : String);
    --  Create and verify a physical backup directory for the open store.
    --  @param Item Open store.
@@ -113,6 +127,11 @@ package Ada_Quality.Storage is
    procedure Import (Source, Destination : String);
    --  Import a database-native logical export into a new database file.
 
+   procedure Merge
+     (Item : in out Store; Source : String;
+      Added_Projects, Added_Assessments : out Natural);
+   --  Merge completed evidence from another database or native logical export.
+
    procedure Archive_And_Prune
      (Item        : in out Store;
       Destination : String;
@@ -120,6 +139,11 @@ package Ada_Quality.Storage is
       Keep        : Natural;
       Removed     : out Natural);
    --  Verify a full logical archive, then transactionally remove old terminal assessments.
+
+   function Retention_Candidates
+     (Item : in out Store; Before : Ada.Calendar.Time; Keep : Natural)
+      return History_Vectors.Vector;
+   --  Return the exact old terminal assessments an archive operation would prune.
 
    procedure Compact (Item : in out Store);
    --  Reclaim unused database pages inside one exclusive transaction.

@@ -2,7 +2,7 @@
 
 Release gates are `alr build --validation -- -f`, `alr test`, `alr exec -- ./bin/coverage`, GNATdoc generation, and
 `./bin/check_all`. The coverage driver is the exact >=90% gate. The standard checker independently requires all
-AQ-000 through AQ-008 records, all seven JSON schemas, exactly 33 indicators, the coverage artifact, and a passing
+AQ-000 through AQ-008 records, every published JSON schema, exactly 33 indicators, the coverage artifact, and a passing
 49-case AUnit binary. Keeping these gates
 separate allows a failed coverage artifact to be replaced by a fresh measurement.
 
@@ -13,7 +13,7 @@ Known non-blocking limitations:
 
 - this exported workspace has no Git metadata, so its checked-in policy disables the optional Git gate while REL-04
   still requires the source fingerprint to remain unchanged; Git-backed deployments may enable the stronger gate;
-- schema version 4 has atomic version-1/version-2/version-3 migrations and an injected migration-commit retry fixture; unknown versions
+- schema version 5 has atomic version-1 through version-4 migrations and an injected migration-commit retry fixture; unknown versions
   fail closed;
 - PRF-01 is not applicable to Ada Quality itself because its sources do not declare `SPARK_Mode`;
 - AQ-000 through AQ-007 reports are current reconstruction records, explicitly not fabricated historical logs;

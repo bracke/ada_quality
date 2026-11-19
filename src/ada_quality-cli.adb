@@ -29,7 +29,7 @@ with Project_Tools.Files;
 with Project_Tools.Links;
 with Project_Tools.Processes;
 
---  AQ-WAIVER: SRC-03 target=less justification=command parsing and dispatch share one bounded pass
+--  AQ-WAIVER: SRC-03 target=less owner=aq expires=2099-12-31 justification=bounded-cli-dispatch
 package body Ada_Quality.CLI is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
@@ -61,6 +61,9 @@ package body Ada_Quality.CLI is
      (Text'Length >= Prefix'Length and then
       Text (Text'First .. Text'First + Prefix'Length - 1) = Prefix);
 
+   function Has_Tag (Tags, Name : String) return Boolean is
+     (Name /= "" and then Ada.Strings.Fixed.Index ("," & Tags & ",", "," & Name & ",") > 0);
+
    function Has_Flag (Name : String) return Boolean is
      (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = Name);
 
@@ -79,11 +82,12 @@ package body Ada_Quality.CLI is
               "--files-from" | "--category" | "--limit" | "--since" | "--until" |
               "--from-run" | "--to-run" | "--only" | "--jobs" | "--profile" |
               "--severity" | "--path" | "--git-diff" | "--output" | "--before" | "--keep"
+              | "--offset" | "--tag"
             then
                Skip_Value := True;
             elsif Value in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression" |
               "--reuse-unchanged" | "--project-policy" | "--remove-missing" |
-              "--staged" | "--unstaged" | "--untracked"
+              "--staged" | "--unstaged" | "--untracked" | "--dry-run"
             then
                null;
             else
@@ -103,13 +107,14 @@ package body Ada_Quality.CLI is
            "--current" | "--baseline" | "--indicator" | "--changed-file" | "--status" |
            "--files-from" | "--category" | "--limit" | "--since" | "--until" |
            "--from-run" | "--to-run" | "--only" | "--jobs" | "--profile" |
-           "--severity" | "--path" | "--git-diff" | "--output" | "--before" | "--keep");
+           "--severity" | "--path" | "--git-diff" | "--output" | "--before" | "--keep" |
+           "--offset" | "--tag");
 
       function Allowed (Name : String) return Boolean is
         (Takes_Value (Name) or else
          Name in "--no-color" | "--all" | "--json" | "--add" | "--fail-on-regression" |
            "--reuse-unchanged" | "--project-policy" | "--remove-missing" |
-           "--staged" | "--unstaged" | "--untracked");
+           "--staged" | "--unstaged" | "--untracked" | "--dry-run");
    begin
       while Index <= Ada.Command_Line.Argument_Count loop
          declare
@@ -132,9 +137,11 @@ package body Ada_Quality.CLI is
          raise Usage_Error with "--color requires never, auto, or always";
       end if;
       if Positional (1) = "check" and then Option ("--project", "") /= "" and then
-        (for some J in 1 .. Ada.Command_Line.Argument_Count => Argument (J) = "--all")
+        (Has_Flag ("--all") or else Option ("--tag", "") /= "")
       then
-         raise Usage_Error with "--all and --project are mutually exclusive";
+         raise Usage_Error with "--all, --project, and --tag selectors are mutually exclusive";
+      elsif Positional (1) = "check" and then Has_Flag ("--all") and then Option ("--tag", "") /= "" then
+         raise Usage_Error with "--all, --project, and --tag selectors are mutually exclusive";
       end if;
    end Validate_Options;
 
@@ -162,10 +169,10 @@ package body Ada_Quality.CLI is
       Ada.Text_IO.Put_Line ("Commands:");
       Ada.Text_IO.Put_Line
         ("  project add PATH | discover ROOT [--add] | sync ROOT [--remove-missing] | list | show ID |");
-      Ada.Text_IO.Put_Line ("          relocate ID PATH | remove ID");
+      Ada.Text_IO.Put_Line ("          relocate ID PATH | remove ID | tag ID NAME | untag ID NAME | tags [ID]");
       Ada.Text_IO.Put_Line
-        ("  check --all | --project ID [--jobs N] [--reuse-unchanged] [--profile NAME]" &
-         " [--project-policy] [--json] [--output FILE]");
+        ("  check (--all | --project ID | --tag NAME) [--jobs N] [--reuse-unchanged] [--dry-run]" &
+         " [--profile NAME] [--project-policy] [--json] [--output FILE]");
       Ada.Text_IO.Put_Line
         ("  scan --project ID (--changed-file PATH ... | --files-from FILE|- | --git-diff BASE)" &
          " [--staged] [--unstaged] [--untracked] [--format text|json|sarif] [--output FILE]");
@@ -194,17 +201,16 @@ package body Ada_Quality.CLI is
         ("  policy init | validate | show | profiles | effective --project ID [--profile NAME] [--output FILE]");
       Ada.Text_IO.Put_Line
         ("  database init | check | recover | compact | stats | backup PATH | export PATH | import PATH |" &
-         " restore PATH | archive PATH --before TIME [--keep N]");
+         " restore PATH | archive [PATH] --before TIME [--keep N] [--dry-run] | merge SOURCE");
+      Ada.Text_IO.Put_Line ("  doctor [--project ID] [--output FILE] | waiver audit --project ID [--output FILE]");
       Ada.Text_IO.Put_Line ("");
       Ada.Text_IO.Put_Line ("Global options: --database PATH --policy PATH --no-color");
    end Help;
 
-   procedure Put_Project (P : Ada_Quality.Reporting.Project_Record) is
-   begin
-      Ada.Text_IO.Put_Line
-        (Positive'Image (P.Id) & "  " & To_String (P.Path) & "  " &
-         (if P.Removed then "removed" elsif P.Enabled then "enabled" else "disabled"));
-   end Put_Project;
+   function Project_Text (P : Ada_Quality.Reporting.Project_Record) return String is
+     (Positive'Image (P.Id) & "  " & To_String (P.Path) & "  " &
+      (if P.Removed then "removed" elsif P.Enabled then "enabled" else "disabled") &
+      (if Length (P.Tags) = 0 then "" else "  tags=" & To_String (P.Tags)));
 
    function Result_Exit (Value : Assessment) return Natural is
       Has_Violation  : Boolean := False;
@@ -220,8 +226,9 @@ package body Ada_Quality.CLI is
       end if;
    end Result_Exit;
 
-   procedure Print_Assessment (Value : Assessment) is
+   function Assessment_Text (Value : Assessment) return String is
       Role : Terminal_Styles.Style_Role;
+      Result : Ada.Strings.Unbounded.Unbounded_String;
    begin
       for R of Value.Results loop
          Role :=
@@ -229,11 +236,17 @@ package body Ada_Quality.CLI is
             elsif R.Compliance = Violation then Terminal_Styles.Role_Error
             elsif R.Execution = Not_Applicable then Terminal_Styles.Role_Muted
             else Terminal_Styles.Role_Warning);
-         Ada.Text_IO.Put_Line
-           (Terminal_Styles.Decorate
+         Append
+           (Result, Terminal_Styles.Decorate
               (Ada_Quality.Presentation.Result_Line
-                 (Terminal_Styles.Marker (Role), Image (R.Indicator), To_String (R.Summary)), Role));
+                 (Terminal_Styles.Marker (Role), Image (R.Indicator), To_String (R.Summary)), Role) & ASCII.LF);
       end loop;
+      return To_String (Result);
+   end Assessment_Text;
+
+   procedure Print_Assessment (Value : Assessment) is
+   begin
+      Ada.Text_IO.Put (Assessment_Text (Value));
    end Print_Assessment;
 
    procedure Emit_Document (Text : String) is
@@ -314,12 +327,6 @@ package body Ada_Quality.CLI is
       end if;
       return To_String (Result);
    end Comparison_Text;
-
-   procedure Print_Comparison
-     (Comparison : Ada_Quality.Reporting.Project_Comparison) is
-   begin
-      Ada.Text_IO.Put (Comparison_Text (Comparison));
-   end Print_Comparison;
 
    function Positive_Option (Name, Kind : String) return Positive;
    function Timestamp_Option (Name : String) return Ada_Quality.Reporting.Optional_Timestamp;
@@ -435,22 +442,22 @@ package body Ada_Quality.CLI is
             begin
                if Has_Flag ("--json") or else Option ("--format", "") = "json" then
                   Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-                  Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Statistics (Stats, Pretty => True));
+                  Emit_Document (Ada_Quality.JSON.Render_Statistics (Stats, Pretty => True));
                elsif Option ("--format", "") not in "" | "text" then
                   raise Usage_Error with "database stats format requires text or json";
                else
-                  Ada.Text_IO.Put_Line ("projects" & Natural'Image (Stats.Projects));
-                  Ada.Text_IO.Put_Line ("assessments" & Natural'Image (Stats.Assessments));
-                  Ada.Text_IO.Put_Line ("results" & Natural'Image (Stats.Results));
-                  Ada.Text_IO.Put_Line ("measurements" & Natural'Image (Stats.Measurements));
-                  Ada.Text_IO.Put_Line ("findings" & Natural'Image (Stats.Findings));
-                  Ada.Text_IO.Put_Line ("executions" & Natural'Image (Stats.Executions));
-                  Ada.Text_IO.Put_Line ("events" & Natural'Image (Stats.Events));
-                  Ada.Text_IO.Put_Line
-                    ("total rows" & Natural'Image (Stats.Total_Rows) & " /" & Positive'Image (Stats.Row_Limit));
-                  Ada.Text_IO.Put_Line
-                    ("text bytes" & Long_Long_Integer'Image (Stats.Text_Bytes) &
-                     " /" & Positive'Image (Stats.Text_Limit));
+                  Emit_Document
+                    ("projects" & Natural'Image (Stats.Projects) & ASCII.LF &
+                     "assessments" & Natural'Image (Stats.Assessments) & ASCII.LF &
+                     "results" & Natural'Image (Stats.Results) & ASCII.LF &
+                     "measurements" & Natural'Image (Stats.Measurements) & ASCII.LF &
+                     "findings" & Natural'Image (Stats.Findings) & ASCII.LF &
+                     "executions" & Natural'Image (Stats.Executions) & ASCII.LF &
+                     "events" & Natural'Image (Stats.Events) & ASCII.LF &
+                     "total rows" & Natural'Image (Stats.Total_Rows) & " /" &
+                       Positive'Image (Stats.Row_Limit) & ASCII.LF &
+                     "text bytes" & Long_Long_Integer'Image (Stats.Text_Bytes) & " /" &
+                       Positive'Image (Stats.Text_Limit) & ASCII.LF);
                end if;
             end;
          end;
@@ -478,8 +485,24 @@ package body Ada_Quality.CLI is
          Open_Store (False);
          Ada_Quality.Storage.Check (Store);
          Ada.Text_IO.Put_Line ("imported " & DB_Path);
+      elsif Operation = "merge" then
+         if Positional (3) = "" then raise Usage_Error with "database merge requires a source path"; end if;
+         if Ada.Directories.Exists (Positional (3)) and then Ada.Directories.Exists (DB_Path) and then
+           Ada.Directories.Full_Name (Positional (3)) = Ada.Directories.Full_Name (DB_Path)
+         then
+            raise Usage_Error with "database cannot be merged into itself";
+         end if;
+         declare Added_Projects, Added_Assessments : Natural; begin
+            Open_Store (False);
+            Ada_Quality.Storage.Check (Store);
+            Ada_Quality.Storage.Merge
+              (Store, Positional (3), Added_Projects, Added_Assessments);
+            Ada.Text_IO.Put_Line
+              ("merged" & Natural'Image (Added_Projects) & " project(s) and" &
+               Natural'Image (Added_Assessments) & " assessment(s)");
+         end;
       elsif Operation = "archive" then
-         if Positional (3) = "" then
+         if Positional (3) = "" and then not Has_Flag ("--dry-run") then
             raise Usage_Error with "database archive requires a destination path";
          end if;
          declare
@@ -499,19 +522,154 @@ package body Ada_Quality.CLI is
             end if;
             Open_Store (False);
             Ada_Quality.Storage.Check (Store);
-            Ada_Quality.Storage.Archive_And_Prune
-              (Store, Positional (3), Before.Value, Keep, Removed);
-            Ada_Quality.Storage.Compact (Store);
-            Ada_Quality.Storage.Check (Store);
-            Ada.Text_IO.Put_Line
-              ("archived database and removed" & Natural'Image (Removed) & " assessment(s)");
+            if Has_Flag ("--dry-run") then
+               declare
+                  Candidates : constant Ada_Quality.Storage.History_Vectors.Vector :=
+                    Ada_Quality.Storage.Retention_Candidates (Store, Before.Value, Keep);
+                  Output : Ada.Strings.Unbounded.Unbounded_String;
+               begin
+                  Append
+                    (Output, "retention preview:" & Natural'Image (Natural (Candidates.Length)) &
+                     " assessment(s) would be removed" & ASCII.LF);
+                  for Run of Candidates loop
+                     Append
+                       (Output, "assessment" & Positive'Image (Run.Id) & " project" &
+                        Positive'Image (Run.Project_Id) & " " & To_String (Run.Status) & ASCII.LF);
+                  end loop;
+                  Emit_Document (To_String (Output));
+               end;
+            else
+               Ada_Quality.Storage.Archive_And_Prune
+                 (Store, Positional (3), Before.Value, Keep, Removed);
+               Ada_Quality.Storage.Compact (Store);
+               Ada_Quality.Storage.Check (Store);
+               Ada.Text_IO.Put_Line
+                 ("archived database and removed" & Natural'Image (Removed) & " assessment(s)");
+            end if;
          end;
       else
          raise Usage_Error with
-           "database requires init, check, recover, compact, stats, backup, export, import, restore, or archive";
+           "database requires init, check, recover, compact, stats, backup, export, import, restore, merge, or archive";
       end if;
       return 0;
    end Run_Database;
+
+   function Run_Doctor (DB_Path, Policy_Path : String) return Natural is
+      Output : Ada.Strings.Unbounded.Unbounded_String;
+      Failed : Boolean := False;
+      Profile : constant String := Option ("--profile", "");
+      Selected_Policy : constant String := Ada_Quality.Policy.Profile_Path (Policy_Path, Profile);
+
+      procedure Result (Name : String; Passed : Boolean; Detail : String) is
+      begin
+         Append
+           (Output, (if Passed then "ok " else "error ") & Name & ": " & Detail & ASCII.LF);
+         Failed := Failed or else not Passed;
+      end Result;
+   begin
+      if Profile /= "" and then not Ada_Quality.Policy.Is_Profile_Name (Profile) then
+         raise Usage_Error with "--profile requires letters, digits, underscores, or hyphens";
+      end if;
+      declare Loaded : constant Ada_Quality.Policy.Load_Result := Ada_Quality.Policy.Load (Selected_Policy); begin
+         Result
+           ("policy", Loaded.Success,
+            (if Loaded.Success then Selected_Policy & " " & Ada_Quality.Policy.Fingerprint (Loaded.Value)
+             else To_String (Loaded.Error)));
+      end;
+      declare
+         Session : Ada_Quality.Reporting.Session;
+      begin
+         begin
+            Ada_Quality.Reporting.Open (Session, DB_Path);
+            declare Stats : constant Ada_Quality.Reporting.Snapshot_Statistics :=
+              Ada_Quality.Reporting.Statistics (Session); begin
+               Result
+                 ("database", True,
+                  DB_Path & " schema" & Positive'Image
+                    (Ada_Quality.Reporting.Supported_Schema_Version (Session)) &
+                   " projects" & Natural'Image (Stats.Projects) &
+                   " assessments" & Natural'Image (Stats.Assessments));
+            end;
+            if Option ("--project", "") /= "" then
+               declare
+                  P : constant Ada_Quality.Reporting.Project_Record :=
+                    Ada_Quality.Reporting.Project (Session, Positive_Option ("--project", "project"));
+                  Root : constant String := To_String (P.Path);
+               begin
+                  Result
+                    ("project", Project_Tools.Files.File_Exists (Root & "/alire.toml"),
+                     Root & (if Length (P.Tags) = 0 then "" else " tags=" & To_String (P.Tags)));
+               end;
+            end if;
+         exception
+            when E : others => Result ("database", False, Ada.Exceptions.Exception_Message (E));
+         end;
+      end;
+      for Tool of Text_Vectors.Vector'
+        [To_Unbounded_String ("alr"), To_Unbounded_String ("gprbuild"),
+         To_Unbounded_String ("gnatdoc"), To_Unbounded_String ("gnatprove"),
+         To_Unbounded_String ("git")]
+      loop
+         declare
+            Name : constant String := To_String (Tool);
+            Path : constant String := Project_Tools.Processes.Locate_Command (Name);
+         begin
+            Result ("tool " & Name, Path /= "", (if Path = "" then "not found" else Path));
+         end;
+      end loop;
+      Emit_Document (To_String (Output));
+      return (if Failed then 3 else 0);
+   end Run_Doctor;
+
+   function Run_Waiver_Audit (DB_Path, Policy_Path : String) return Natural is
+      Session : Ada_Quality.Reporting.Session;
+      Project_Id : constant Positive := Positive_Option ("--project", "project");
+      Profile : constant String := Option ("--profile", "");
+      Loaded : Ada_Quality.Policy.Load_Result := Ada_Quality.Policy.Load
+        (Ada_Quality.Policy.Profile_Path (Policy_Path, Profile));
+      Output : Ada.Strings.Unbounded.Unbounded_String;
+      Invalid : Natural := 0;
+      Count : Natural := 0;
+   begin
+      if Profile /= "" and then not Ada_Quality.Policy.Is_Profile_Name (Profile) then
+         raise Usage_Error with "--profile requires letters, digits, underscores, or hyphens";
+      elsif not Loaded.Success then
+         raise Usage_Error with To_String (Loaded.Error);
+      end if;
+      Ada_Quality.Reporting.Open (Session, DB_Path);
+      declare
+         Project : constant Ada_Quality.Reporting.Project_Record :=
+           Ada_Quality.Reporting.Project (Session, Project_Id);
+         Override : constant String := To_String (Project.Path) & "/quality-policy.override.toml";
+      begin
+         if Project_Tools.Files.File_Exists (Override) then
+            Loaded := Ada_Quality.Policy.Load_Overlay (Override, Loaded.Value);
+            if not Loaded.Success then raise Usage_Error with To_String (Loaded.Error); end if;
+         end if;
+         declare
+            Metrics : constant Ada_Quality.Checks.Source_Analysis :=
+              Ada_Quality.Checks.Analyze_Source (To_String (Project.Path), Loaded.Value);
+         begin
+            for Finding of Metrics.Findings loop
+               if Ada.Strings.Fixed.Index (To_String (Finding.Rule), "waiver") > 0 then
+                  Count := Count + 1;
+                  if To_String (Finding.Rule) /= "review-waiver" then Invalid := Invalid + 1; end if;
+                  Append
+                    (Output, To_String (Finding.Rule) & " " & Image (Finding.Indicator) & " " &
+                     To_String (Finding.Relative_Path) &
+                     (if Finding.Line = 0 then "" else ":" & Natural'Image (Finding.Line)) & " " &
+                     To_String (Finding.Message) & ASCII.LF);
+               end if;
+            end loop;
+         end;
+      end;
+      if Count = 0 then Append (Output, "no applicable source waivers found" & ASCII.LF); end if;
+      Append
+        (Output, "waiver audit:" & Natural'Image (Count - Invalid) & " active," &
+         Natural'Image (Invalid) & " invalid or expired" & ASCII.LF);
+      Emit_Document (To_String (Output));
+      return (if Invalid = 0 then 0 else 1);
+   end Run_Waiver_Audit;
 
    function Run_Scan (DB_Path, Policy_Path : String) return Natural is
       Files      : Text_Vectors.Vector := Changed_Files;
@@ -685,6 +843,7 @@ package body Ada_Quality.CLI is
 
    function Run_Explain (Name : String) return Natural is
       Indicator : Indicator_Id;
+      Output : Ada.Strings.Unbounded.Unbounded_String;
    begin
       if not Ada_Quality.Indicators.Parse_Canonical (Name, Indicator) then
          raise Usage_Error with "explain requires a canonical indicator ID";
@@ -694,26 +853,28 @@ package body Ada_Quality.CLI is
          Descriptor : constant Ada_Quality.Indicators.Indicator_Descriptor := Registry (Indicator);
          Has_Prerequisite : Boolean := False;
       begin
-         Ada.Text_IO.Put_Line (Image (Indicator) & " - " & Descriptor.Name.all);
-         Ada.Text_IO.Put_Line
-           ("category: " & Ada_Quality.Indicators.Indicator_Category'Image (Descriptor.Category));
-         Ada.Text_IO.Put_Line
-           ("version:" & Positive'Image (Descriptor.Version) & ", measurement version:" &
-            Positive'Image (Descriptor.Measurement_Version));
-         Ada.Text_IO.Put_Line
-           ("unit: " & Descriptor.Unit_Name.all & ", gate: " & Boolean'Image (Descriptor.Gate) &
-            ", trend: " & Ada_Quality.Indicators.Metric_Direction'Image (Descriptor.Trend));
-         Ada.Text_IO.Put ("prerequisites:");
+         Append (Output, Image (Indicator) & " - " & Descriptor.Name.all & ASCII.LF);
+         Append
+           (Output, "category: " & Ada_Quality.Indicators.Indicator_Category'Image
+              (Descriptor.Category) & ASCII.LF);
+         Append
+           (Output, "version:" & Positive'Image (Descriptor.Version) & ", measurement version:" &
+            Positive'Image (Descriptor.Measurement_Version) & ASCII.LF);
+         Append
+           (Output, "unit: " & Descriptor.Unit_Name.all & ", gate: " & Boolean'Image (Descriptor.Gate) &
+            ", trend: " & Ada_Quality.Indicators.Metric_Direction'Image (Descriptor.Trend) & ASCII.LF);
+         Append (Output, "prerequisites:");
          for Dependency in Indicator_Id loop
             if Descriptor.Prerequisites (Dependency) then
-               Ada.Text_IO.Put (" " & Image (Dependency));
+               Append (Output, " " & Image (Dependency));
                Has_Prerequisite := True;
             end if;
          end loop;
-         if not Has_Prerequisite then Ada.Text_IO.Put (" none"); end if;
-         Ada.Text_IO.New_Line;
-         Ada.Text_IO.Put_Line ("remediation: " & Ada_Quality.Indicators.Remediation (Indicator));
+         if not Has_Prerequisite then Append (Output, " none"); end if;
+         Append (Output, ASCII.LF);
+         Append (Output, "remediation: " & Ada_Quality.Indicators.Remediation (Indicator) & ASCII.LF);
       end;
+      Emit_Document (To_String (Output));
       return 0;
    end Run_Explain;
 
@@ -726,6 +887,7 @@ package body Ada_Quality.CLI is
       Filter    : constant String := Option ("--only", "all");
       Stale_Before : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
       Selected  : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Tag_Filter : constant String := Option ("--tag", "");
       use type Ada.Calendar.Time;
 
       function Is_Unhealthy
@@ -755,6 +917,8 @@ package body Ada_Quality.CLI is
          raise Usage_Error with "status format requires text or json";
       elsif Filter not in "all" | "unhealthy" | "stale" | "regressed" then
          raise Usage_Error with "--only requires unhealthy, stale, or regressed";
+      elsif Tag_Filter /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Tag_Filter) then
+         raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
       elsif Filter = "stale" and then not Stale_Before.Present then
          raise Usage_Error with "status --only stale requires --since TIME";
       end if;
@@ -774,14 +938,32 @@ package body Ada_Quality.CLI is
                 not Runs.Last_Element.Started_At.Present or else
                 Runs.Last_Element.Started_At.Value < Stale_Before.Value));
          begin
-            if Include then Selected.Append (Project); end if;
+            if Include and then (Tag_Filter = "" or else Has_Tag (To_String (Project.Tags), Tag_Filter)) then
+               Selected.Append (Project);
+            end if;
          end;
       end loop;
+      declare Offset : Natural := 0; Limit : Natural := 0; begin
+         begin
+            if Option ("--offset", "") /= "" then Offset := Natural'Value (Option ("--offset", "")); end if;
+            if Option ("--limit", "") /= "" then Limit := Positive'Value (Option ("--limit", "")); end if;
+         exception
+            when Constraint_Error =>
+               raise Usage_Error with "--offset and --limit require nonnegative and positive counts";
+         end;
+         if Offset > 0 then
+            Selected.Delete_First
+              (Ada.Containers.Count_Type'Min (Selected.Length, Ada.Containers.Count_Type (Offset)));
+         end if;
+         if Limit > 0 and then Selected.Length > Ada.Containers.Count_Type (Limit) then
+            Selected.Delete_Last (Selected.Length - Ada.Containers.Count_Type (Limit));
+         end if;
+      end;
       if Format = "json" then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-         Ada.Text_IO.Put_Line
-           (Ada_Quality.JSON.Render_Status (Session, Selected, Pretty => True));
+         Emit_Document (Ada_Quality.JSON.Render_Status (Session, Selected, Pretty => True));
       else
+         declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
          for Project of Selected loop
             declare
                Runs       : constant Ada_Quality.Reporting.Run_Vectors.Vector :=
@@ -793,7 +975,7 @@ package body Ada_Quality.CLI is
                  (if Project.Enabled then "enabled" else "disabled") & " " & To_String (Project.Path);
             begin
                if Runs.Is_Empty then
-                  Ada.Text_IO.Put_Line (Prefix & ": never assessed");
+                  Append (Output, Prefix & ": never assessed" & ASCII.LF);
                else
                   declare
                      Run : constant Ada_Quality.Reporting.Run_Record := Runs.Last_Element;
@@ -804,15 +986,17 @@ package body Ada_Quality.CLI is
                            when Assessment_Invalid => "invalid",
                            when Assessment_Interrupted => "interrupted");
                   begin
-                     Ada.Text_IO.Put_Line
-                       (Prefix & ": run" & Positive'Image (Run.Id) & " " & State & ", " &
+                     Append
+                       (Output, Prefix & ": run" & Positive'Image (Run.Id) & " " & State & ", " &
                         (if Comparison.Selection.Status = Ada_Quality.History.Comparison_Available then
                            Natural'Image (Natural (Comparison.Changes.Length)) & " regression(s)"
-                         else "comparison " & Ada_Quality.History.Image (Comparison.Selection.Status)));
+                         else "comparison " & Ada_Quality.History.Image (Comparison.Selection.Status)) & ASCII.LF);
                   end;
                end if;
             end;
          end loop;
+         Emit_Document (To_String (Output));
+         end;
       end if;
       return 0;
    end Run_Status;
@@ -842,21 +1026,23 @@ package body Ada_Quality.CLI is
          raise Usage_Error with "indicator list format requires text or json";
       elsif Format = "json" then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-         Ada.Text_IO.Put_Line
-           (Ada_Quality.JSON.Render_Indicators (Filtered, Category, Pretty => True));
+         Emit_Document (Ada_Quality.JSON.Render_Indicators (Filtered, Category, Pretty => True));
       else
+         declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
          for Id in Indicator_Id loop
             declare
                Descriptor : constant Ada_Quality.Indicators.Indicator_Descriptor := Registry (Id);
             begin
                if not Filtered or else Descriptor.Category = Category then
-                  Ada.Text_IO.Put_Line
-                    (Image (Id) & " " &
+                  Append
+                    (Output, Image (Id) & " " &
                      Ada_Quality.Indicators.Indicator_Category'Image (Descriptor.Category) & " " &
-                     Descriptor.Name.all);
+                     Descriptor.Name.all & ASCII.LF);
                end if;
             end;
          end loop;
+         Emit_Document (To_String (Output));
+         end;
       end if;
       return 0;
    end Run_Indicator_List;
@@ -990,21 +1176,24 @@ package body Ada_Quality.CLI is
       end;
       if JSON_Mode then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-         Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_Discovery (Results, Pretty => True));
+         Emit_Document (Ada_Quality.JSON.Render_Discovery (Results, Pretty => True));
       elsif Option ("--format", "") not in "" | "text" then
          raise Usage_Error with "project discover format requires text or json";
       else
+         declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
          for Item of Results loop
-            Ada.Text_IO.Put_Line
-              ((case Item.Status is
+            Append
+              (Output, (case Item.Status is
                   when Ada_Quality.JSON.Already_Registered =>
                     "registered" & Natural'Image (Item.Project_Id),
                   when Ada_Quality.JSON.Added => "added" & Natural'Image (Item.Project_Id),
                   when Ada_Quality.JSON.Discovered => "found",
                   when Ada_Quality.JSON.Missing => "missing" & Natural'Image (Item.Project_Id),
                   when Ada_Quality.JSON.Removed => "removed" & Natural'Image (Item.Project_Id)) &
-               " " & To_String (Item.Path));
+               " " & To_String (Item.Path) & ASCII.LF);
          end loop;
+         Emit_Document (To_String (Output));
+         end;
       end if;
       return 0;
    end Run_Project_Discover;
@@ -1073,6 +1262,7 @@ package body Ada_Quality.CLI is
       Project_Id : Natural := 0;
       Status     : constant String := Option ("--status", "all");
       Limit      : Natural := 0;
+      Offset     : Natural := 0;
       Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
       Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
       JSON_Mode  : constant Boolean := Has_Flag ("--json");
@@ -1089,6 +1279,13 @@ package body Ada_Quality.CLI is
             Limit := Positive'Value (Option ("--limit", ""));
          exception
             when Constraint_Error => raise Usage_Error with "--limit requires a positive count";
+         end;
+      end if;
+      if Option ("--offset", "") /= "" then
+         begin
+            Offset := Natural'Value (Option ("--offset", ""));
+         exception
+            when Constraint_Error => raise Usage_Error with "--offset requires a nonnegative count";
          end;
       end if;
       if Status not in "all" | "running" | "completed" | "invalid" | "interrupted" then
@@ -1125,23 +1322,31 @@ package body Ada_Quality.CLI is
             end if;
          end;
       end loop;
+      if Offset > 0 then
+         Filtered.Delete_Last
+           (Ada.Containers.Count_Type'Min (Filtered.Length, Ada.Containers.Count_Type (Offset)));
+      end if;
       if Limit > 0 and then Filtered.Length > Ada.Containers.Count_Type (Limit) then
          Filtered.Delete_First (Filtered.Length - Ada.Containers.Count_Type (Limit));
       end if;
       if Format = "json" then
          Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-         Ada.Text_IO.Put_Line (Ada_Quality.JSON.Render_History (Filtered, Pretty => True));
+         Emit_Document (Ada_Quality.JSON.Render_History (Filtered, Pretty => True));
       else
-         for Run of Filtered loop
-            Ada.Text_IO.Put_Line
-              (Positive'Image (Run.Id) & " project" & Positive'Image (Run.Project_Id) & " " &
-               (case Run.State is
-                  when Assessment_Running => "running",
-                  when Assessment_Completed => "completed",
-                  when Assessment_Invalid => "invalid",
-                  when Assessment_Interrupted => "interrupted") &
-               (if Run.Started_At.Present then " " & Ada_Quality.Reporting.Image (Run.Started_At) else ""));
-         end loop;
+         declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
+            for Run of Filtered loop
+               Append
+                 (Output, Positive'Image (Run.Id) & " project" & Positive'Image (Run.Project_Id) & " " &
+                  (case Run.State is
+                     when Assessment_Running => "running",
+                     when Assessment_Completed => "completed",
+                     when Assessment_Invalid => "invalid",
+                     when Assessment_Interrupted => "interrupted") &
+                  (if Run.Started_At.Present then " " & Ada_Quality.Reporting.Image (Run.Started_At) else "") &
+                  ASCII.LF);
+            end loop;
+            Emit_Document (To_String (Output));
+         end;
       end if;
       return 0;
    end Run_History;
@@ -1295,7 +1500,7 @@ package body Ada_Quality.CLI is
    function Run_Completion (Shell : String) return Natural is
       Commands : constant String :=
         "help version project check scan assessment history status findings regressions trend explain " &
-        "indicator report policy database completion";
+        "indicator report policy database doctor waiver completion";
    begin
       if Shell = "bash" then
          Ada.Text_IO.Put_Line ("_ada_quality_complete() {");
@@ -1312,16 +1517,17 @@ package body Ada_Quality.CLI is
            ("  if [[ -n $words ]]; then COMPREPLY=($(compgen -W ""$words"" -- ""$cur"")); return; fi");
          Ada.Text_IO.Put_Line ("  case ""${COMP_WORDS[1]}"" in");
          Ada.Text_IO.Put_Line
-           ("    project) words='add discover sync list show enable disable relocate remove " &
+           ("    project) words='add discover sync list show enable disable relocate remove tag untag tags " &
             "--add --remove-missing --json' ;;");
          Ada.Text_IO.Put_Line
            ("    assessment) words='show diff alias aliases --format --output --json '" &
             "$(ada-quality assessment aliases 2>/dev/null | awk '{print $1}') ;;");
          Ada.Text_IO.Put_Line
-           ("    database) words='init check recover compact stats backup export import restore archive " &
+           ("    database) words='init check recover compact stats backup export import restore archive merge " &
             "--before --keep --format --json' ;;");
          Ada.Text_IO.Put_Line
-           ("    check) words='--all --project --jobs --reuse-unchanged --profile --project-policy --json' ;;");
+           ("    check) words='--all --project --tag --jobs --reuse-unchanged --dry-run " &
+            "--profile --project-policy --json' ;;");
          Ada.Text_IO.Put_Line
            ("    scan) words='--project --changed-file --files-from --git-diff --staged --unstaged " &
             "--untracked --format --output --json' ;;");
@@ -1330,6 +1536,7 @@ package body Ada_Quality.CLI is
             "--format --output --json' ;;");
          Ada.Text_IO.Put_Line
            ("    policy) words='init validate show profiles effective --project --profile --output' ;;");
+         Ada.Text_IO.Put_Line ("    waiver) words='audit --project --profile --output' ;;");
          Ada.Text_IO.Put_Line
            ("    *) words='" & Commands & " --database --policy --format --json --no-color' ;;");
          Ada.Text_IO.Put_Line ("  esac");
@@ -1421,6 +1628,11 @@ package body Ada_Quality.CLI is
 
       if Command = "database" then
          return Run_Database (DB_Path, Subcommand);
+      elsif Command = "doctor" then
+         return Run_Doctor (DB_Path, Policy_Path);
+      elsif Command = "waiver" then
+         if Subcommand /= "audit" then raise Usage_Error with "waiver requires audit"; end if;
+         return Run_Waiver_Audit (DB_Path, Policy_Path);
       elsif Command = "completion" then
          return Run_Completion (Subcommand);
       elsif Command = "policy" then
@@ -1533,9 +1745,16 @@ package body Ada_Quality.CLI is
 
       if Command = "check" or else
         (Command = "project" and then
-         Subcommand in "add" | "discover" | "sync" | "enable" | "disable" | "relocate" | "remove") or else
+         Subcommand in "add" | "discover" | "sync" | "enable" | "disable" | "relocate" | "remove" |
+           "tag" | "untag") or else
         (Command = "assessment" and then Subcommand = "alias")
       then
+         if Command = "check" and then Has_Flag ("--dry-run") then
+            declare Snapshot : Ada_Quality.Reporting.Session; begin
+               --  Reject an old schema read-only instead of allowing Open_Store to migrate it during a plan.
+               Ada_Quality.Reporting.Open (Snapshot, DB_Path);
+            end;
+         end if;
          Open_Store;
          Ada_Quality.Storage.Check (Store);
       end if;
@@ -1562,17 +1781,35 @@ package body Ada_Quality.CLI is
             begin
                Ada_Quality.Reporting.Open (Session, DB_Path);
                declare
-                  Projects : constant Ada_Quality.Reporting.Project_Vectors.Vector :=
+                  Projects : Ada_Quality.Reporting.Project_Vectors.Vector :=
                     Ada_Quality.Reporting.Projects (Session);
+                  Offset : Natural := 0;
+                  Limit : Natural := 0;
                begin
+                  begin
+                     if Option ("--offset", "") /= "" then Offset := Natural'Value (Option ("--offset", "")); end if;
+                     if Option ("--limit", "") /= "" then Limit := Positive'Value (Option ("--limit", "")); end if;
+                  exception
+                     when Constraint_Error =>
+                        raise Usage_Error with "--offset and --limit require nonnegative and positive counts";
+                  end;
+                  if Offset > 0 then
+                     Projects.Delete_First
+                       (Ada.Containers.Count_Type'Min (Projects.Length, Ada.Containers.Count_Type (Offset)));
+                  end if;
+                  if Limit > 0 and then Projects.Length > Ada.Containers.Count_Type (Limit) then
+                     Projects.Delete_Last (Projects.Length - Ada.Containers.Count_Type (Limit));
+                  end if;
                   if Has_Flag ("--json") or else Option ("--format", "") = "json" then
                      Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-                     Ada.Text_IO.Put_Line
-                       (Ada_Quality.JSON.Render_Projects (Projects, Pretty => True));
+                     Emit_Document (Ada_Quality.JSON.Render_Projects (Projects, Pretty => True));
                   elsif Option ("--format", "") not in "" | "text" then
                      raise Usage_Error with "project list format requires text or json";
                   else
-                     for P of Projects loop Put_Project (P); end loop;
+                     declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
+                        for P of Projects loop Append (Output, Project_Text (P) & ASCII.LF); end loop;
+                        Emit_Document (To_String (Output));
+                     end;
                   end if;
                end;
             end;
@@ -1582,7 +1819,7 @@ package body Ada_Quality.CLI is
                Id      : constant Positive := Id_Argument (3);
             begin
                Ada_Quality.Reporting.Open (Session, DB_Path);
-               Put_Project (Ada_Quality.Reporting.Project (Session, Id));
+               Emit_Document (Project_Text (Ada_Quality.Reporting.Project (Session, Id)) & ASCII.LF);
             end;
          elsif Subcommand = "enable" then
             Ada_Quality.Storage.Set_Enabled (Store, Id_Argument (3), True);
@@ -1596,6 +1833,33 @@ package body Ada_Quality.CLI is
             Ada.Text_IO.Put_Line ("relocated project" & Positive'Image (Id_Argument (3)));
          elsif Subcommand = "remove" then
             Ada_Quality.Storage.Remove_Project (Store, Id_Argument (3));
+         elsif Subcommand in "tag" | "untag" then
+            if Positional (4) = "" then
+               raise Usage_Error with "project " & Subcommand & " requires an ID and tag name";
+            end if;
+            if Subcommand = "tag" then
+               Ada_Quality.Storage.Add_Project_Tag (Store, Id_Argument (3), Positional (4));
+            else
+               Ada_Quality.Storage.Remove_Project_Tag (Store, Id_Argument (3), Positional (4));
+            end if;
+            Ada.Text_IO.Put_Line (Subcommand & "ged project" & Positive'Image (Id_Argument (3)));
+         elsif Subcommand = "tags" then
+            declare
+               Session : Ada_Quality.Reporting.Session;
+               Output : Ada.Strings.Unbounded.Unbounded_String;
+               Id : Natural := 0;
+            begin
+               if Positional (3) /= "" then Id := Id_Argument (3); end if;
+               Ada_Quality.Reporting.Open (Session, DB_Path);
+               for P of Ada_Quality.Reporting.Projects (Session) loop
+                  if Id = 0 or else P.Id = Id then
+                     Append
+                       (Output, Positive'Image (P.Id) &
+                        (if Length (P.Tags) = 0 then "" else " " & To_String (P.Tags)) & ASCII.LF);
+                  end if;
+               end loop;
+               Emit_Document (To_String (Output));
+            end;
          else
             raise Usage_Error with "unknown project subcommand";
          end if;
@@ -1668,7 +1932,7 @@ package body Ada_Quality.CLI is
                elsif Format = "html" then
                   Emit_Document (Ada_Quality.HTML.Render_Assessment (Value));
                else
-                  Print_Assessment (Value);
+                  Emit_Document (Assessment_Text (Value));
                end if;
             end;
          elsif Subcommand = "alias" then
@@ -1697,20 +1961,39 @@ package body Ada_Quality.CLI is
                   Run_Id := Ada_Quality.Reporting.Resolve_Assessment (Session, Positional (3));
                end if;
                declare
-                  Aliases : constant Ada_Quality.Reporting.Alias_Vectors.Vector :=
+                  Aliases : Ada_Quality.Reporting.Alias_Vectors.Vector :=
                     Ada_Quality.Reporting.Aliases (Session, Run_Id);
+                  Offset : Natural := 0;
+                  Limit : Natural := 0;
                begin
+                  begin
+                     if Option ("--offset", "") /= "" then Offset := Natural'Value (Option ("--offset", "")); end if;
+                     if Option ("--limit", "") /= "" then Limit := Positive'Value (Option ("--limit", "")); end if;
+                  exception
+                     when Constraint_Error =>
+                        raise Usage_Error with "--offset and --limit require nonnegative and positive counts";
+                  end;
+                  if Offset > 0 then
+                     Aliases.Delete_First
+                       (Ada.Containers.Count_Type'Min (Aliases.Length, Ada.Containers.Count_Type (Offset)));
+                  end if;
+                  if Limit > 0 and then Aliases.Length > Ada.Containers.Count_Type (Limit) then
+                     Aliases.Delete_Last (Aliases.Length - Ada.Containers.Count_Type (Limit));
+                  end if;
                   if Has_Flag ("--json") or else Option ("--format", "") = "json" then
                      Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-                     Ada.Text_IO.Put_Line
-                       (Ada_Quality.JSON.Render_Aliases (Aliases, Pretty => True));
+                     Emit_Document (Ada_Quality.JSON.Render_Aliases (Aliases, Pretty => True));
                   elsif Option ("--format", "") not in "" | "text" then
                      raise Usage_Error with "assessment aliases format requires text or json";
                   else
-                     for Item of Aliases loop
-                        Ada.Text_IO.Put_Line
-                          (To_String (Item.Name) & " assessment" & Positive'Image (Item.Run_Id));
-                     end loop;
+                     declare Output : Ada.Strings.Unbounded.Unbounded_String; begin
+                        for Item of Aliases loop
+                           Append
+                             (Output, To_String (Item.Name) & " assessment" &
+                              Positive'Image (Item.Run_Id) & ASCII.LF);
+                        end loop;
+                        Emit_Document (To_String (Output));
+                     end;
                   end if;
                end;
             end;
@@ -1734,10 +2017,11 @@ package body Ada_Quality.CLI is
             Projects_Seen : Natural := 0;
             Session : Ada_Quality.Reporting.Session;
             Gate_Exit : Natural := 0;
+            Output : Ada.Strings.Unbounded.Unbounded_String;
 
             procedure Handle (Comparison : Ada_Quality.Reporting.Project_Comparison) is
             begin
-               Print_Comparison (Comparison);
+               Append (Output, Comparison_Text (Comparison));
                if Comparison.Selection.Status /= Ada_Quality.History.Comparison_Available then
                   Gate_Exit := 3;
                elsif not Comparison.Changes.Is_Empty and then Gate_Exit < 3 then
@@ -1806,9 +2090,10 @@ package body Ada_Quality.CLI is
                end loop;
             end if;
             if Projects_Seen = 0 then
-               Ada.Text_IO.Put_Line ("comparison unavailable: no projects are registered");
+               Append (Output, "comparison unavailable: no projects are registered" & ASCII.LF);
                Gate_Exit := 3;
             end if;
+            Emit_Document (To_String (Output));
             return (if Has_Flag ("--fail-on-regression") then Gate_Exit else 0);
          end;
       elsif Command = "trend" then
@@ -1825,6 +2110,7 @@ package body Ada_Quality.CLI is
          declare
             Session : Ada_Quality.Reporting.Session;
             Project_Id : Natural := 0;
+            Project_Tag : constant String := Option ("--tag", "");
             Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
             Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
             use type Ada.Calendar.Time;
@@ -1836,6 +2122,11 @@ package body Ada_Quality.CLI is
             end if;
             if Option ("--project", "") /= "" then
                Project_Id := Positive_Option ("--project", "project");
+            end if;
+            if Project_Id > 0 and then Project_Tag /= "" then
+               raise Usage_Error with "report --project and --tag are mutually exclusive";
+            elsif Project_Tag /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Project_Tag) then
+               raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
             end if;
             Ada_Quality.Reporting.Open (Session, DB_Path);
             if Project_Id > 0 then
@@ -1849,13 +2140,16 @@ package body Ada_Quality.CLI is
                Emit_Document
                  (Ada_Quality.JSON.Render_Archive
                     (Session, Pretty => True, Project_Id => Project_Id,
+                     Project_Tag => Project_Tag,
                      Since_Time => Since_Time, Until_Time => Until_Time));
             else
                declare
                   Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
                begin
                   for P of Ada_Quality.Reporting.Projects (Session) loop
-                     if Project_Id = 0 or else P.Id = Project_Id then
+                     if (Project_Id = 0 or else P.Id = Project_Id) and then
+                       (Project_Tag = "" or else Has_Tag (To_String (P.Tags), Project_Tag))
+                     then
                         if not Since_Time.Present and then not Until_Time.Present then
                            Projects.Append (P);
                         else

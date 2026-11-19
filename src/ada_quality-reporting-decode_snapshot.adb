@@ -1,5 +1,5 @@
 separate (Ada_Quality.Reporting)
---  AQ-WAIVER: SRC-03 target=decode_details justification=single-snapshot-table-dispatch
+--  AQ-WAIVER: SRC-03 target=decode_details owner=core expires=2099-12-31 justification=single-snapshot-table-dispatch
    procedure Decode_Snapshot (Item : in out Session; Rows : in out Entity_Table_Array) is
       Digest : Interfaces.Unsigned_64 := 16#CBF2_9CE4_8422_2325#;
       Known_Projects : Run_Index_Maps.Map;
@@ -27,13 +27,16 @@ separate (Ada_Quality.Reporting)
             declare
                Context : constant String := Context_Of ("project", Row.Id);
                State   : constant String := S (Row.State);
+               Path, Tags : Ada.Strings.Unbounded.Unbounded_String;
             begin
-               if not Project_Row_Is_Valid (Row) then
+               if not Project_Row_Is_Valid (Row) or else
+                 not Decode_Project_Payload (S (Row.Payload), Path, Tags)
+               then
                   raise Integrity_Error with Context & ": malformed registry entry";
                end if;
                Item.All_Projects.Append
-                 (Project_Record'(Id => Row.Id, Path => To_Unbounded_String (S (Row.Payload)), Enabled => Row.Active,
-                   Removed => State = "removed"));
+                 (Project_Record'(Id => Row.Id, Path => Path, Tags => Tags,
+                   Enabled => Row.Active, Removed => State = "removed"));
                Known_Projects.Insert (Row.Id, Item.All_Projects.Last_Index);
             end;
          end loop;

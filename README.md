@@ -31,6 +31,9 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ```sh
 ./bin/ada-quality database init
 ./bin/ada-quality project add /absolute/path/to/an/alire/crate
+./bin/ada-quality project tag 1 ci
+./bin/ada-quality doctor --project 1
+./bin/ada-quality check --tag ci --dry-run --json
 ./bin/ada-quality check --all
 ./bin/ada-quality check --all --jobs 4 --reuse-unchanged
 ./bin/ada-quality check --all --reuse-unchanged --json --output reused.json
@@ -56,12 +59,19 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality policy effective --project 1 --profile ci
 ./bin/ada-quality database stats
 ./bin/ada-quality database archive history.export --before 2026-01-01T00:00:00Z --keep 10
+./bin/ada-quality database archive --dry-run --before 2026-01-01T00:00:00Z --keep 10
+./bin/ada-quality database merge other-quality.export
+./bin/ada-quality waiver audit --project 1
 ./bin/ada-quality report --format json
 ./bin/ada-quality report --format html --output quality-report.html
 ```
 
 The default database is `.ada-quality.db`; `ADA_QUALITY_DATABASE` or `--database` selects another path. The default
 central policy is `quality-policy.toml`; `ADA_QUALITY_POLICY` or `--policy` selects another file.
+
+Read commands accept `--output FILE`; collection views also accept `--limit N` and `--offset N`. Project tags can
+select checks, status views, and reports. Structured source waivers require an owner, expiry date, and justification,
+remain visible in findings, and stop suppressing violations after expiry.
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/ASSESSMENT.md`](docs/ASSESSMENT.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for operational details. Development and disclosure guidance is in

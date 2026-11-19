@@ -28,7 +28,7 @@ package Ada_Quality.Reporting is
    Limit_Error     : exception;
    --  Raised when the snapshot exceeds a configured resource limit.
 
-   Supported_Schema : constant Positive := 4;
+   Supported_Schema : constant Positive := 5;
    --  The only logical schema version a reporting session accepts.
 
    type Load_Limits is record
@@ -105,12 +105,14 @@ package Ada_Quality.Reporting is
    type Project_Record is record
       Id      : Positive;
       Path    : UString;
+      Tags    : UString;
       Enabled : Boolean;
       Removed : Boolean;
    end record;
    --  Persisted project registry entry.
    --  @field Id Project identity.
    --  @field Path Canonical project root.
+   --  @field Tags Sorted comma-separated project tags.
    --  @field Enabled Whether bulk assessment includes the project.
    --  @field Removed Whether the entry is a tombstone.
 
@@ -205,7 +207,7 @@ package Ada_Quality.Reporting is
    --  @param Limits Resource limits.
    --  @exception Reporting_Error Path is empty, missing, not a regular file, or unreadable.
    --  @exception Busy_Error A writer holds the database lock.
-   --  @exception Schema_Error The schema is missing, incomplete, or not version 4.
+   --  @exception Schema_Error The schema is missing, incomplete, or not version 5.
    --  @exception Integrity_Error Evidence is corrupt or the database requires recovery.
    --  @exception Limit_Error A load limit is exceeded.
 

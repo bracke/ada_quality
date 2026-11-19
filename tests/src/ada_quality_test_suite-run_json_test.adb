@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_json_test justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_json_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_JSON_Test is
 begin
 declare
@@ -115,6 +115,24 @@ begin
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (Reuse, """kind"":""assessment-reuse""") > 0,
             "single-project unchanged reuse has strict versioned JSON output");
+      end;
+      declare
+         Plan : Ada_Quality.JSON.Check_Plan_Vectors.Vector;
+      begin
+         Plan.Append
+           (Ada_Quality.JSON.Check_Plan_Item'
+              (Project_Id => 3, Path => To_Unbounded_String ("/tmp/project"),
+               Source_Fingerprint => To_Unbounded_String ("source"),
+               Policy_Fingerprint => To_Unbounded_String ("policy"),
+               Toolchain_Fingerprint => To_Unbounded_String ("toolchain"),
+               Reusable_Assessment => 3, Will_Reuse => True));
+         declare Text : constant String := Ada_Quality.JSON.Render_Check_Plan (Plan); begin
+            Jsonlib.Parsers.Parse (Text, Doc, Error);
+            Assert
+              (not Jsonlib.Errors.Failed (Error) and then
+               Ada.Strings.Fixed.Index (Text, """kind"":""check-plan""") > 0,
+               "no-write check plans have strict versioned JSON output");
+         end;
       end;
    end;
    declare
@@ -259,6 +277,9 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-reuse.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "assessment reuse JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/check-plan.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "check plan JSON schema is valid JSON");
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trend.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "metric trend JSON schema is valid JSON");

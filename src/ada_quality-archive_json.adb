@@ -5,6 +5,7 @@ with Ada_Quality.History;
 with Ada_Quality.History_Data;
 with Ada_Quality.Types;
 
+--  AQ-WAIVER: SRC-03 target=project_selected owner=aq expires=2099-12-31 justification=streamed-archive-render
 package body Ada_Quality.Archive_JSON is
    use Ada.Strings.Unbounded;
 
@@ -13,6 +14,7 @@ package body Ada_Quality.Archive_JSON is
       Pretty           : Boolean;
       Max_Output_Bytes : Positive;
       Project_Id       : Natural;
+      Project_Tag      : String;
       Since_Time       : Ada_Quality.Reporting.Optional_Timestamp;
       Until_Time       : Ada_Quality.Reporting.Optional_Timestamp) return String
    is
@@ -147,6 +149,24 @@ package body Ada_Quality.Archive_JSON is
          Member (Name);
          Put ((if Value then "true" else "false"));
       end Boolean_Member;
+
+      procedure Tags_Member (Value : String) is
+         Start : Natural := (if Value'Length = 0 then 0 else Value'First);
+      begin
+         Member ("tags");
+         Put ('[');
+         Depth := Depth + 1;
+         Stack (Depth).First := True;
+         while Start /= 0 and then Start <= Value'Last loop
+            declare Stop : Natural := Ada.Strings.Fixed.Index (Value, ",", From => Start); begin
+               if Stop = 0 then Stop := Value'Last + 1; end if;
+               Before_Item;
+               Put_JSON_String (Value (Start .. Stop - 1));
+               Start := Stop + 1;
+            end;
+         end loop;
+         Close_Container (']');
+      end Tags_Member;
 
       use type Ada.Calendar.Time;
 
@@ -326,6 +346,7 @@ package body Ada_Quality.Archive_JSON is
             Integer_Member ("id", Long_Long_Integer (Project.Id));
             String_Member ("path", To_String (Project.Path));
             Boolean_Member ("removed", Project.Removed);
+            Tags_Member (To_String (Project.Tags));
             Close_Container ('}');
          end loop;
          Close_Container (']');
@@ -386,9 +407,22 @@ package body Ada_Quality.Archive_JSON is
          end loop;
          Close_Container (']');
       end Emit_Results;
+
+      function Project_Selected (Id : Positive) return Boolean is
+      begin
+         if Project_Id > 0 and then Id /= Project_Id then return False; end if;
+         if Project_Tag = "" then return True; end if;
+         for Project of All_Projects loop
+            if Project.Id = Id then
+               return Ada.Strings.Fixed.Index
+                 ("," & To_String (Project.Tags) & ",", "," & Project_Tag & ",") > 0;
+            end if;
+         end loop;
+         return False;
+      end Project_Selected;
    begin
       for Run of All_Runs loop
-         if (Project_Id = 0 or else Run.Project_Id = Project_Id) and then
+         if Project_Selected (Run.Project_Id) and then
            Time_Selected (Run.Started_At)
          then
             for History of All_History loop
@@ -397,7 +431,7 @@ package body Ada_Quality.Archive_JSON is
          end if;
       end loop;
       for Project of All_Projects loop
-         if (Project_Id = 0 or else Project.Id = Project_Id) and then
+         if Project_Selected (Project.Id) and then
            ((not Since_Time.Present and then not Until_Time.Present) or else
             Latest_Selected_Run (Project.Id) > 0)
          then

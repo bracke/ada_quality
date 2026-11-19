@@ -8,7 +8,9 @@ ada-quality project list [--format text|json]
 ada-quality project show ID
 ada-quality project enable|disable|remove ID
 ada-quality project relocate ID PATH
-ada-quality check --all | --project ID [--jobs N] [--reuse-unchanged]
+ada-quality project tag|untag ID NAME
+ada-quality project tags [ID]
+ada-quality check (--all | --project ID | --tag NAME) [--jobs N] [--reuse-unchanged] [--dry-run]
                   [--profile NAME] [--project-policy] [--json]
 ada-quality scan --project ID --changed-file PATH [--changed-file PATH ...] [--format text|json|sarif]
 ada-quality scan --project ID --files-from FILE|- [--format text|json|sarif]
@@ -31,17 +33,24 @@ ada-quality trend --project ID (--indicator TST-03 | --all)
 ada-quality explain INDICATOR_ID
 ada-quality indicator list [--category CATEGORY] [--format text|json]
 ada-quality report --format json|html [--project ID] [--since TIME] [--until TIME] [--output FILE]
-ada-quality policy validate|show
+ada-quality doctor [--project ID] [--output FILE]
+ada-quality waiver audit --project ID [--profile NAME] [--output FILE]
+ada-quality policy init|validate|show|profiles|effective
 ada-quality database init|check|recover|compact
 ada-quality database stats [--format text|json]
 ada-quality database backup|export DESTINATION
 ada-quality database import SOURCE --database DESTINATION
 ada-quality database restore SOURCE --database DESTINATION
+ada-quality database archive [DESTINATION] --before TIME [--keep N] [--dry-run]
+ada-quality database merge SOURCE
 ada-quality completion bash|zsh|fish
 ```
 
 Global options are `--database PATH`, `--policy PATH`, `--no-color`, and `--color never`. Environment variables
 `ADA_QUALITY_DATABASE` and `ADA_QUALITY_POLICY` provide defaults. JSON never contains ANSI styling.
+
+Read commands accept `--output FILE`. Collection views accept `--limit N` and `--offset N`; history applies the
+offset from the newest matching run before retaining its newest limit, while other views page in display order.
 
 `assessment show` reads one completed immutable assessment. Text prints the 33 indicator outcomes, JSON uses the
 assessment-v1 contract, SARIF 2.1.0 exports structured findings with their stable fingerprints and source locations,
@@ -99,6 +108,11 @@ exactly match a completed assessment. JSON emits a reuse document for one projec
 `quality-policy.NAME.toml`. With `--project-policy`, project-local `quality-policy.override.toml` files partially
 overlay the selected base policy.
 
+`check --dry-run` performs no database writes or external assessment execution. It resolves each selected project's
+effective policy, source identity, live toolchain identity, reuse eligibility, and planned assess/reuse action. JSON
+uses check-plan-v1. `doctor` checks the selected policy, read-only database snapshot, optional project root, and the
+required command-line tools.
+
 `project sync` adds discovered crates and reports registered paths under the selected root that are no longer found;
 `--remove-missing` tombstones them. `scan --git-diff BASE` uses Git's ACMR name-only diff without a shell;
 `--staged`, `--unstaged`, and `--untracked` may be combined and deduplicate Ada paths. Findings
@@ -106,11 +120,18 @@ can be filtered by project, indicator, minimum severity, path substring, and inc
 text, findings-v1 JSON, or SARIF. HTML assessment and portfolio reports are self-contained and may be streamed or
 written with `--output`. Logical import creates and validates a new database from a native export.
 
+Project tags are canonical lowercase names stored with the project registry. `check --tag`, `status --tag`, and
+`report --tag` select matching projects. `waiver audit` reports applicable owned/expiring SRC-03 and SRC-06 waiver
+evidence; expired or malformed waivers remain findings and cannot suppress a violation.
+
 Findings, scans, trends, and assessment diffs accept `--output FILE`. `policy init [--profile NAME]` creates a
 complete policy without overwriting, `policy profiles` lists sibling profiles, and `policy effective --project ID
 [--profile NAME]` renders the resolved policy. `database archive DEST --before TIME [--keep N]` verifies a full
 logical archive before pruning old terminal assessments, retains the newest N per project, and never removes running
 work.
+With `--dry-run`, archive lists the exact candidates without creating or changing anything. `database merge SOURCE`
+accepts a database or native logical export, matches projects by canonical path, remaps identities, preserves
+repeated completed history and nonconflicting aliases, and makes repeated merges idempotent.
 
 Generated Bash, Zsh, and Fish completions query the active database and policy location for project IDs, assessment
 aliases, indicator IDs, and named profiles, while falling back cleanly when those files do not yet exist.

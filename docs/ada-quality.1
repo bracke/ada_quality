@@ -9,13 +9,14 @@ Ada Quality registers Ada projects, runs reproducible assessments, persists evid
 .SH COMMANDS
 .TP
 .B project
-Add, discover, synchronize, list, show, enable, disable, relocate, or remove projects.
+Add, discover, synchronize, list, show, enable, disable, relocate, remove, tag, or untag projects.
 .TP
 .B check, scan
 Run a complete assessment or analyze selected changed source files.
 .PP
-Checks accept --jobs N for bounded parallelism, --reuse-unchanged for exact cache hits, --profile NAME, and
---project-policy. Scans accept --git-diff BASE and combinable --staged, --unstaged, and --untracked modes.
+Checks accept --jobs N for bounded parallelism, --reuse-unchanged for exact cache hits, --dry-run for a no-write
+execution plan, --tag NAME, --profile NAME, and --project-policy. Scans accept --git-diff BASE and combinable
+--staged, --unstaged, and --untracked modes.
 .TP
 .B assessment, history, status, regressions, trend
 Inspect assessments, aliases, portfolio state, comparisons, and metric history.
@@ -30,10 +31,14 @@ Write a self-contained portfolio report, optionally with --output FILE.
 Initialize, validate, show, discover profiles, or render a project's effective policy.
 .TP
 .B database
-Initialize, check, recover, compact, inspect, back up, export, import, restore, or archive-and-prune the database.
+Initialize, check, recover, compact, inspect, back up, export, import, restore, merge, or archive-and-prune the database.
 .PP
 database archive DEST --before UTC [--keep N] verifies a complete logical archive before removing eligible old
 terminal assessments. Running assessments and the newest N terminal assessments per project are retained.
+With --dry-run and no destination, the exact removal set is printed without changing the database.
+.TP
+.B doctor, waiver audit
+Diagnose policy, database, project, and tool availability, or audit owned and expiring source waivers.
 .TP
 .B completion bash|zsh|fish
 Write a shell completion definition to standard output.
@@ -49,7 +54,7 @@ Select the policy file (default quality-policy.toml).
 Select machine-readable output where supported.
 .TP
 .B --output FILE
-Write supported reports, findings, scans, trends, and comparisons to a file.
+Write read-command output to a file. Collection views also accept --limit N and --offset N.
 .TP
 .B --no-color
 Disable terminal styling.

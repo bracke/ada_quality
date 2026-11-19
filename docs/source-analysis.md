@@ -16,16 +16,18 @@ exception boundary` suppression on its handler line.
 SRC-03 and SRC-06 exceptions use exact, standalone structured comments:
 
 ```ada
---  AQ-WAIVER: SRC-03 target=<measured-subprogram> justification=<reason>
---  AQ-WAIVER: SRC-06 target=file justification=<reason>
+--  AQ-WAIVER: SRC-03 target=<measured-subprogram> owner=<owner> expires=YYYY-MM-DD justification=<reason>
+--  AQ-WAIVER: SRC-06 target=file owner=<owner> expires=YYYY-MM-DD justification=<reason>
 ```
 
-The rule, target, and nonempty justification are mandatory. SRC-03 applies
+The rule, target, owner, canonical expiry date, and nonempty justification are mandatory. SRC-03 applies
 only when its target equals the subprogram name associated with that file's
 maximum measured segment; SRC-06 accepts only `target=file`. Legacy broad
 markers, mismatched targets, and markers embedded in strings do not suppress a
 violation. Every accepted waiver remains in assessment evidence as a
-low-severity `review-waiver` finding even when the indicator passes.
+low-severity `review-waiver` finding even when the indicator passes. Expired or malformed applicable waivers remain
+visible as `expired-waiver` or `invalid-waiver` findings and do not suppress the underlying violation. `waiver audit
+--project ID` reports the active and rejected waiver evidence for a project.
 
 DOC-01 uses GNATdoc's declaration-level warning audit rather than accepting one
 file-level package comment as evidence for every declaration.

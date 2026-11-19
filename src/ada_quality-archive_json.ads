@@ -6,6 +6,7 @@ private package Ada_Quality.Archive_JSON is
       Pretty           : Boolean;
       Max_Output_Bytes : Positive;
       Project_Id       : Natural;
+      Project_Tag      : String;
       Since_Time       : Ada_Quality.Reporting.Optional_Timestamp;
       Until_Time       : Ada_Quality.Reporting.Optional_Timestamp) return String;
 end Ada_Quality.Archive_JSON;

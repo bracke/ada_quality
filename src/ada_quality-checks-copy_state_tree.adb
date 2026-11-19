@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=copy_directory justification=bounded-recursive-baseline-copy
+--  AQ-WAIVER: SRC-03 target=copy_directory owner=core expires=2099-12-31 justification=bounded-recursive-baseline-copy
    procedure Copy_State_Tree (Source, Target : String) is
       Count : Natural := 0;
 

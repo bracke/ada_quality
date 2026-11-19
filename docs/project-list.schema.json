@@ -7,6 +7,7 @@
     "projects": { "type": "array", "items": { "type": "object",
       "required": ["id", "path", "enabled", "removed"],
       "properties": { "id": { "type": "integer", "minimum": 1 }, "path": { "type": "string" },
+        "tags": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" }, "uniqueItems": true },
         "enabled": { "type": "boolean" }, "removed": { "type": "boolean" } },
       "additionalProperties": false } }
   }, "additionalProperties": false

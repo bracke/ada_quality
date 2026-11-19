@@ -1,5 +1,5 @@
 separate (Ada_Quality_Coverage)
---  AQ-WAIVER: SRC-03 target=image justification=coverage-driver-exercises-one-ordered-cli-workflow-matrix
+--  AQ-WAIVER: SRC-03 target=image owner=aq expires=2099-12-31 justification=cli-fixture-matrix
 procedure Exercise_CLI is
       CLI_Binary : constant String := Binary ("ada-quality");
       DB_Path    : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.db");
@@ -7,6 +7,7 @@ procedure Exercise_CLI is
       Export_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.export");
       Restored_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-restored.db");
       Imported_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-imported.db");
+      Merge_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-merge.db");
       Archive_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "retention.export");
       HTML_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "portfolio.html");
       Assessment_HTML_Path : constant String :=
@@ -48,6 +49,10 @@ procedure Exercise_CLI is
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".wal");
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".fts");
          Project_Tools.Files.Delete_File_If_Present (Imported_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (Merge_Path);
+         Project_Tools.Files.Delete_File_If_Present (Merge_Path & ".wal");
+         Project_Tools.Files.Delete_File_If_Present (Merge_Path & ".fts");
+         Project_Tools.Files.Delete_File_If_Present (Merge_Path & ".lock");
          Project_Tools.Files.Delete_File_If_Present (Archive_Path);
          Project_Tools.Files.Delete_File_If_Present (HTML_Path);
          Project_Tools.Files.Delete_File_If_Present (Assessment_HTML_Path);
@@ -303,6 +308,45 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument (Root),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "relocated project 1");
+      Run_CLI
+        ("project tag",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("tag"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("ci"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "tagged project 1");
+      Run_CLI
+        ("project tags",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("tags"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]), Expected_Text => "ci");
+      Run_CLI
+        ("check dry run",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--tag"),
+             Project_Tools.Processes.Argument ("ci"), Project_Tools.Processes.Argument ("--dry-run"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Expected_Text => "check-plan");
+      Run_CLI
+        ("doctor",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("doctor"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_Three => True, Expected_Text => "database");
+      Run_CLI
+        ("waiver audit",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("waiver"), Project_Tools.Processes.Argument ("audit"),
+             Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_One => True, Expected_Text => "waiver audit:");
       Run_CLI
         ("changed source scan",
          Project_Tools.Processes.Arguments
@@ -724,6 +768,15 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "export created");
       Run_CLI
+        ("database retention preview",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("archive"),
+             Project_Tools.Processes.Argument ("--dry-run"), Project_Tools.Processes.Argument ("--before"),
+             Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
+             Project_Tools.Processes.Argument ("--keep"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "retention preview:");
+      Run_CLI
         ("database retention archive",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("archive"),
@@ -758,6 +811,19 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("check"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Imported_Path)]),
          Expected_Text => "integrity check passed");
+      Run_CLI
+        ("database merge",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("init"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Merge_Path)]),
+         Expected_Text => "initialized");
+      Run_CLI
+        ("database merge export",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("merge"),
+             Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (Merge_Path)]),
+         Expected_Text => "merged");
       for Query of Queries loop
          Run_CLI
            (Ada.Strings.Unbounded.To_String (Query),

@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_coverage_test justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_coverage_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Coverage_Test is
 begin
 Assert (not Coverage_Passes (8_999, 10_000), "89.99 percent fails");

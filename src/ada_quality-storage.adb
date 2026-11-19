@@ -9,6 +9,8 @@ with Ada_Quality.Finding_Identity;
 with Ada_Quality.Indicators;
 with Ada_Quality.Manifests;
 with Ada_Quality.Persistence;
+with Ada_Quality.Reporting;
+with Ada_Quality.Temporary_Directories;
 with Database.Catalog;
 with Database.Backup;
 with Database.Export;
@@ -21,6 +23,7 @@ with Database.Vacuum;
 with Project_Tools.Links;
 with Project_Tools.Files;
 
+--  AQ-WAIVER: SRC-03 target=source_occurrence owner=aq expires=2099-12-31 justification=merge-boundary
 package body Ada_Quality.Storage is
    use Ada.Strings.Unbounded;
    use Ada.Strings.Wide_Wide_Unbounded;
@@ -59,6 +62,36 @@ package body Ada_Quality.Storage is
 
    function Detail_Less (Left, Right : Detail_Info) return Boolean is (Left.Id < Right.Id);
    package Detail_Sorting is new Detail_Vectors.Generic_Sorting ("<" => Detail_Less);
+
+   package Tag_Sets is new Ada.Containers.Ordered_Sets
+     (Element_Type => Ada.Strings.Unbounded.Unbounded_String,
+      "<" => Ada.Strings.Unbounded."<", "=" => Ada.Strings.Unbounded."=");
+
+   function Tag_Set (Tags : String) return Tag_Sets.Set is
+      Result : Tag_Sets.Set;
+      Start  : Natural := (if Tags'Length = 0 then 0 else Tags'First);
+   begin
+      while Start /= 0 and then Start <= Tags'Last loop
+         declare
+            Stop : Natural := Ada.Strings.Fixed.Index (Tags, ",", From => Start);
+         begin
+            if Stop = 0 then Stop := Tags'Last + 1; end if;
+            Result.Include (To_Unbounded_String (Tags (Start .. Stop - 1)));
+            Start := Stop + 1;
+         end;
+      end loop;
+      return Result;
+   end Tag_Set;
+
+   function Tag_List (Tags : Tag_Sets.Set) return String is
+      Result : Unbounded_String;
+   begin
+      for Tag of Tags loop
+         if Length (Result) > 0 then Append (Result, ","); end if;
+         Append (Result, Tag);
+      end loop;
+      return To_String (Result);
+   end Tag_List;
 
    procedure Require_OK (Status : Database.Status.Result; Context : String) is
    begin
@@ -113,7 +146,7 @@ package body Ada_Quality.Storage is
       Require_OK (Status, "read schema version for migration");
       if S (Row.Payload) = Current_Schema_Version then
          Require_OK (Database.Transactions.Commit (Tx), "complete schema version check");
-      elsif S (Row.Payload) in "1" | "2" | "3" then
+      elsif S (Row.Payload) in "1" | "2" | "3" | "4" then
          if S (Row.Payload) = "1" then
             declare
                Cursor : Entity_Tables.Cursor;
@@ -146,8 +179,36 @@ package body Ada_Quality.Storage is
                end loop;
             end;
          end if;
-         --  Version 3 adds run timestamps and lossless child payloads for new runs only. Version 4 adds an alias
-         --  event vocabulary. Both transitions leave existing evidence rows byte-identical.
+         --  Version 5 changes only the project payload, preserving the canonical path and adding an empty tag set.
+         declare
+            Cursor   : Entity_Tables.Cursor;
+            Projects : Entity_Vectors.Vector;
+         begin
+            Status := Entity_Tables.Scan
+              (Tx, Item.DB, Item.Schemas (Projects_Table), Database.Predicates.True_Predicate, Cursor);
+            Require_OK (Status, "scan projects for tag migration");
+            while Entity_Tables.Has_Element (Cursor) loop
+               Projects.Append (Entity_Tables.Element (Cursor));
+               Status := Entity_Tables.Next
+                 (Tx, Item.DB, Item.Schemas (Projects_Table), Database.Predicates.True_Predicate, Cursor);
+               Require_OK (Status, "advance project tag migration");
+            end loop;
+            for Project_Row of Projects loop
+               declare
+                  Updated : Entity := Project_Row;
+                  Existing_Path, Existing_Tags : Unbounded_String;
+               begin
+                  if not Decode_Project_Payload
+                    (S (Project_Row.Payload), Existing_Path, Existing_Tags)
+                  then
+                     Updated.Payload := WW (Project_Payload (S (Project_Row.Payload), ""));
+                  end if;
+                  Require_OK
+                    (Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Projects_Table), Updated),
+                     "migrate project tags");
+               end;
+            end loop;
+         end;
          Row.Payload := WW (Current_Schema_Version);
          Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Metadata_Table), Row);
          Require_OK (Status, "migrate schema metadata to the current version");
@@ -288,9 +349,14 @@ package body Ada_Quality.Storage is
       while Entity_Tables.Has_Element (Cursor) loop
          Row := Entity_Tables.Element (Cursor);
          if Include_Removed or else S (Row.State) /= "removed" then
-            Result.Append
-              (Project_Info'(Id => Row.Id, Path => To_Unbounded_String (S (Row.Payload)),
-               Enabled => Row.Active, Removed => S (Row.State) = "removed"));
+            declare Path, Tags : Unbounded_String; begin
+               if not Decode_Project_Payload (S (Row.Payload), Path, Tags) then
+                  raise Storage_Error with "malformed project row" & Positive'Image (Row.Id);
+               end if;
+               Result.Append
+                 (Project_Info'(Id => Row.Id, Path => Path, Tags => Tags,
+                  Enabled => Row.Active, Removed => S (Row.State) = "removed"));
+            end;
          end if;
          Status := Entity_Tables.Next
            (Tx, Item.DB, Item.Schemas (Projects_Table), Database.Predicates.True_Predicate, Cursor);
@@ -313,8 +379,13 @@ package body Ada_Quality.Storage is
          raise Storage_Error with "project not found:" & Positive'Image (Id);
       end if;
       Require_OK (Database.Transactions.Commit (Tx), "read project");
-      return (Id => Row.Id, Path => To_Unbounded_String (S (Row.Payload)),
-              Enabled => Row.Active, Removed => S (Row.State) = "removed");
+      declare Path, Tags : Unbounded_String; begin
+         if not Decode_Project_Payload (S (Row.Payload), Path, Tags) then
+            raise Storage_Error with "malformed project row" & Positive'Image (Id);
+         end if;
+         return (Id => Row.Id, Path => Path, Tags => Tags,
+                 Enabled => Row.Active, Removed => S (Row.State) = "removed");
+      end;
    end Project;
 
    function Validated_Project_Path (Path : String) return String is
@@ -362,7 +433,7 @@ package body Ada_Quality.Storage is
       Status := Entity_Tables.Insert
         (Tx, Item.DB, Item.Schemas (Projects_Table),
          (Id => Id, Parent_Id => 0, Kind => WW ("ada_project"), State => WW ("registered"),
-          Payload => WW (Canonical), Active => True));
+          Payload => WW (Project_Payload (Canonical, "")), Active => True));
       if not Database.Status.Is_Ok (Status) then
          Database.Transactions.Rollback (Tx);
          Require_OK (Status, "insert project");
@@ -423,7 +494,12 @@ package body Ada_Quality.Storage is
          Database.Transactions.Rollback (Tx);
          raise Storage_Error with "project not found:" & Positive'Image (Id);
       end if;
-      Row.Payload := WW (Canonical);
+      declare Existing_Path, Tags : Unbounded_String; begin
+         if not Decode_Project_Payload (S (Row.Payload), Existing_Path, Tags) then
+            raise Storage_Error with "malformed project row" & Positive'Image (Id);
+         end if;
+         Row.Payload := WW (Project_Payload (Canonical, To_String (Tags)));
+      end;
       Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Projects_Table), Row);
       if not Database.Status.Is_Ok (Status) then
          Database.Transactions.Rollback (Tx);
@@ -431,6 +507,59 @@ package body Ada_Quality.Storage is
       end if;
       Require_OK (Database.Transactions.Commit (Tx), "commit project relocation");
    end Relocate_Project;
+
+   function Has_Project_Tag (Project : Project_Info; Name : String) return Boolean is
+     (Project_Tag_Is_Valid (Name) and then Tag_Set (To_String (Project.Tags)).Contains
+        (To_Unbounded_String (Name)));
+
+   function Is_Project_Tag_Name (Name : String) return Boolean is
+     (Project_Tag_Is_Valid (Name));
+
+   procedure Update_Project_Tag
+     (Item : in out Store; Id : Positive; Name : String; Add : Boolean)
+   is
+      Tx     : Database.Transactions.Transaction;
+      Row    : Entity;
+      Status : Database.Status.Result;
+      Path, Tags : Unbounded_String;
+   begin
+      if not Project_Tag_Is_Valid (Name) then
+         raise Storage_Error with
+           "project tag must contain 1..64 lowercase letters, digits, hyphens, or underscores";
+      end if;
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      Status := Entity_Tables.Find (Tx, Item.DB, Item.Schemas (Projects_Table), Id, Row);
+      Require_OK (Status, "load project for tag update");
+      if S (Row.State) = "removed" then
+         raise Storage_Error with "removed project cannot be tagged:" & Positive'Image (Id);
+      elsif not Decode_Project_Payload (S (Row.Payload), Path, Tags) then
+         raise Storage_Error with "malformed project row" & Positive'Image (Id);
+      end if;
+      declare Values : Tag_Sets.Set := Tag_Set (To_String (Tags)); begin
+         if Add then Values.Include (To_Unbounded_String (Name));
+         else Values.Exclude (To_Unbounded_String (Name));
+         end if;
+         Row.Payload := WW (Project_Payload (To_String (Path), Tag_List (Values)));
+      end;
+      Require_OK
+        (Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Projects_Table), Row),
+         "update project tag");
+      Require_OK (Database.Transactions.Commit (Tx), "commit project tag update");
+   exception
+      when others =>
+         if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+         raise;
+   end Update_Project_Tag;
+
+   procedure Add_Project_Tag (Item : in out Store; Id : Positive; Name : String) is
+   begin
+      Update_Project_Tag (Item, Id, Name, Add => True);
+   end Add_Project_Tag;
+
+   procedure Remove_Project_Tag (Item : in out Store; Id : Positive; Name : String) is
+   begin
+      Update_Project_Tag (Item, Id, Name, Add => False);
+   end Remove_Project_Tag;
 
    procedure Backup (Item : in out Store; Destination : String) is
    begin
@@ -490,7 +619,198 @@ package body Ada_Quality.Storage is
          raise;
    end Import;
 
-   --  AQ-WAIVER: SRC-03 target=less justification=archive-verification-and-pruning-share-one-transaction-boundary
+   procedure Merge
+     (Item : in out Store; Source : String;
+      Added_Projects, Added_Assessments : out Natural)
+   is
+      package Id_Maps is new Ada.Containers.Ordered_Maps (Positive, Positive);
+      Temp : Ada_Quality.Temporary_Directories.Temporary_Directory;
+      Source_Path : Unbounded_String := To_Unbounded_String (Source);
+      Session : Ada_Quality.Reporting.Session;
+      Projects_Map : Id_Maps.Map;
+      Runs_Map : Id_Maps.Map;
+
+      function Insert_Project
+        (Path, Tags : String; Enabled, Removed : Boolean) return Positive
+      is
+         Id : constant Positive := Next_Id (Item, Projects_Table);
+         Tx : Database.Transactions.Transaction;
+      begin
+         Database.Transactions.Begin_Write (Item.DB, Tx);
+         Require_OK
+           (Entity_Tables.Insert
+              (Tx, Item.DB, Item.Schemas (Projects_Table),
+               (Id => Id, Parent_Id => 0, Kind => WW ("ada_project"),
+                State => WW (if Removed then "removed" else "registered"),
+                Payload => WW (Project_Payload (Path, Tags)), Active => Enabled and then not Removed)),
+            "insert merged project");
+         Require_OK (Database.Transactions.Commit (Tx), "commit merged project");
+         return Id;
+      exception
+         when others =>
+            if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+            raise;
+      end Insert_Project;
+
+      function Existing_Run
+        (Project_Id : Positive; Run : Ada_Quality.Reporting.Run_Record;
+         Occurrence : Positive) return Natural
+      is
+         Seen : Natural := 0;
+      begin
+         for Candidate of History (Item, Project_Id) loop
+            if To_String (Candidate.Status) = "completed" and then
+              Candidate.Source_Fingerprint = Run.Source_Id and then
+              Candidate.Policy_Fingerprint = Run.Policy_Id and then
+              Candidate.Toolchain_Fingerprint = Run.Toolchain_Id
+            then
+               Seen := Seen + 1;
+               if Seen = Occurrence then return Candidate.Id; end if;
+            end if;
+         end loop;
+         return 0;
+      end Existing_Run;
+
+      function Source_Occurrence (Run : Ada_Quality.Reporting.Run_Record) return Positive is
+         Result : Natural := 0;
+      begin
+         for Candidate of Ada_Quality.Reporting.Runs (Session, Run.Project_Id) loop
+            exit when Candidate.Id > Run.Id;
+            if Candidate.State = Assessment_Completed and then
+              Candidate.Source_Id = Run.Source_Id and then Candidate.Policy_Id = Run.Policy_Id and then
+              Candidate.Toolchain_Id = Run.Toolchain_Id
+            then
+               Result := Result + 1;
+            end if;
+         end loop;
+         return Positive (Result);
+      end Source_Occurrence;
+   begin
+      Added_Projects := 0;
+      Added_Assessments := 0;
+      begin
+         Ada_Quality.Reporting.Open (Session, Source);
+      exception
+         when Ada_Quality.Reporting.Reporting_Error | Ada_Quality.Reporting.Schema_Error |
+           Ada_Quality.Reporting.Integrity_Error =>
+            Ada_Quality.Temporary_Directories.Create (Temp, "ada-quality-merge");
+            Source_Path := To_Unbounded_String
+              (Ada_Quality.Temporary_Directories.Child (Temp, "source.db"));
+            Import (Source, To_String (Source_Path));
+            Ada_Quality.Reporting.Open (Session, To_String (Source_Path));
+      end;
+
+      for Source_Project of Ada_Quality.Reporting.Projects (Session, Include_Removed => True) loop
+         declare Target_Id : Natural := 0; begin
+            for Target of Projects (Item, Include_Removed => True) loop
+               if Target.Path = Source_Project.Path then Target_Id := Target.Id; end if;
+            end loop;
+            if Target_Id = 0 then
+               Target_Id := Insert_Project
+                 (To_String (Source_Project.Path), To_String (Source_Project.Tags),
+                  Source_Project.Enabled, Source_Project.Removed);
+               Added_Projects := Added_Projects + 1;
+            else
+               declare Target : constant Project_Info := Project (Item, Positive (Target_Id)); begin
+                  if not Target.Removed then
+                     for Tag of Tag_Set (To_String (Source_Project.Tags)) loop
+                        Add_Project_Tag (Item, Target.Id, To_String (Tag));
+                     end loop;
+                  end if;
+               end;
+            end if;
+            Projects_Map.Insert (Source_Project.Id, Positive (Target_Id));
+         end;
+      end loop;
+
+      for Run of Ada_Quality.Reporting.Runs (Session) loop
+         if Run.State = Assessment_Completed then
+            declare
+               Target_Project : constant Positive := Projects_Map.Element (Run.Project_Id);
+               Existing : constant Natural := Existing_Run
+                 (Target_Project, Run, Source_Occurrence (Run));
+               Target_Run : Positive;
+            begin
+               if Existing > 0 then
+                  Target_Run := Positive (Existing);
+               else
+                  declare
+                     Stored : constant Ada_Quality.Reporting.Assessment_Record :=
+                       Ada_Quality.Reporting.Read_Assessment (Session, Run.Id);
+                     Value : Assessment;
+                  begin
+                     Value.Project_Id := Target_Project;
+                     Value.Project_Path := Project (Item, Target_Project).Path;
+                     Value.Source_Fingerprint := Run.Source_Id;
+                     Value.Policy_Fingerprint := Run.Policy_Id;
+                     Value.Toolchain_Fingerprint := Run.Toolchain_Id;
+                     Value.Status := Assessment_Completed;
+                     Value.Results := Stored.Results;
+                     for Execution of Stored.Executions loop
+                        Value.Executions.Append
+                          (Tool_Execution'
+                             (Tool => Execution.Tool, Command => Execution.Command,
+                              Status => Execution.Status, Exit_Code => Execution.Exit_Code,
+                              Output_Digest => Execution.Output_Digest,
+                              Output_Bytes => Execution.Output_Bytes, Truncated => Execution.Truncated));
+                     end loop;
+                     Target_Run := Publish (Item, Value);
+                     Added_Assessments := Added_Assessments + 1;
+                  end;
+               end if;
+               Runs_Map.Insert (Run.Id, Target_Run);
+            end;
+         end if;
+      end loop;
+
+      declare Existing_Aliases : Tag_Sets.Set; begin
+         for Event of Events (Item) loop
+            if To_String (Event.Kind) = "alias" then Existing_Aliases.Include (Event.Summary); end if;
+         end loop;
+         for Alias of Ada_Quality.Reporting.Aliases (Session) loop
+            if Runs_Map.Contains (Alias.Run_Id) and then not Existing_Aliases.Contains (Alias.Name) then
+               Add_Assessment_Alias (Item, Runs_Map.Element (Alias.Run_Id), To_String (Alias.Name));
+               Existing_Aliases.Include (Alias.Name);
+            end if;
+         end loop;
+      end;
+      Check (Item);
+   end Merge;
+
+   function Retention_Candidates
+     (Item : in out Store; Before : Ada.Calendar.Time; Keep : Natural)
+      return History_Vectors.Vector
+   is
+      package Count_Maps is new Ada.Containers.Ordered_Maps (Positive, Natural);
+      Runs : constant History_Vectors.Vector := History (Item);
+      Result : History_Vectors.Vector;
+      Per_Project : Count_Maps.Map;
+      use type Ada.Calendar.Time;
+   begin
+      for Index in reverse Runs.First_Index .. Runs.Last_Index loop
+         declare
+            Run : constant History_Item := Runs (Index);
+            Payload : Assessment_Payload_Data;
+            Seen : Natural :=
+              (if Per_Project.Contains (Run.Project_Id)
+               then Per_Project.Element (Run.Project_Id) else 0);
+         begin
+            if To_String (Run.Status) /= "running" and then
+              Decode_Assessment_Payload (To_String (Run.Summary), Payload)
+            then
+               if Seen < Keep then
+                  Seen := Seen + 1;
+               elsif Payload.Finished_At.Present and then Payload.Finished_At.Value < Before then
+                  Result.Prepend (Run);
+               end if;
+               Per_Project.Include (Run.Project_Id, Seen);
+            end if;
+         end;
+      end loop;
+      return Result;
+   end Retention_Candidates;
+
+   --  AQ-WAIVER: SRC-03 target=less owner=aq expires=2099-12-31 justification=archive-prune-boundary
    procedure Archive_And_Prune
      (Item        : in out Store;
       Destination : String;
@@ -499,51 +819,16 @@ package body Ada_Quality.Storage is
       Removed     : out Natural)
    is
       package Id_Sets is new Ada.Containers.Ordered_Sets (Positive);
-      package Count_Maps is new Ada.Containers.Ordered_Maps (Positive, Natural);
-
-      function Less (Left, Right : Entity) return Boolean is (Left.Id < Right.Id);
-      package Sorting is new Entity_Vectors.Generic_Sorting ("<" => Less);
-
       Tx         : Database.Transactions.Transaction;
       Cursor     : Entity_Tables.Cursor;
       Status     : Database.Status.Result;
-      Runs       : Entity_Vectors.Vector;
       Deleted    : Id_Sets.Set;
-      Per_Project : Count_Maps.Map;
-      use type Ada.Calendar.Time;
+      Candidates : constant History_Vectors.Vector := Retention_Candidates (Item, Before, Keep);
    begin
       if not Item.Opened then raise Storage_Error with "database is not open"; end if;
       Export (Item, Destination);
       Database.Transactions.Begin_Write (Item.DB, Tx);
-      Status := Entity_Tables.Scan
-        (Tx, Item.DB, Item.Schemas (Assessments_Table), Database.Predicates.True_Predicate, Cursor);
-      Require_OK (Status, "scan assessments for retention");
-      while Entity_Tables.Has_Element (Cursor) loop
-         Runs.Append (Entity_Tables.Element (Cursor));
-         Status := Entity_Tables.Next
-           (Tx, Item.DB, Item.Schemas (Assessments_Table), Database.Predicates.True_Predicate, Cursor);
-         Require_OK (Status, "advance retention assessment scan");
-      end loop;
-      Sorting.Sort (Runs);
-      for Index in reverse Runs.First_Index .. Runs.Last_Index loop
-         declare
-            Row     : constant Entity := Runs (Index);
-            Payload : Assessment_Payload_Data;
-            State   : Assessment_Status;
-            Seen    : Natural :=
-              (if Per_Project.Contains (Positive (Row.Parent_Id))
-               then Per_Project.Element (Positive (Row.Parent_Id)) else 0);
-         begin
-            if Decode_Assessment_Row (Row, Payload, State) and then State /= Assessment_Running then
-               if Seen < Keep then
-                  Seen := Seen + 1;
-               elsif Payload.Finished_At.Present and then Payload.Finished_At.Value < Before then
-                  Deleted.Include (Row.Id);
-               end if;
-               Per_Project.Include (Positive (Row.Parent_Id), Seen);
-            end if;
-         end;
-      end loop;
+      for Run of Candidates loop Deleted.Include (Run.Id); end loop;
 
       for Table in Indicator_Results_Table .. Events_Table loop
          declare

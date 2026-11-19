@@ -8,6 +8,8 @@ collections, an explicit typed comparison-selection result for every project, an
 project/baseline/current IDs. Archive executions expose typed command, status, exit, digest, retained-size, and
 truncation members rather than the private persistence payload. The schemas declare JSON Schema draft 2020-12 and
 reject unknown top-level members.
+`check-plan.schema.json` defines the project fingerprints, reuse eligibility, and selected action emitted by
+`check --dry-run --json`.
 
 `metric-trend.schema.json` constrains one project's compatible numeric points for one canonical indicator and records
 the registry measurement unit. `metric-trends.schema.json` applies the same point contract to an ordered collection

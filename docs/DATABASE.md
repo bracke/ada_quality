@@ -1,7 +1,7 @@
 # Database
 
-The persistent store uses the sibling Ada `database` crate. Schema version 4 contains exactly eight logical typed
-tables and has explicit atomic migrations from versions 1 through 3:
+The persistent store uses the sibling Ada `database` crate. Schema version 5 contains exactly eight logical typed
+tables and has explicit atomic migrations from versions 1 through 4:
 
 1. `projects`
 2. `assessment_runs`
@@ -28,6 +28,9 @@ are explicitly distinguishable from lossless version-3 evidence.
 Version 4 adds globally unique canonical assessment aliases as append-only events owned by completed runs. Alias
 events are counted separately from the required started/terminal lifecycle pair and never rewrite terminal evidence.
 
+Version 5 stores sorted project tags beside each canonical path. Migration preserves project identities and all
+assessment evidence while assigning an empty tag set to existing projects.
+
 Measurement state records include the value kind, indicator-contract version, and measurement-method version. This
 is an evidence-format extension within schema 3 rather than a table-layout change; existing rows retain explicit
 legacy v1/v1 interpretation for trend compatibility.
@@ -43,3 +46,8 @@ never overwritten. Transactional compaction is likewise checked before and after
 transactionally removes terminal assessments older than UTC, retaining at least the newest N terminal assessments
 per project and every running assessment. Owned evidence and aliases are removed with their archived assessment;
 the resulting live database is checked and compacted, and the archive remains importable.
+
+`database archive --dry-run --before UTC [--keep N]` lists the exact assessments that would be removed without
+creating an archive or changing the database. `database merge SOURCE` accepts another database or native export,
+matches projects by canonical path, deduplicates completed runs by fingerprints, remaps identities, and preserves
+nonconflicting assessment aliases.

@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=canonical justification=lexical-helpers-share-one-source-pass
+--  AQ-WAIVER: SRC-03 target=canonical owner=core expires=2099-12-31 justification=lexical-helpers-share-one-source-pass
 procedure Scan_Source
   (Root            : String;
    Files           : Text_Vectors.Vector;
@@ -342,9 +342,17 @@ begin
                Result.Review_Waivers := Result.Review_Waivers + 1;
                Note
                  (SRC_06, "review-waiver",
-                  "SRC-06 target=file justification=" & To_String (Size_Waiver.Justification), Level => Low);
+                  "SRC-06 target=file owner=" & To_String (Size_Waiver.Owner) & " expires=" &
+                    To_String (Size_Waiver.Expires) & " justification=" &
+                    To_String (Size_Waiver.Justification), Level => Low);
             else
                Result.Oversized_Files := Result.Oversized_Files + 1;
+               if Size_Waiver.Found then
+                  Note
+                    (SRC_06, (if Size_Waiver.Expired then "expired-waiver" else "invalid-waiver"),
+                     "SRC-06 target=file waiver is " &
+                       (if Size_Waiver.Expired then "expired" else "malformed"), Level => Low);
+               end if;
                Note (SRC_06, "source-size", "source file exceeds configured line limit");
             end if;
             end;
@@ -361,10 +369,18 @@ begin
                Result.Review_Waivers := Result.Review_Waivers + 1;
                Note
                  (SRC_03, "review-waiver",
-                  "SRC-03 target=" & To_String (File_Max_Subprogram) & " justification=" &
+                  "SRC-03 target=" & To_String (File_Max_Subprogram) & " owner=" &
+                    To_String (Complexity_Waiver.Owner) & " expires=" &
+                    To_String (Complexity_Waiver.Expires) & " justification=" &
                     To_String (Complexity_Waiver.Justification), Level => Low);
             else
                Result.Complexity_Violations := Result.Complexity_Violations + 1;
+               if Complexity_Waiver.Found then
+                  Note
+                    (SRC_03, (if Complexity_Waiver.Expired then "expired-waiver" else "invalid-waiver"),
+                     "SRC-03 target=" & To_String (File_Max_Subprogram) & " waiver is " &
+                       (if Complexity_Waiver.Expired then "expired" else "malformed"), Level => Low);
+               end if;
                Note
                  (SRC_03, "complexity",
                   "source complexity exceeds configured limit in " & To_String (File_Max_Subprogram));

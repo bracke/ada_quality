@@ -40,5 +40,5 @@ Assessments whose structure prevents a toolchain query publish the explicit sing
 `toolchain-unavailable`; they never fall back to an empty or structurally invalid fingerprint.
 
 Opening version 1 atomically converts legacy assessment fingerprint payloads; versions 2 and 3 preserve their rows.
-All advance metadata to version 4 in the same migration transaction. Migration failure leaves the prior version
+All advance metadata to version 5 in the same migration transaction. Migration failure leaves the prior version
 intact for retry. Silently rewriting an unknown version is forbidden.

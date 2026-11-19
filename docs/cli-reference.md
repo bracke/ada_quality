@@ -1,6 +1,7 @@
 # CLI reference
 
-Commands are `project add/discover/list/show/enable/disable/remove/relocate`, `check --all|--project ID [--json]`,
+Commands are `project add/discover/list/show/enable/disable/remove/relocate/tag/untag/tags`,
+`check (--all|--project ID|--tag NAME) [--dry-run] [--json]`,
 `scan --project ID (--changed-file PATH|--files-from FILE|-) [--format text|json|sarif]`,
 `assessment show RUN_REF [--format text|json|sarif|junit]`,
 `assessment diff BASELINE_REF CURRENT_REF [--format text|json]`,
@@ -11,7 +12,8 @@ Commands are `project add/discover/list/show/enable/disable/remove/relocate`, `c
 `trend --project ID (--indicator ID|--all) [--from-run ID] [--to-run ID] [--since TIME] [--until TIME]
 [--format text|json|csv]`, `explain INDICATOR_ID`, `indicator list [--category CATEGORY] [--format text|json]`,
 `report --format json [--project ID] [--since TIME] [--until TIME]`, `completion bash|zsh|fish`,
-`policy validate/show`, and `database init/check/recover/compact/stats/backup/export/restore`. During
+`doctor`, `waiver audit`, `policy init/validate/show/profiles/effective`, and
+`database init/check/recover/compact/stats/backup/export/import/restore/archive/merge`. During
 `check --all`, a project-local source or assessment exception interrupts that project's run, contributes exit class 3,
 and does not prevent later enabled projects from running. Database start, publication, interruption, and integrity
 failures remain batch-fatal. `regressions` reports one of three distinct outcomes per project: concrete regressions,
@@ -20,6 +22,11 @@ no regressions in comparable completed assessments, or comparison unavailable wi
 outcomes include both completed assessments and project-local interruptions. Global options are
 `--database`, `--policy`, `--color`, and `--no-color`. Unknown options, missing values, and conflicting selectors are
 rejected.
+
+Read commands accept `--output`; collection views accept `--limit` and `--offset`. A dry-run check emits resolved
+fingerprints, reuse eligibility, and the selected action without writing the database. Tags select checks, status
+views, and reports. Retention previews list exact candidates, and merge remaps completed evidence from a database or
+native export while preserving repeated history and making retries idempotent.
 
 Selected-assessment JSON reuses assessment-v1. SARIF exports findings with stable fingerprints and physical source
 locations. JUnit represents every indicator as a test case, distinguishing violations, unavailable evidence, and

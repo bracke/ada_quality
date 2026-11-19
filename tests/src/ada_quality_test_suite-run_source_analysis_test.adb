@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_source_analysis_test justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_source_analysis_test owner=aq expires=2099-12-31 justification=fixture-matrix
 procedure Run_Source_Analysis_Test is
 begin
 declare
@@ -48,17 +48,17 @@ begin
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
       "--  AQ: complexity-reviewed" & ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=wrong justification=fixture rejects broad targeting" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2099-12-31 justification=wrong-target" & ASCII.LF &
       Example_Body);
    Project_Tools.Files.Write_Text_File
      (Root & "/tests/src/example_tests.adb",
       "procedure Example_Tests is begin Register_Routine; end Example_Tests;" & ASCII.LF);
    Project_Tools.Files.Write_Text_File
      (Root & "/src/nested.adb",
-      "--  AQ-WAIVER: SRC-06 target=file justification=fixture exercises reviewed source size" & ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=wrong justification=fixture skips unrelated waiver targets" &
+      "--  AQ-WAIVER: SRC-06 target=file owner=aq expires=2099-12-31 justification=size-review" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2099-12-31 justification=wrong-target" &
       ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=inner justification=fixture reviews the measured nested segment" &
+      "--  AQ-WAIVER: SRC-03 target=inner owner=aq expires=2099-12-31 justification=nested-review" &
       ASCII.LF &
       "procedure Nested is" & ASCII.LF &
       "   function Expression (Flag : Boolean) return Boolean is (Flag and then Ready);" & ASCII.LF &
@@ -105,6 +105,26 @@ begin
      "nested declarations, and expression functions");
    Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 2,
      "legacy and mismatched complexity markers do not waive a measured occurrence");
+   declare
+      Expired_Path : constant String := Root & "/src/expired_example.adb";
+      Expired : Ada_Quality.Checks.Source_Analysis;
+      Visible : Boolean := False;
+   begin
+      Project_Tools.Files.Write_Text_File
+        (Expired_Path,
+         "--  AQ-WAIVER: SRC-03 target=expired_example owner=team expires=2000-01-01 " &
+         "justification=temporary-review" & ASCII.LF &
+         "procedure Expired_Example is begin if A and then B and then C and then D and then E then null; " &
+         "end if; end Expired_Example;" & ASCII.LF);
+      Expired := Ada_Quality.Checks.Analyze_Changed_Sources
+        (Root, [To_Unbounded_String ("src/expired_example.adb")], Policy);
+      for Finding of Expired.Findings loop
+         Visible := Visible or else To_String (Finding.Rule) = "expired-waiver";
+      end loop;
+      Assert (Expired.Complexity_Violations = 1 and then Visible,
+        "expired structured waivers remain visible and no longer suppress their violation");
+      Ada.Directories.Delete_File (Expired_Path);
+   end;
    Assert (Metrics.Long_Lines = 2 and then Metrics.Oversized_Files = 1,
      "line and file-size policy violations are measured");
    declare
@@ -176,7 +196,7 @@ begin
    end;
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
-      "--  AQ-WAIVER: SRC-03 target=example justification=fixture reviewed this subprogram" &
+      "--  AQ-WAIVER: SRC-03 target=example owner=aq expires=2099-12-31 justification=subprogram-review" &
       ASCII.LF & Example_Body);
    Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
    Assert (Metrics.Complexity_Violations = 0 and then Metrics.Review_Waivers = 3,

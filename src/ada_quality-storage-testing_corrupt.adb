@@ -1,5 +1,5 @@
 separate (Ada_Quality.Storage)
---  AQ-WAIVER: SRC-03 target=apply_corruption justification=finite-corruption-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=apply_corruption owner=aq expires=2099-12-31 justification=corruption-fixture-matrix
 procedure Testing_Corrupt (Item : in out Store; Run_Id : Positive; Kind : Testing_Corruption) is
    Table  : constant Positive := Testing_Corruption_Table (Kind);
    New_Id : constant Positive := Next_Id (Item, Table);

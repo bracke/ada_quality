@@ -74,10 +74,70 @@ package body Ada_Quality.Persistence is
      (Row.Id = 1 and then Row.Parent_Id = 0 and then S (Row.Kind) = "schema_version" and then
       S (Row.State) = "active" and then Row.Active);
 
+   function Project_Tag_Is_Valid (Name : String) return Boolean is
+   begin
+      if Name'Length not in 1 .. 64 or else
+        Name (Name'First) not in 'a' .. 'z' | '0' .. '9'
+      then
+         return False;
+      end if;
+      for C of Name loop
+         if C not in 'a' .. 'z' | '0' .. '9' | '-' | '_' then return False; end if;
+      end loop;
+      return True;
+   end Project_Tag_Is_Valid;
+
+   function Project_Payload (Path, Tags : String) return String is
+     ("path=" & Escape (Path) & LF & "tags=" & Tags);
+
+   function Decode_Project_Payload
+     (Payload : String; Path, Tags : out Ada.Strings.Unbounded.Unbounded_String) return Boolean
+   is
+      Path_Text : constant String := Field (Payload, "path");
+      Tag_Text  : constant String := Field (Payload, "tags");
+      Valid     : Boolean;
+      Decoded   : constant String := Unescape (Path_Text, Valid);
+      Start     : Natural := (if Tag_Text'Length = 0 then 0 else Tag_Text'First);
+      Previous  : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      Path := Null_Unbounded_String;
+      Tags := Null_Unbounded_String;
+      if not Valid or else Decoded'Length = 0 or else
+        Project_Payload (Decoded, Tag_Text) /= Payload
+      then
+         return False;
+      end if;
+      while Start /= 0 and then Start <= Tag_Text'Last loop
+         declare
+            Stop : Natural := Ada.Strings.Fixed.Index (Tag_Text, ",", From => Start);
+         begin
+            if Stop = 0 then Stop := Tag_Text'Last + 1; end if;
+            declare
+               Tag : constant String := Tag_Text (Start .. Stop - 1);
+            begin
+               if not Project_Tag_Is_Valid (Tag) or else
+                 (Length (Previous) > 0 and then To_String (Previous) >= Tag)
+               then
+                  return False;
+               end if;
+               Previous := To_Unbounded_String (Tag);
+            end;
+            Start := Stop + 1;
+         end;
+      end loop;
+      Path := To_Unbounded_String (Decoded);
+      Tags := To_Unbounded_String (Tag_Text);
+      return True;
+   end Decode_Project_Payload;
+
    function Project_Row_Is_Valid (Row : Entity) return Boolean is
-     (Row.Parent_Id = 0 and then S (Row.Kind) = "ada_project" and then
-      S (Row.State) in "registered" | "removed" and then Length (Row.Payload) > 0 and then
-      (S (Row.State) /= "removed" or else not Row.Active));
+      Path, Tags : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      return Row.Parent_Id = 0 and then S (Row.Kind) = "ada_project" and then
+        S (Row.State) in "registered" | "removed" and then
+        Decode_Project_Payload (S (Row.Payload), Path, Tags) and then
+        (S (Row.State) /= "removed" or else not Row.Active);
+   end Project_Row_Is_Valid;
 
    --  Locate the first line starting with Name=, returning the value bounds.
    procedure Find_Field

@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=state_after_run justification=coordinator-retains-one-evidence-boundary
+--  AQ-WAIVER: SRC-03 target=state_after_run owner=aq expires=2099-12-31 justification=evidence-boundary
 function Assess
   (Project_Id : Natural;
    Root       : String;

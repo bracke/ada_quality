@@ -18,7 +18,7 @@ with Ada_Quality.Coverage;
 with Ada_Quality.Temporary_Directories;
 with Ada_Quality.Types;
 
---  AQ-WAIVER: SRC-03 target=include_source justification=coverage aggregation shares one completeness boundary
+--  AQ-WAIVER: SRC-03 target=include_source owner=aq expires=2099-12-31 justification=coverage-boundary
 procedure Ada_Quality_Coverage is
    --  Isolated coverage entry point with concurrency locking and deterministic stability checks.
    use Ada.Strings.Unbounded;

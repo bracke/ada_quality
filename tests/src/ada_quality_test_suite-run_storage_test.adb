@@ -1,6 +1,6 @@
 with Ada.Calendar;
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=set_coverage justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=set_coverage owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Storage_Test is
 begin
 declare
@@ -11,6 +11,7 @@ declare
    Imported_Path : constant String := Fixture_Root & "/storage_test_imported.db";
    Retention_Path : constant String := Fixture_Root & "/storage_test_retention.export";
    Retention_Restore_Path : constant String := Fixture_Root & "/storage_test_retention_restore.db";
+   Merge_Path : constant String := Fixture_Root & "/storage_test_merge.db";
    Relocated_Root : constant String := Fixture_Root & "/relocated-project";
    Root  : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
@@ -48,10 +49,11 @@ begin
    if Ada.Directories.Exists (Retention_Restore_Path) then
       Ada.Directories.Delete_File (Retention_Restore_Path);
    end if;
+   if Ada.Directories.Exists (Merge_Path) then Ada.Directories.Delete_File (Merge_Path); end if;
    if Ada.Directories.Exists (Relocated_Root) then Project_Tools.Files.Delete_Tree (Relocated_Root); end if;
    Ada_Quality.Storage.Open (Store, Path);
    Ada_Quality.Storage.Check (Store);
-   Assert (Ada_Quality.Storage.Schema_Version (Store) = 4,
+   Assert (Ada_Quality.Storage.Schema_Version (Store) = 5,
      "new databases use the current migrated schema version");
    Raised := False;
    begin
@@ -80,6 +82,16 @@ begin
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
    Assert (Ada_Quality.Storage.Project (Store, 1).Enabled, "project survives close and reopen");
+   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "ci");
+   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "core");
+   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "ci");
+   Assert
+     (To_String (Ada_Quality.Storage.Project (Store, Pid).Tags) = "ci,core" and then
+      Ada_Quality.Storage.Has_Project_Tag (Ada_Quality.Storage.Project (Store, Pid), "core"),
+      "project tags are canonical, sorted, idempotent, and queryable");
+   Ada_Quality.Storage.Remove_Project_Tag (Store, Pid, "ci");
+   Assert (To_String (Ada_Quality.Storage.Project (Store, Pid).Tags) = "core",
+     "project tags can be removed without changing project identity");
    Raised := False;
    begin
       Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "", "policy");
@@ -411,6 +423,11 @@ begin
       Removed : Natural;
       use type Ada.Calendar.Time;
    begin
+      Assert
+        (Natural
+           (Ada_Quality.Storage.Retention_Candidates
+              (Store, Ada.Calendar.Clock + 86_400.0, Keep => 2).Length) = Before_Count - 2,
+         "retention preview identifies exactly the rows a matching archive will remove");
       Ada_Quality.Storage.Archive_And_Prune
         (Store, Retention_Path, Ada.Calendar.Clock + 86_400.0, Keep => 2, Removed => Removed);
       Ada_Quality.Storage.Check (Store);
@@ -428,12 +445,26 @@ begin
          "the verified retention archive restores every assessment removed from the live database");
    end;
    Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Open (Store, Merge_Path);
+   declare Added_Projects, Added_Assessments, Again_Projects, Again_Assessments : Natural; begin
+      Ada_Quality.Storage.Merge
+        (Store, Retention_Restore_Path, Added_Projects, Added_Assessments);
+      Ada_Quality.Storage.Merge
+        (Store, Retention_Restore_Path, Again_Projects, Again_Assessments);
+      Assert
+        (Added_Projects = 1 and then Added_Assessments = 3 and then
+         Again_Projects = 0 and then Again_Assessments = 0 and then
+         To_String (Ada_Quality.Storage.Project (Store, 1).Tags) = "core",
+         "database merge remaps projects, preserves tags, imports completed evidence, and deduplicates retries");
+   end;
+   Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
    Ada.Directories.Delete_File (Export_Path);
    Ada.Directories.Delete_File (Restored_Path);
    Ada.Directories.Delete_File (Imported_Path);
    Ada.Directories.Delete_File (Retention_Path);
    Ada.Directories.Delete_File (Retention_Restore_Path);
+   Ada.Directories.Delete_File (Merge_Path);
    Project_Tools.Files.Delete_Tree (Backup_Path);
    Project_Tools.Files.Delete_Tree (Relocated_Root);
 end;

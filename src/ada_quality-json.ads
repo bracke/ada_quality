@@ -38,11 +38,28 @@ package Ada_Quality.JSON is
      (Project_Id, Assessment_Id : Positive; Pretty : Boolean := False) return String;
    --  Serialize one exact unchanged-assessment reuse reference.
 
+   type Check_Plan_Item is record
+      Project_Id : Positive;
+      Path       : Ada.Strings.Unbounded.Unbounded_String;
+      Source_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
+      Policy_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
+      Toolchain_Fingerprint : Ada.Strings.Unbounded.Unbounded_String;
+      Reusable_Assessment   : Natural := 0;
+      Will_Reuse            : Boolean := False;
+   end record;
+   package Check_Plan_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Check_Plan_Item);
+
+   function Render_Check_Plan
+     (Items : Check_Plan_Vectors.Vector; Pretty : Boolean := False) return String;
+   --  Serialize a no-write assessment execution plan.
+
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;
       Pretty           : Boolean := False;
       Max_Output_Bytes : Positive := 268_435_456;
       Project_Id       : Natural := 0;
+      Project_Tag      : String := "";
       Since_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False);
       Until_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False)) return String;
    --  Serialize every persisted project, assessment, detail, and regression.

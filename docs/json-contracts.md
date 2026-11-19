@@ -10,7 +10,9 @@ filtered history exports validated run metadata. Metric trends export one or eve
 series for a project. Archive project/time filters retain only selected assessment evidence and emit comparisons only
 when every referenced assessment is present. Changed-source scans and the project list/discovery, alias-list, and
 database-statistics administration commands also have deterministic versioned JSON forms.
-Schemas are `assessment.schema.json`, `assessment-batch.schema.json`, `assessment-reuse.schema.json`, `archive.schema.json`,
+No-write JSON checks emit `check-plan-v1`, including source, policy, and toolchain identities and any reusable run.
+Schemas are `assessment.schema.json`, `assessment-batch.schema.json`, `assessment-reuse.schema.json`,
+`check-plan.schema.json`, `archive.schema.json`,
 `metric-trend.schema.json`, `metric-trends.schema.json`, `assessment-history.schema.json`, and
 `assessment-comparison.schema.json`. `portfolio-status.schema.json` and `indicator-catalog.schema.json` define the
 latest-project summary and registry-discovery surfaces. SARIF uses the external SARIF 2.1.0 contract; JUnit is emitted

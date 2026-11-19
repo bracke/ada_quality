@@ -71,6 +71,7 @@ begin
    Check.Require_File ("docs/archive.schema.json");
    Check.Require_File ("docs/assessment-batch.schema.json");
    Check.Require_File ("docs/assessment-reuse.schema.json");
+   Check.Require_File ("docs/check-plan.schema.json");
    Check.Require_File ("docs/metric-trend.schema.json");
    Check.Require_File ("docs/metric-trends.schema.json");
    Check.Require_File ("docs/assessment-history.schema.json");

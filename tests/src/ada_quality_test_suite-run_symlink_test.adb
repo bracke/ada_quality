@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_symlink_test justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_symlink_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Symlink_Test is
 begin
 declare

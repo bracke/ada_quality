@@ -166,7 +166,7 @@ is
    end Validate_Projects;
 
    procedure Validate_Runs is
-      --  AQ-WAIVER: SRC-03 target=validate_lifecycle justification=finite-persisted-state-transition-matrix
+      --  AQ-WAIVER: SRC-03 target=validate_lifecycle owner=aq expires=2099-12-31 justification=lifecycle-matrix
       procedure Validate_Lifecycle (Run : Entity; State : Assessment_Status) is
          Started_Count  : Natural := 0;
          Terminal_Count : Natural := 0;
@@ -246,7 +246,7 @@ is
       end loop;
    end Validate_Runs;
 
-   --  AQ-WAIVER: SRC-03 target=validate_results_and_measurements justification=cross-table-audit
+   --  AQ-WAIVER: SRC-03 target=validate_results_and_measurements owner=aq expires=2099-12-31 justification=audit
    procedure Validate_Results_And_Measurements is
    begin
       for Run of Rows (Assessments_Table) loop
@@ -352,7 +352,7 @@ is
       end loop;
    end Validate_Results_And_Measurements;
 
-   --  AQ-WAIVER: SRC-03 target=validate_other_details justification=one audit owns terminal child-row validation
+   --  AQ-WAIVER: SRC-03 target=validate_other_details owner=aq expires=2099-12-31 justification=terminal-row-audit
    procedure Validate_Other_Details is
       Seen_Findings : Finding_Key_Sets.Set;
    begin

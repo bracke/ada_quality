@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=any_known_evidence justification=license-expression-evidence-shares-one-boundary
+--  AQ-WAIVER: SRC-03 target=any_known_evidence owner=aq expires=2099-12-31 justification=license-evidence-boundary
    function License_Evidence
      (Root, Manifest_Text : String) return Metadata_Evidence_Status
    is
