@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/portfolio-status-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "projects"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "portfolio-status" },
+    "projects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["project_id", "path", "enabled", "latest_assessment_id", "latest_status", "started_at", "comparison_status", "regression_count"],
+        "properties": {
+          "project_id": { "type": "integer", "minimum": 1 },
+          "path": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "latest_assessment_id": { "type": "integer", "minimum": 0 },
+          "latest_status": { "enum": ["never", "running", "completed", "invalid", "interrupted"] },
+          "started_at": { "type": "string" },
+          "comparison_status": {
+            "enum": ["comparison-available", "no-assessments", "no-baseline", "current-incomplete", "no-completed-baseline", "toolchain-changed", "no-compatible-baseline"]
+          },
+          "regression_count": { "type": "integer", "minimum": 0 }
+        }
+      }
+    }
+  }
+}

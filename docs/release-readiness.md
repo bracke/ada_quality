@@ -13,7 +13,7 @@ Known non-blocking limitations:
 
 - this exported workspace has no Git metadata, so its checked-in policy disables the optional Git gate while REL-04
   still requires the source fingerprint to remain unchanged; Git-backed deployments may enable the stronger gate;
-- schema version 3 has atomic version-1/version-2 migrations and an injected migration-commit retry fixture; unknown versions
+- schema version 4 has atomic version-1/version-2/version-3 migrations and an injected migration-commit retry fixture; unknown versions
   fail closed;
 - PRF-01 is not applicable to Ada Quality itself because its sources do not declare `SPARK_Mode`;
 - AQ-000 through AQ-007 reports are current reconstruction records, explicitly not fabricated historical logs;

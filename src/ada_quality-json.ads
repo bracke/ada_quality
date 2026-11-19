@@ -2,6 +2,8 @@ with Ada.Containers.Vectors;
 with Ada.Strings.Unbounded;
 with Ada_Quality.Reporting;
 with Ada_Quality.History;
+with Ada_Quality.Indicators;
+with Ada_Quality.Checks;
 with Ada_Quality.Types;
 
 --  Deterministic JSON serialization for assessments and persistent archives.
@@ -35,7 +37,10 @@ package Ada_Quality.JSON is
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;
       Pretty           : Boolean := False;
-      Max_Output_Bytes : Positive := 268_435_456) return String;
+      Max_Output_Bytes : Positive := 268_435_456;
+      Project_Id       : Natural := 0;
+      Since_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False);
+      Until_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False)) return String;
    --  Serialize every persisted project, assessment, detail, and regression.
    --  @param Item Open, bounded, read-only reporting snapshot.
    --  @param Pretty Whether to indent the resulting document.
@@ -76,4 +81,47 @@ package Ada_Quality.JSON is
      (Item : Ada_Quality.Reporting.Project_Comparison;
       Pretty : Boolean := False) return String;
    --  Serialize one selected assessment comparison as assessment-comparison-v1.
+
+   function Render_Status
+     (Item : Ada_Quality.Reporting.Session; Pretty : Boolean := False) return String;
+   --  Serialize the latest portfolio state as portfolio-status-v1.
+
+   function Render_Status
+     (Item     : Ada_Quality.Reporting.Session;
+      Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Pretty   : Boolean := False) return String;
+   --  Serialize the latest portfolio state for a selected project set.
+
+   function Render_Scan
+     (Project_Id : Positive;
+      Metrics    : Ada_Quality.Checks.Source_Analysis;
+      Pretty     : Boolean := False) return String;
+   --  Serialize changed-source analysis as changed-source-scan-v1.
+
+   type Discovery_Status is (Already_Registered, Discovered, Added);
+   type Discovery_Item is record
+      Path       : Ada.Strings.Unbounded.Unbounded_String;
+      Project_Id : Natural := 0;
+      Status     : Discovery_Status := Discovered;
+   end record;
+   package Discovery_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Discovery_Item);
+
+   function Render_Projects
+     (Items : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Discovery
+     (Items : Discovery_Vectors.Vector; Pretty : Boolean := False) return String;
+   function Render_Aliases
+     (Items : Ada_Quality.Reporting.Alias_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Statistics
+     (Item : Ada_Quality.Reporting.Snapshot_Statistics;
+      Pretty : Boolean := False) return String;
+
+   function Render_Indicators
+     (Filter_Category : Boolean := False;
+      Category        : Ada_Quality.Indicators.Indicator_Category := Ada_Quality.Indicators.Structure;
+      Pretty          : Boolean := False) return String;
+   --  Serialize the complete or category-filtered indicator registry as indicator-catalog-v1.
 end Ada_Quality.JSON;

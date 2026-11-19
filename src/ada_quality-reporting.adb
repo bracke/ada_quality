@@ -123,7 +123,8 @@ package body Ada_Quality.Reporting is
    type Entity_Table_Array is array (Positive range 1 .. Logical_Table_Count) of Entity_Vectors.Vector;
 
    procedure Read_Tables
-     (Path : String; Limits : Load_Limits; Version : out Positive; Rows : out Entity_Table_Array)
+     (Path : String; Limits : Load_Limits; Version : out Positive;
+      Stats : out Snapshot_Statistics; Rows : out Entity_Table_Array)
    is
       DB      : Database.Handle;
       Tx      : Database.Transactions.Transaction;
@@ -265,9 +266,19 @@ package body Ada_Quality.Reporting is
       end Load_Rows;
    begin
       Version := Supported_Schema;
+      Stats := (Row_Limit => Limits.Max_Total_Rows, Text_Limit => Limits.Max_Text_Bytes, others => <>);
       Open_Database;
       Load_Version;
       Load_Rows;
+      Stats.Projects := Natural (Rows (Projects_Table).Length);
+      Stats.Assessments := Natural (Rows (Assessments_Table).Length);
+      Stats.Results := Natural (Rows (Indicator_Results_Table).Length);
+      Stats.Measurements := Natural (Rows (Measurements_Table).Length);
+      Stats.Findings := Natural (Rows (Findings_Table).Length);
+      Stats.Executions := Natural (Rows (Executions_Table).Length);
+      Stats.Events := Natural (Rows (Events_Table).Length);
+      Stats.Total_Rows := Total_Rows;
+      Stats.Text_Bytes := Total_Text_Bytes;
       Require_Read (Database.Transactions.Commit (Tx), "complete read snapshot");
       Database.Close (DB);
    exception
@@ -302,7 +313,7 @@ package body Ada_Quality.Reporting is
       elsif Ada.Directories.Kind (Path) /= Ada.Directories.Ordinary_File then
          raise Reporting_Error with "database path is not a regular file: " & Path;
       end if;
-      Read_Tables (Path, Limits, Item.Version, Rows);
+      Read_Tables (Path, Limits, Item.Version, Item.Stats, Rows);
       Decode_Snapshot (Item, Rows);
       Item.Opened := True;
       Validate_Snapshot (Item);
@@ -321,6 +332,7 @@ package body Ada_Quality.Reporting is
       Item.Opened := False;
       Item.Version := Supported_Schema;
       Item.Identity := Null_Unbounded_String;
+      Item.Stats := (others => <>);
       Item.All_Projects.Clear;
       Item.All_Runs.Clear;
       Item.Run_Index.Clear;
@@ -607,6 +619,62 @@ package body Ada_Quality.Reporting is
       Require_Open (Item);
       return To_String (Item.Identity);
    end Snapshot_Identity;
+
+   function Statistics (Item : Session) return Snapshot_Statistics is
+   begin
+      Require_Open (Item);
+      return Item.Stats;
+   end Statistics;
+
+   function Aliases (Item : Session; Run_Id : Natural := 0) return Alias_Vectors.Vector is
+      Result : Alias_Vectors.Vector;
+   begin
+      Require_Open (Item);
+      if Run_Id > 0 and then not Item.Run_Index.Contains (Positive (Run_Id)) then
+         raise Reporting_Error with "assessment not found:" & Natural'Image (Run_Id);
+      end if;
+      for Run of Item.All_Runs loop
+         if Run_Id = 0 or else Run.Id = Run_Id then
+            declare
+               Group : Detail_Group renames Item.Details.Constant_Reference (Run.Id);
+            begin
+               for Event of Group.Events loop
+                  if To_String (Event.Kind) = "alias" then
+                     Result.Append
+                       (Assessment_Alias'(Name => Event.Summary, Run_Id => Run.Id));
+                  end if;
+               end loop;
+            end;
+         end if;
+      end loop;
+      return Result;
+   end Aliases;
+
+   function Resolve_Assessment (Item : Session; Reference : String) return Positive is
+   begin
+      Require_Open (Item);
+      begin
+         declare
+            Id : constant Positive := Positive'Value (Reference);
+         begin
+            if not Item.Run_Index.Contains (Id) then
+               raise Reporting_Error with "assessment not found: " & Reference;
+            end if;
+            return Id;
+         end;
+      exception
+         when Constraint_Error => null;
+      end;
+      if not Assessment_Alias_Is_Valid (Reference) then
+         raise Reporting_Error with "invalid assessment reference: " & Reference;
+      end if;
+      for Candidate of Aliases (Item) loop
+         if To_String (Candidate.Name) = Reference then
+            return Candidate.Run_Id;
+         end if;
+      end loop;
+      raise Reporting_Error with "assessment alias not found: " & Reference;
+   end Resolve_Assessment;
 
    function History_Items
      (Item : Session; Project_Id : Natural := 0) return Ada_Quality.History_Data.History_Vectors.Vector

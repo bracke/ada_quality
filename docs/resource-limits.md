@@ -8,6 +8,7 @@
 | Internal process buffer | 4 KiB | GNAT Expect `Buffer_Size` |
 | Source/staging-tree depth | 128 directories or local-pin levels | traversal or staging fails closed |
 | Project/staging entries | 100,000 files or links | traversal or staging fails closed |
+| Project discovery entries/depth | 100,000 / 128 | discovery skips links/generated trees and fails closed |
 | Individual source input | 64 MiB | rejected before reading file content |
 | Aggregate source input | 1 GiB | cumulative pre-read accounting |
 | Individual staged dependency input | 256 MiB | rejected before copying file content |

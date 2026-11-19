@@ -1,7 +1,7 @@
 # Database
 
-The persistent store uses the sibling Ada `database` crate. Schema version 3 contains exactly eight logical typed
-tables and has explicit atomic migrations from versions 1 and 2:
+The persistent store uses the sibling Ada `database` crate. Schema version 4 contains exactly eight logical typed
+tables and has explicit atomic migrations from versions 1 through 3:
 
 1. `projects`
 2. `assessment_runs`
@@ -24,6 +24,9 @@ and inserts its recovery event in one transaction; repeated recovery is idempote
 Version 3 records run timestamps and uses escaped, named fields for result and finding evidence. This preserves
 newlines and source locations without changing the eight-table catalog. Migrated legacy rows remain readable and
 are explicitly distinguishable from lossless version-3 evidence.
+
+Version 4 adds globally unique canonical assessment aliases as append-only events owned by completed runs. Alias
+events are counted separately from the required started/terminal lifecycle pair and never rewrite terminal evidence.
 
 Measurement state records include the value kind, indicator-contract version, and measurement-method version. This
 is an evidence-format extension within schema 3 rather than a table-layout change; existing rows retain explicit

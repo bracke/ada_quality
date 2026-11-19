@@ -11,5 +11,8 @@ reject unknown top-level members.
 `metric-trend.schema.json` constrains one project's compatible numeric points for one canonical indicator and records
 the registry measurement unit. `metric-trends.schema.json` applies the same point contract to an ordered collection
 of trend-enabled indicators. `assessment-history.schema.json` defines filtered validated run metadata, while
-`assessment-comparison.schema.json` defines exact selected IDs, availability, and classified regressions. SARIF and
-JUnit use their standard external contracts instead of project-local schemas.
+`assessment-comparison.schema.json` defines exact selected IDs, availability, and classified regressions.
+`portfolio-status.schema.json` defines the latest project/assessment/comparison summary, and
+`indicator-catalog.schema.json` defines registry discovery output. SARIF and JUnit use their standard external
+contracts instead of project-local schemas. Changed-source scans, project list/discovery, assessment aliases, and
+database statistics are constrained by their correspondingly named v1 schema files.

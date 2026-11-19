@@ -27,8 +27,8 @@ package body Ada_Quality.CI_Formats is
    end URI_Path;
 
    function Render_SARIF
-     (Item : Assessment;
-      Pretty : Boolean := False) return String
+     (Findings : Finding_Vectors.Vector;
+      Pretty   : Boolean := False) return String
    is
       Doc     : Document;
       Root    : constant Node := Doc.New_Object;
@@ -47,8 +47,7 @@ package body Ada_Quality.CI_Formats is
       Doc.Insert (Tool, "driver", Driver);
       Doc.Insert (Run, "tool", Tool);
 
-      for Indicator_Result of Item.Results loop
-         for Finding of Indicator_Result.Findings loop
+      for Finding of Findings loop
             declare
                Result      : constant Node := Doc.New_Object;
                Message     : constant Node := Doc.New_Object;
@@ -93,7 +92,6 @@ package body Ada_Quality.CI_Formats is
                Doc.Insert (Result, "partialFingerprints", Fingerprints);
                Doc.Append (Results, Result);
             end;
-         end loop;
       end loop;
 
       Doc.Insert (Run, "results", Results);
@@ -104,6 +102,20 @@ package body Ada_Quality.CI_Formats is
         (Doc,
          (Form => (if Pretty then Jsonlib.Serializers.Pretty else Jsonlib.Serializers.Compact),
           Indent => 2, Escape_Non_Ascii => False, Sort_Members => True));
+   end Render_SARIF;
+
+   function Render_SARIF
+     (Item : Assessment;
+      Pretty : Boolean := False) return String
+   is
+      Findings : Finding_Vectors.Vector;
+   begin
+      for Indicator_Result of Item.Results loop
+         for Finding of Indicator_Result.Findings loop
+            Findings.Append (Finding);
+         end loop;
+      end loop;
+      return Render_SARIF (Findings, Pretty);
    end Render_SARIF;
 
    function XML_Escape (Text : String) return String is

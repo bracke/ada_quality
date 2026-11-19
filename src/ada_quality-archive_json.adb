@@ -1,3 +1,4 @@
+with Ada.Calendar;
 with Ada.Strings.Fixed;
 with Ada.Strings.Unbounded;
 with Ada_Quality.History;
@@ -10,7 +11,10 @@ package body Ada_Quality.Archive_JSON is
    function Render
      (Item             : Ada_Quality.Reporting.Session;
       Pretty           : Boolean;
-      Max_Output_Bytes : Positive) return String
+      Max_Output_Bytes : Positive;
+      Project_Id       : Natural;
+      Since_Time       : Ada_Quality.Reporting.Optional_Timestamp;
+      Until_Time       : Ada_Quality.Reporting.Optional_Timestamp) return String
    is
       Buffer : Unbounded_String;
 
@@ -144,10 +148,40 @@ package body Ada_Quality.Archive_JSON is
          Put ((if Value then "true" else "false"));
       end Boolean_Member;
 
-      Project_Rows : constant Ada_Quality.Reporting.Project_Vectors.Vector :=
+      use type Ada.Calendar.Time;
+
+      function Time_Selected
+        (Value : Ada_Quality.Reporting.Optional_Timestamp) return Boolean is
+        ((not Since_Time.Present or else
+          (Value.Present and then Value.Value >= Since_Time.Value)) and then
+         (not Until_Time.Present or else
+          (Value.Present and then Value.Value <= Until_Time.Value)));
+
+      All_Projects : constant Ada_Quality.Reporting.Project_Vectors.Vector :=
         Ada_Quality.Reporting.Projects (Item, Include_Removed => True);
-      Run_Rows : constant Ada_Quality.History_Data.History_Vectors.Vector :=
+      All_Runs : constant Ada_Quality.Reporting.Run_Vectors.Vector :=
+        Ada_Quality.Reporting.Runs (Item);
+      All_History : constant Ada_Quality.History_Data.History_Vectors.Vector :=
         Ada_Quality.Reporting.History_Items (Item);
+      Project_Rows : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Run_Rows : Ada_Quality.History_Data.History_Vectors.Vector;
+
+      function Run_Selected (Id : Natural) return Boolean is
+      begin
+         for Run of Run_Rows loop
+            if Run.Id = Id then return True; end if;
+         end loop;
+         return False;
+      end Run_Selected;
+
+      function Latest_Selected_Run (Owner : Positive) return Natural is
+         Result : Natural := 0;
+      begin
+         for Run of Run_Rows loop
+            if Run.Project_Id = Owner then Result := Run.Id; end if;
+         end loop;
+         return Result;
+      end Latest_Selected_Run;
 
       procedure Emit_Assessments is
       begin
@@ -171,16 +205,25 @@ package body Ada_Quality.Archive_JSON is
          Open_Array_Member ("comparisons");
          for Project of Project_Rows loop
             declare
-               Selection : constant Ada_Quality.History.Comparison_Selection :=
-                 Ada_Quality.Reporting.Select_Project_Comparison (Item, Project.Id);
+               Current_Id : constant Natural := Latest_Selected_Run (Project.Id);
             begin
-               Open_Object_Element;
-               Integer_Member ("baseline_id", Long_Long_Integer (Selection.Baseline_Id));
-               Integer_Member ("current_id", Long_Long_Integer (Selection.Current_Id));
-               Boolean_Member ("policy_changed", Selection.Policy_Changed);
-               Integer_Member ("project_id", Long_Long_Integer (Project.Id));
-               String_Member ("status", Ada_Quality.History.Image (Selection.Status));
-               Close_Container ('}');
+               if Current_Id > 0 then
+                  declare
+                     Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
+                       Ada_Quality.Reporting.Compare_Project (Item, Project.Id, Current_Id);
+                     Selection : constant Ada_Quality.History.Comparison_Selection := Comparison.Selection;
+                  begin
+                     if Selection.Baseline_Id = 0 or else Run_Selected (Selection.Baseline_Id) then
+                        Open_Object_Element;
+                        Integer_Member ("baseline_id", Long_Long_Integer (Selection.Baseline_Id));
+                        Integer_Member ("current_id", Long_Long_Integer (Selection.Current_Id));
+                        Boolean_Member ("policy_changed", Selection.Policy_Changed);
+                        Integer_Member ("project_id", Long_Long_Integer (Project.Id));
+                        String_Member ("status", Ada_Quality.History.Image (Selection.Status));
+                        Close_Container ('}');
+                     end if;
+                  end;
+               end if;
             end;
          end loop;
          Close_Container (']');
@@ -293,20 +336,32 @@ package body Ada_Quality.Archive_JSON is
          Open_Array_Member ("regressions");
          for Project of Project_Rows loop
             declare
-               Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
-                 Ada_Quality.Reporting.Compare_Project (Item, Project.Id);
+               Current_Id : constant Natural := Latest_Selected_Run (Project.Id);
             begin
-               for Change of Comparison.Changes loop
-                  Open_Object_Element;
-                  String_Member ("after", To_String (Change.After));
-                  Integer_Member ("baseline_id", Long_Long_Integer (Comparison.Selection.Baseline_Id));
-                  String_Member ("before", To_String (Change.Before));
-                  Integer_Member ("current_id", Long_Long_Integer (Comparison.Selection.Current_Id));
-                  String_Member ("indicator", Ada_Quality.Types.Image (Change.Indicator));
-                  String_Member ("kind", Ada_Quality.History.Image (Change.Kind));
-                  Integer_Member ("project_id", Long_Long_Integer (Comparison.Project_Id));
-                  Close_Container ('}');
-               end loop;
+               if Current_Id > 0 then
+                  declare
+                     Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
+                       Ada_Quality.Reporting.Compare_Project (Item, Project.Id, Current_Id);
+                  begin
+                     if Comparison.Selection.Baseline_Id = 0 or else
+                       Run_Selected (Comparison.Selection.Baseline_Id)
+                     then
+                        for Change of Comparison.Changes loop
+                           Open_Object_Element;
+                           String_Member ("after", To_String (Change.After));
+                           Integer_Member
+                             ("baseline_id", Long_Long_Integer (Comparison.Selection.Baseline_Id));
+                           String_Member ("before", To_String (Change.Before));
+                           Integer_Member
+                             ("current_id", Long_Long_Integer (Comparison.Selection.Current_Id));
+                           String_Member ("indicator", Ada_Quality.Types.Image (Change.Indicator));
+                           String_Member ("kind", Ada_Quality.History.Image (Change.Kind));
+                           Integer_Member ("project_id", Long_Long_Integer (Comparison.Project_Id));
+                           Close_Container ('}');
+                        end loop;
+                     end if;
+                  end;
+               end if;
             end;
          end loop;
          Close_Container (']');
@@ -332,6 +387,23 @@ package body Ada_Quality.Archive_JSON is
          Close_Container (']');
       end Emit_Results;
    begin
+      for Run of All_Runs loop
+         if (Project_Id = 0 or else Run.Project_Id = Project_Id) and then
+           Time_Selected (Run.Started_At)
+         then
+            for History of All_History loop
+               if History.Id = Run.Id then Run_Rows.Append (History); end if;
+            end loop;
+         end if;
+      end loop;
+      for Project of All_Projects loop
+         if (Project_Id = 0 or else Project.Id = Project_Id) and then
+           ((not Since_Time.Present and then not Until_Time.Present) or else
+            Latest_Selected_Run (Project.Id) > 0)
+         then
+            Project_Rows.Append (Project);
+         end if;
+      end loop;
       Open_Root;
       Emit_Assessments;
       Emit_Comparisons;

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/assessment-aliases-v1.schema.json",
+  "type": "object", "required": ["schema_version", "kind", "aliases"],
+  "properties": {
+    "schema_version": { "const": 1 }, "kind": { "const": "assessment-aliases" },
+    "aliases": { "type": "array", "items": { "type": "object",
+      "required": ["name", "assessment_id"], "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "assessment_id": { "type": "integer", "minimum": 1 } }, "additionalProperties": false } }
+  }, "additionalProperties": false
+}

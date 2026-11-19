@@ -29,6 +29,7 @@ is
      array (Indicator_Results_Table .. Events_Table) of Position_Vectors.Vector;
 
    Project_Ids  : Id_Sets.Set;
+   Assessment_Aliases : Finding_Key_Sets.Set;
    Run_Positions : Id_Position_Maps.Map;
    Run_Formats   : Id_Boolean_Maps.Map;
    Parent_Heads : Parent_Head_Array;
@@ -169,6 +170,7 @@ is
       procedure Validate_Lifecycle (Run : Entity; State : Assessment_Status) is
          Started_Count  : Natural := 0;
          Terminal_Count : Natural := 0;
+         Alias_Count    : Natural := 0;
          Event_Count    : Natural := 0;
          Position       : Natural :=
            (if Parent_Heads (Events_Table).Contains (Run.Id)
@@ -185,6 +187,18 @@ is
                   case Classify_Lifecycle_Event (State, S (Event.Kind), S (Event.State)) is
                      when Started_Lifecycle_Event => Started_Count := Started_Count + 1;
                      when Terminal_Lifecycle_Event => Terminal_Count := Terminal_Count + 1;
+                     when Alias_Event =>
+                        declare
+                           Name : constant Ada.Strings.Unbounded.Unbounded_String :=
+                             Ada.Strings.Unbounded.To_Unbounded_String (S (Event.Payload));
+                        begin
+                           if Assessment_Aliases.Contains (Name) then
+                              raise Storage_Error with
+                                "duplicate assessment alias " & S (Event.Payload);
+                           end if;
+                           Assessment_Aliases.Insert (Name);
+                           Alias_Count := Alias_Count + 1;
+                        end;
                      when Invalid_Lifecycle_Event =>
                         raise Storage_Error with
                           "contradictory assessment event" & Positive'Image (Event.Id);
@@ -193,7 +207,9 @@ is
                Position := Next_Row (Events_Table) (Positive (Position));
             end;
          end loop;
-         if not Lifecycle_Counts_Are_Valid (State, Started_Count, Terminal_Count, Event_Count) then
+         if not Lifecycle_Counts_Are_Valid
+           (State, Started_Count, Terminal_Count, Alias_Count, Event_Count)
+         then
             raise Storage_Error with "invalid assessment lifecycle" & Positive'Image (Run.Id);
          end if;
       end Validate_Lifecycle;

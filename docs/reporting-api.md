@@ -75,6 +75,12 @@ The entity layout, codecs, lifecycle transition classifier, and lifecycle cardin
 package `Ada_Quality.Persistence`, shared by `Storage` and `Reporting`. The writable integrity command and read-only
 reporting path therefore accept exactly the same metadata and event vocabulary.
 
+## Schema version 4
+
+Schema 4 is reached by an atomic metadata migration from versions 1 through 3. It adds canonical append-only alias
+events for completed assessments. Reporting validates global alias uniqueness and resolves either a positive numeric
+identity or an alias without changing comparison chronology or evidence.
+
 `Ada_Quality.Indicators.Measurement_Unit` names the unit of each indicator's numeric measurement (`none` for
 Boolean indicators).
 

@@ -3,6 +3,11 @@ with Ada_Quality.Types;
 --  Deterministic CI-native renderers for one completed assessment.
 package Ada_Quality.CI_Formats is
    function Render_SARIF
+     (Findings : Ada_Quality.Types.Finding_Vectors.Vector;
+      Pretty   : Boolean := False) return String;
+   --  Render an arbitrary set of findings as a SARIF 2.1.0 log.
+
+   function Render_SARIF
      (Item : Ada_Quality.Types.Assessment;
       Pretty : Boolean := False) return String;
    --  Render assessment findings as a SARIF 2.1.0 log.

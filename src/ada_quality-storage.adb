@@ -10,9 +10,13 @@ with Ada_Quality.Indicators;
 with Ada_Quality.Manifests;
 with Ada_Quality.Persistence;
 with Database.Catalog;
+with Database.Backup;
+with Database.Export;
 with Database.Predicates;
+with Database.Restore;
 with Database.Status;
 with Database.Transactions;
+with Database.Vacuum;
 with Project_Tools.Links;
 with Project_Tools.Files;
 
@@ -108,7 +112,7 @@ package body Ada_Quality.Storage is
       Require_OK (Status, "read schema version for migration");
       if S (Row.Payload) = Current_Schema_Version then
          Require_OK (Database.Transactions.Commit (Tx), "complete schema version check");
-      elsif S (Row.Payload) in "1" | "2" then
+      elsif S (Row.Payload) in "1" | "2" | "3" then
          if S (Row.Payload) = "1" then
             declare
                Cursor : Entity_Tables.Cursor;
@@ -141,8 +145,8 @@ package body Ada_Quality.Storage is
                end loop;
             end;
          end if;
-         --  Version 3 adds run timestamps and lossless child payloads for new runs only; existing rows stay
-         --  byte-identical and remain identified as legacy evidence by the absent run format marker.
+         --  Version 3 adds run timestamps and lossless child payloads for new runs only. Version 4 adds an alias
+         --  event vocabulary. Both transitions leave existing evidence rows byte-identical.
          Row.Payload := WW (Current_Schema_Version);
          Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Metadata_Table), Row);
          Require_OK (Status, "migrate schema metadata to the current version");
@@ -192,6 +196,23 @@ package body Ada_Quality.Storage is
          Item.Opened := False;
       end if;
    end Close;
+
+   procedure Compact (Item : in out Store) is
+      Tx : Database.Transactions.Transaction;
+   begin
+      if not Item.Opened then
+         raise Storage_Error with "database is not open";
+      end if;
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      Require_OK (Database.Vacuum.Vacuum (Tx), "compact database");
+      Require_OK (Database.Transactions.Commit (Tx), "commit database compaction");
+   exception
+      when others =>
+         if Database.Transactions.Is_Active (Tx) then
+            Database.Transactions.Rollback (Tx);
+         end if;
+         raise;
+   end Compact;
 
    function Is_Open (Item : Store) return Boolean is (Item.Opened);
 
@@ -295,14 +316,10 @@ package body Ada_Quality.Storage is
               Enabled => Row.Active, Removed => S (Row.State) = "removed");
    end Project;
 
-   function Add_Project (Item : in out Store; Path : String) return Positive is
+   function Validated_Project_Path (Path : String) return String is
       Input_Is_Link : constant Boolean := Project_Tools.Links.Is_Link (Path);
       Canonical : constant String := Ada.Directories.Full_Name (Path);
-      Existing  : constant Project_Vectors.Vector := Projects (Item, True);
-      Id        : Positive := 1;
       Manifest  : constant String := Canonical & "/alire.toml";
-      Tx        : Database.Transactions.Transaction;
-      Status    : Database.Status.Result;
    begin
       if not Ada.Directories.Exists (Canonical) or else
         not Ada.Directories.Exists (Canonical & "/alire.toml")
@@ -321,6 +338,19 @@ package body Ada_Quality.Storage is
             raise Storage_Error with "project has a malformed Alire manifest: " & Manifest;
          end if;
       end;
+      return Canonical;
+   exception
+      when Ada.Directories.Name_Error | Ada.Directories.Use_Error =>
+         raise Storage_Error with "project path cannot be resolved: " & Path;
+   end Validated_Project_Path;
+
+   function Add_Project (Item : in out Store; Path : String) return Positive is
+      Canonical : constant String := Validated_Project_Path (Path);
+      Existing  : constant Project_Vectors.Vector := Projects (Item, True);
+      Id        : Positive := 1;
+      Tx        : Database.Transactions.Transaction;
+      Status    : Database.Status.Result;
+   begin
       for P of Existing loop
          if To_String (P.Path) = Canonical and then not P.Removed then
             raise Storage_Error with "project already registered:" & Positive'Image (P.Id);
@@ -371,6 +401,68 @@ package body Ada_Quality.Storage is
    begin
       Update_Project (Item, Id, False, "removed");
    end Remove_Project;
+
+   procedure Relocate_Project (Item : in out Store; Id : Positive; Path : String) is
+      Canonical : constant String := Validated_Project_Path (Path);
+      Existing  : constant Project_Vectors.Vector := Projects (Item, True);
+      Tx         : Database.Transactions.Transaction;
+      Row        : Entity;
+      Status     : Database.Status.Result;
+   begin
+      for P of Existing loop
+         if P.Id = Id and then P.Removed then
+            raise Storage_Error with "removed project cannot be relocated:" & Positive'Image (Id);
+         elsif P.Id /= Id and then not P.Removed and then To_String (P.Path) = Canonical then
+            raise Storage_Error with "project path already registered:" & Positive'Image (P.Id);
+         end if;
+      end loop;
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      Status := Entity_Tables.Find (Tx, Item.DB, Item.Schemas (Projects_Table), Id, Row);
+      if not Database.Status.Is_Ok (Status) then
+         Database.Transactions.Rollback (Tx);
+         raise Storage_Error with "project not found:" & Positive'Image (Id);
+      end if;
+      Row.Payload := WW (Canonical);
+      Status := Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Projects_Table), Row);
+      if not Database.Status.Is_Ok (Status) then
+         Database.Transactions.Rollback (Tx);
+         Require_OK (Status, "relocate project");
+      end if;
+      Require_OK (Database.Transactions.Commit (Tx), "commit project relocation");
+   end Relocate_Project;
+
+   procedure Backup (Item : in out Store; Destination : String) is
+   begin
+      if Ada.Directories.Exists (Destination) then
+         raise Storage_Error with "backup destination already exists: " & Destination;
+      end if;
+      Require_OK
+        (Database.Backup.Create_Physical_Backup (Item.DB, Encode (Destination)),
+         "create database backup");
+   end Backup;
+
+   procedure Export (Item : in out Store; Destination : String) is
+      Tx     : Database.Transactions.Transaction;
+      Status : Database.Status.Result;
+   begin
+      if Ada.Directories.Exists (Destination) then
+         raise Storage_Error with "export destination already exists: " & Destination;
+      end if;
+      Database.Transactions.Begin_Read (Item.DB, Tx);
+      Status := Database.Export.Export_Database (Tx, Encode (Destination));
+      if not Database.Status.Is_Ok (Status) then
+         Database.Transactions.Rollback (Tx);
+         Require_OK (Status, "export database");
+      end if;
+      Require_OK (Database.Transactions.Commit (Tx), "complete database export");
+   end Export;
+
+   procedure Restore (Source, Destination : String) is
+   begin
+      Require_OK
+        (Database.Restore.Restore_Physical_Backup (Encode (Source), Encode (Destination)),
+         "restore database backup");
+   end Restore;
 
    function Assessment_Status_Image (Value : Assessment_Status) return String is
    begin
@@ -653,6 +745,53 @@ package body Ada_Quality.Storage is
 
    function Events (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector is
      (Details (Item, Events_Table, Run_Id));
+
+   procedure Add_Assessment_Alias (Item : in out Store; Run_Id : Positive; Name : String) is
+      Event_Id : Positive := 1;
+      Tx       : Database.Transactions.Transaction;
+      Cursor   : Entity_Tables.Cursor;
+      Run_Row  : Entity;
+      Status   : Database.Status.Result;
+   begin
+      if not Assessment_Alias_Is_Valid (Name) then
+         raise Storage_Error with
+           "assessment alias must begin with a lowercase letter and contain only lowercase letters," &
+           " digits, dots, underscores, or hyphens (maximum 64 characters)";
+      end if;
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      Status := Entity_Tables.Find
+        (Tx, Item.DB, Item.Schemas (Assessments_Table), Run_Id, Run_Row);
+      Require_OK (Status, "load assessment for alias");
+      if S (Run_Row.State) /= "completed" then
+         raise Storage_Error with "only completed assessments may be aliased";
+      end if;
+      Status := Entity_Tables.Scan
+        (Tx, Item.DB, Item.Schemas (Events_Table), Database.Predicates.True_Predicate, Cursor);
+      Require_OK (Status, "scan assessment aliases");
+      while Entity_Tables.Has_Element (Cursor) loop
+         declare
+            Row : constant Entity := Entity_Tables.Element (Cursor);
+         begin
+            if S (Row.Kind) = "alias" and then S (Row.Payload) = Name then
+               raise Storage_Error with "assessment alias already exists: " & Name;
+            end if;
+         end;
+         Status := Entity_Tables.Next
+           (Tx, Item.DB, Item.Schemas (Events_Table), Database.Predicates.True_Predicate, Cursor);
+         Require_OK (Status, "advance assessment alias scan");
+      end loop;
+      Event_Id := Next_Id (Item, Events_Table);
+      Status := Entity_Tables.Insert
+        (Tx, Item.DB, Item.Schemas (Events_Table),
+         (Id => Event_Id, Parent_Id => Run_Id, Kind => WW ("alias"), State => WW ("alias"),
+          Payload => WW (Name), Active => True));
+      Require_OK (Status, "record assessment alias");
+      Require_OK (Database.Transactions.Commit (Tx), "commit assessment alias");
+   exception
+      when others =>
+         if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+         raise;
+   end Add_Assessment_Alias;
 
    procedure Interrupt_Assessment (Item : in out Store; Run_Id : Positive; Reason : String) is
       Event_Id : constant Positive := Next_Id (Item, Events_Table);

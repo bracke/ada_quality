@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/database-statistics-v1.schema.json",
+  "type": "object",
+  "required": ["schema_version", "kind", "projects", "assessments", "results", "measurements", "findings", "executions", "events", "total_rows", "text_bytes", "row_limit", "text_limit"],
+  "properties": {
+    "schema_version": { "const": 1 }, "kind": { "const": "database-statistics" },
+    "projects": { "$ref": "#/$defs/count" }, "assessments": { "$ref": "#/$defs/count" },
+    "results": { "$ref": "#/$defs/count" }, "measurements": { "$ref": "#/$defs/count" },
+    "findings": { "$ref": "#/$defs/count" }, "executions": { "$ref": "#/$defs/count" },
+    "events": { "$ref": "#/$defs/count" }, "total_rows": { "$ref": "#/$defs/count" },
+    "text_bytes": { "$ref": "#/$defs/count" }, "row_limit": { "$ref": "#/$defs/count" },
+    "text_limit": { "$ref": "#/$defs/count" }
+  },
+  "$defs": { "count": { "type": "integer", "minimum": 0 } },
+  "additionalProperties": false
+}

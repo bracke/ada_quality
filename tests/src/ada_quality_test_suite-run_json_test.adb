@@ -105,6 +105,7 @@ begin
    declare
       SARIF : constant String := Ada_Quality.CI_Formats.Render_SARIF (Value);
       JUnit : constant String := Ada_Quality.CI_Formats.Render_JUnit (Value);
+      Catalog : constant String := Ada_Quality.JSON.Render_Indicators;
       Points : Ada_Quality.History.Trend_Vectors.Vector;
       Trend  : Ada.Strings.Unbounded.Unbounded_String;
    begin
@@ -116,12 +117,41 @@ begin
          Ada.Strings.Fixed.Index (SARIF, """adaQuality/v1""") > 0 and then
          Ada.Strings.Fixed.Index (SARIF, "src/example%20file.adb") > 0,
          "SARIF retains its contract, finding identity, and URI-encoded source location");
+      declare
+         Metrics : Ada_Quality.Checks.Source_Analysis;
+         Scan_JSON : Ada.Strings.Unbounded.Unbounded_String;
+         Scan_SARIF : Ada.Strings.Unbounded.Unbounded_String;
+      begin
+         Metrics.File_Count := 1;
+         Metrics.Long_Lines := 1;
+         Metrics.Findings.Append
+           (Value.Results.First_Element.Findings.First_Element);
+         Scan_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_Scan (1, Metrics));
+         Scan_SARIF := To_Unbounded_String
+           (Ada_Quality.CI_Formats.Render_SARIF (Metrics.Findings));
+         Jsonlib.Parsers.Parse (To_String (Scan_JSON), Doc, Error);
+         Assert
+           (not Jsonlib.Errors.Failed (Error) and then
+            Ada.Strings.Fixed.Index (To_String (Scan_JSON),
+              """kind"":""changed-source-scan""") > 0,
+            "changed-source scans have versioned strict JSON output");
+         Jsonlib.Parsers.Parse (To_String (Scan_SARIF), Doc, Error);
+         Assert (not Jsonlib.Errors.Failed (Error),
+           "arbitrary changed-source findings have strict SARIF output");
+      end;
       Assert
         (Ada.Strings.Fixed.Index (JUnit, "tests=""33""") > 0 and then
          Ada.Strings.Fixed.Index (JUnit, "failures=""1""") > 0 and then
          Ada.Strings.Fixed.Index (JUnit, "errors=""1""") > 0 and then
          Ada.Strings.Fixed.Index (JUnit, "failed &lt;gate&gt; &amp; check") > 0,
          "JUnit maps every indicator and escapes failure diagnostics");
+      Jsonlib.Parsers.Parse (Catalog, Doc, Error);
+      Assert
+        (not Jsonlib.Errors.Failed (Error) and then
+         Ada.Strings.Fixed.Index (Catalog, """kind"":""indicator-catalog""") > 0 and then
+         Jsonlib.Documents.Length
+           (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "indicators")) = 33,
+         "indicator catalog JSON exposes the complete versioned registry");
       Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 7, Value => 9_000));
       Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 9, Value => 9_250));
       Trend := To_Unbounded_String
@@ -211,6 +241,27 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-comparison.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "assessment comparison JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/portfolio-status.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "portfolio status JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/indicator-catalog.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "indicator catalog JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/changed-source-scan.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "changed-source scan JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/project-list.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "project list JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/project-discovery.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "project discovery JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-aliases.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "assessment alias JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/database-statistics.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "database statistics JSON schema is valid JSON");
    end;
 end;
 end Run_JSON_Test;

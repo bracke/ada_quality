@@ -349,7 +349,7 @@ package body Ada_Quality_Reporting_Tests is
          Before : constant File_States := Capture (Directory & "/db");
       begin
          Reporting.Open (Session, Path);
-         Assert (Reporting.Supported_Schema_Version (Session) = 3, "reporting reads schema version 3");
+         Assert (Reporting.Supported_Schema_Version (Session) = 4, "reporting reads schema version 4");
          Assert (Reporting.Projects (Session).Length = 1, "one project is visible");
          Assert (Reporting.Projects (Session).First_Element.Enabled, "the project is enabled");
          declare
@@ -499,7 +499,7 @@ package body Ada_Quality_Reporting_Tests is
          Assert (Same (Before, Capture (Directory)), "an older schema is not migrated by reporting");
       end;
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Assert (Storage.Schema_Version (Store) = 3, "normal storage still migrates version 2 to 3");
+      Assert (Storage.Schema_Version (Store) = 4, "normal storage migrates version 2 to 4");
       Storage_Testing.Set_Schema_Version (Store, 99);
       Storage.Close (Store);
       declare

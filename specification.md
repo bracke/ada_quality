@@ -19,7 +19,12 @@ Eight logical tables: Projects, Assessment_Runs, Indicator_Results, Measurements
 Stable finding fingerprint uses indicator/rule and semantic relative source context, not only line number. Classify new, persistent, resolved, reintroduced, unconfirmed. Resolution only after successful comparable remeasurement. Regression types include new violations, worsened metric, increased severity, failed gate, lost evidence, policy-induced change. Preserve policy/tool/source semantics in baseline compatibility.
 
 ## CLI
-`project add/list/show/enable/disable/remove`, `check --all|--project`, `status`, `findings`, `regressions`, `history`, `report --format json`, `policy validate/show`, `database init/check/recover`. Exit 0 success, 1 quality violations, 2 argument/config errors, 3 incomplete/tool errors, 4 database/integrity errors. JSON versioned, deterministic, Unicode-safe, no ANSI; human output uses messages/terminal_styles.
+`project add/discover/list/show/enable/disable/relocate/remove`, `check --all|--project`, changed-source `scan`,
+portfolio `status`, `findings`, regression gates, filtered history and trends, assessment show/diff/aliases,
+indicator discovery, `report --format json`, `policy validate/show`, and database integrity/recovery/statistics/backup.
+Exit 0 success, 1 quality violations or gated regressions, 2 argument/config errors, 3 incomplete/tool/unavailable
+comparison errors, 4 database/integrity errors. JSON is versioned, deterministic, Unicode-safe, and contains no ANSI;
+human output uses messages/terminal_styles.
 
 ## Safety and tests
 Explicit argv, no shell interpolation, bounded stdout/stderr, enforced timeouts/cancellation, process cleanup, safe symlinks/staging, no tracked source modifications, secret redaction. AUnit positive/negative/boundary fixtures, real Alire/GNAT/AUnit/GNATprove/GNATdoc integration, persistent DB fault injection, process-level CLI E2E, schema validation and project_tools release checks. Record actual commands and outcomes.

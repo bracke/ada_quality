@@ -2,6 +2,11 @@ separate (Ada_Quality_Coverage)
 procedure Exercise_CLI is
       CLI_Binary : constant String := Binary ("ada-quality");
       DB_Path    : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.db");
+      Backup_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.backup");
+      Export_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.export");
+      Restored_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-restored.db");
+      Changed_List_Path : constant String :=
+        Ada_Quality.Temporary_Directories.Child (Scratch, "changed-files.txt");
       Missing_Policy : constant String :=
         Ada_Quality.Temporary_Directories.Child (Scratch, "missing-policy.toml");
       Missing_Read_DB : constant String :=
@@ -19,6 +24,15 @@ procedure Exercise_CLI is
          Project_Tools.Files.Delete_File_If_Present (DB_Path & ".wal");
          Project_Tools.Files.Delete_File_If_Present (DB_Path & ".fts");
          Project_Tools.Files.Delete_File_If_Present (DB_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (Export_Path);
+         Project_Tools.Files.Delete_File_If_Present (Restored_Path);
+         Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".wal");
+         Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".fts");
+         Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".lock");
+         Project_Tools.Files.Delete_File_If_Present (Changed_List_Path);
+         if Project_Tools.Files.Exists (Backup_Path) then
+            Project_Tools.Files.Delete_Tree (Backup_Path);
+         end if;
       end Cleanup_Database;
 
       procedure Run_CLI
@@ -28,7 +42,8 @@ procedure Exercise_CLI is
          Allow_Two   : Boolean := False;
          Allow_Three : Boolean := False;
          Allow_Four  : Boolean := False;
-         Expected_Text : String := "")
+         Expected_Text : String := "";
+         Expected_Alternate : String := "")
       is
          Result : constant Project_Tools.Processes.Captured_Process :=
            Project_Tools.Processes.Capture (Label, Root, CLI_Binary, Args, Quiet => True);
@@ -37,20 +52,76 @@ procedure Exercise_CLI is
            not (Allow_Two and then Result.Status = 2) and then not (Allow_Three and then Result.Status = 3) and then
            not (Allow_Four and then Result.Status = 4)
          then
-            raise Program_Error with Label & " failed with status" & Integer'Image (Result.Status);
+            raise Program_Error with
+              Label & " failed with status" & Integer'Image (Result.Status) & ASCII.LF &
+              To_String (Result.Output);
          elsif Expected_Text'Length > 0 and then
-           Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Text) = 0
+           Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Text) = 0 and then
+           (Expected_Alternate'Length = 0 or else
+            Ada.Strings.Fixed.Index (To_String (Result.Output), Expected_Alternate) = 0)
          then
             raise Program_Error with Label & " did not report: " & Expected_Text & ASCII.LF & To_String (Result.Output);
          end if;
       end Run_CLI;
+
+      function Latest_Assessment_Completed return Boolean is
+         Result : constant Project_Tools.Processes.Captured_Process :=
+           Project_Tools.Processes.Capture
+             ("assessment status", Root, CLI_Binary,
+              Project_Tools.Processes.Arguments
+                ([Project_Tools.Processes.Argument ("history"),
+                  Project_Tools.Processes.Argument ("--database"),
+                  Project_Tools.Processes.Argument (DB_Path)]),
+              Quiet => True);
+         Output : constant String := To_String (Result.Output);
+         Completed_At : constant Natural :=
+           Ada.Strings.Fixed.Index (Output, "project 1 completed", Going => Ada.Strings.Backward);
+         Latest_At : constant Natural := Natural'Max
+           (Completed_At,
+            Natural'Max
+              (Ada.Strings.Fixed.Index
+                 (Output, "project 1 interrupted", Going => Ada.Strings.Backward),
+               Natural'Max
+                 (Ada.Strings.Fixed.Index
+                    (Output, "project 1 invalid", Going => Ada.Strings.Backward),
+                  Ada.Strings.Fixed.Index
+                    (Output, "project 1 running", Going => Ada.Strings.Backward))));
+      begin
+         if Result.Status /= 0 then
+            raise Program_Error with "assessment status failed" & ASCII.LF & Output;
+         end if;
+         return Completed_At > 0 and then Completed_At = Latest_At;
+      end Latest_Assessment_Completed;
+
+      procedure Run_Completed_Assessment (Label : String) is
+         Arguments : constant Project_Tools.Processes.Argument_Vectors.Vector :=
+           Project_Tools.Processes.Arguments
+             ([Project_Tools.Processes.Argument ("check"),
+               Project_Tools.Processes.Argument ("--project"),
+               Project_Tools.Processes.Argument ("1"),
+               Project_Tools.Processes.Argument ("--database"),
+               Project_Tools.Processes.Argument (DB_Path),
+               Project_Tools.Processes.Argument ("--policy"),
+               Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
+               Project_Tools.Processes.Argument ("--no-color")]);
+      begin
+         for Attempt in 1 .. 2 loop
+            Run_CLI
+              (Label & (if Attempt = 1 then "" else " retry"), Arguments,
+               Allow_One => True, Allow_Three => True);
+            if Latest_Assessment_Completed then
+               return;
+            end if;
+         end loop;
+         raise Program_Error with Label & " did not produce a completed assessment";
+      end Run_Completed_Assessment;
 
       function Latest_Completed_Assessment_Id return Positive is
          Result : constant Project_Tools.Processes.Captured_Process :=
            Project_Tools.Processes.Capture
              ("completed assessment identity", Root, CLI_Binary,
               Project_Tools.Processes.Arguments
-                ([Project_Tools.Processes.Argument ("status"),
+                ([Project_Tools.Processes.Argument ("history"),
                   Project_Tools.Processes.Argument ("--database"),
                   Project_Tools.Processes.Argument (DB_Path)]),
               Quiet => True);
@@ -102,11 +173,30 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--policy"),
              Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]));
       Run_CLI
+        ("explain indicator",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("explain"), Project_Tools.Processes.Argument ("SRC-03")]),
+         Expected_Text => "remediation:");
+      Run_CLI
+        ("indicator list JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("indicator"), Project_Tools.Processes.Argument ("list"),
+             Project_Tools.Processes.Argument ("--category"), Project_Tools.Processes.Argument ("source"),
+             Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json")]),
+         Expected_Text => """kind"": ""indicator-catalog""");
+      Run_CLI
         ("project add",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("add"),
              Project_Tools.Processes.Argument (Root), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]));
+      Run_CLI
+        ("project list JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("list"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""project-list""");
       for Operation of Operations loop
          declare
             Name : constant String := Ada.Strings.Unbounded.To_String (Operation);
@@ -121,32 +211,111 @@ procedure Exercise_CLI is
          end;
       end loop;
       Run_CLI
-        ("full assessment",
+        ("project discover dry run",
          Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
-             Project_Tools.Processes.Argument ("--no-color")]),
-         Allow_One => True, Allow_Three => True);
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("discover"),
+             Project_Tools.Processes.Argument (Root), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "registered 1");
+      Run_CLI
+        ("project discover JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("discover"),
+             Project_Tools.Processes.Argument (Root), Project_Tools.Processes.Argument ("--json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""project-discovery""");
+      Run_CLI
+        ("project relocate",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("project"), Project_Tools.Processes.Argument ("relocate"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument (Root),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "relocated project 1");
+      Run_CLI
+        ("changed source scan",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("scan"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--changed-file"),
+             Project_Tools.Processes.Argument ("src/ada_quality.ads"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_One => True, Expected_Text => "changed source(s)");
+      Project_Tools.Files.Write_Text_File (Changed_List_Path, "src/ada_quality.ads" & ASCII.LF);
+      Run_CLI
+        ("changed source list scan",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("scan"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--files-from"),
+             Project_Tools.Processes.Argument (Changed_List_Path),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--policy"),
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+         Allow_One => True, Expected_Text => "changed source(s)");
+      for Format of Project_Tools.Processes.Argument_Items'
+        ([Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("sarif")])
+      loop
+         Run_CLI
+           ("changed source " & To_String (Format),
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("scan"), Project_Tools.Processes.Argument ("--project"),
+                Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--changed-file"),
+                Project_Tools.Processes.Argument ("src/ada_quality.ads"),
+                Project_Tools.Processes.Argument ("--format"), Format,
+                Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+                Project_Tools.Processes.Argument ("--policy"),
+                Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
+            Allow_One => True,
+            Expected_Text => (if To_String (Format) = "json" then "changed-source-scan" else "2.1.0"));
+      end loop;
+      Run_Completed_Assessment ("full assessment");
       First_Assessment := Latest_Completed_Assessment_Id;
+      Run_CLI
+        ("first assessment alias",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("alias"),
+             Project_Tools.Processes.Argument ("release-1"),
+             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "aliased release-1");
       Run_CLI
         ("regressions without baseline",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("regressions"),
              Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
-         Expected_Text => "comparison unavailable: no baseline assessment exists");
+         Expected_Text => "comparison unavailable: no baseline assessment exists",
+         Expected_Alternate => "comparison unavailable: no completed baseline exists");
       Run_CLI
-        ("second full assessment",
+        ("regression gate without baseline",
          Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("check"), Project_Tools.Processes.Argument ("--project"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
-             Project_Tools.Processes.Argument ("--no-color")]),
-         Allow_One => True, Allow_Three => True);
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1"),
+             Project_Tools.Processes.Argument ("--fail-on-regression"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Allow_Three => True, Expected_Text => "comparison unavailable");
+      Run_Completed_Assessment ("second full assessment");
       Second_Assessment := Latest_Completed_Assessment_Id;
+      Run_CLI
+        ("second assessment alias",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("alias"),
+             Project_Tools.Processes.Argument ("release-2"),
+             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
+      Run_CLI
+        ("assessment alias list",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("aliases"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "release-2 assessment");
+      Run_CLI
+        ("assessment alias list JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("aliases"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""assessment-aliases""");
       Run_CLI
         ("regressions with compatible baseline",
          Project_Tools.Processes.Arguments
@@ -155,10 +324,19 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "no regressions in comparable assessments");
       Run_CLI
+        ("clean regression gate",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("regressions"),
+             Project_Tools.Processes.Argument ("--baseline"), Project_Tools.Processes.Argument ("release-1"),
+             Project_Tools.Processes.Argument ("--current"), Project_Tools.Processes.Argument ("release-2"),
+             Project_Tools.Processes.Argument ("--fail-on-regression"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
+      Run_CLI
         ("selected assessment text",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("show"),
-             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("release-1"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
              Project_Tools.Processes.Argument ("--no-color")]),
          Expected_Text => "STR-01");
@@ -189,7 +367,7 @@ procedure Exercise_CLI is
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("regressions"),
              Project_Tools.Processes.Argument ("--current"),
-             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("release-2"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "no regressions in comparable assessments");
       Run_CLI
@@ -209,6 +387,14 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""assessment-comparison""");
+      Run_CLI
+        ("aliased assessment comparison",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("assessment"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument ("release-1"),
+             Project_Tools.Processes.Argument ("release-2"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "no regressions in comparable assessments");
       Run_CLI
         ("explicit regression baseline",
          Project_Tools.Processes.Arguments
@@ -254,9 +440,9 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
              Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--all"),
              Project_Tools.Processes.Argument ("--from-run"),
-             Project_Tools.Processes.Argument (Image (First_Assessment)),
+             Project_Tools.Processes.Argument ("release-1"),
              Project_Tools.Processes.Argument ("--to-run"),
-             Project_Tools.Processes.Argument (Image (Second_Assessment)),
+             Project_Tools.Processes.Argument ("release-2"),
              Project_Tools.Processes.Argument ("--format"), Project_Tools.Processes.Argument ("json"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""metric-trends""");
@@ -274,6 +460,98 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("report"), Project_Tools.Processes.Argument ("--format"),
              Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--no-color")]));
+      Run_CLI
+        ("filtered JSON report",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("report"), Project_Tools.Processes.Argument ("--format"),
+             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--project"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--since"),
+             Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """schema_version"": 2");
+      Run_CLI
+        ("portfolio status JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""portfolio-status""");
+      for Filter of Project_Tools.Processes.Argument_Items'
+        ([Project_Tools.Processes.Argument ("unhealthy"),
+          Project_Tools.Processes.Argument ("regressed")])
+      loop
+         Run_CLI
+           ("portfolio status " & To_String (Filter),
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--only"), Filter,
+                Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+                Project_Tools.Processes.Argument (DB_Path)]),
+            Expected_Text => """kind"": ""portfolio-status""");
+      end loop;
+      Run_CLI
+        ("portfolio status stale",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--only"),
+             Project_Tools.Processes.Argument ("stale"), Project_Tools.Processes.Argument ("--since"),
+             Project_Tools.Processes.Argument ("2099-01-01T00:00:00Z"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""portfolio-status""");
+      Run_CLI
+        ("database statistics",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("stats"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "total rows");
+      Run_CLI
+        ("database statistics JSON",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("stats"),
+             Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """kind"": ""database-statistics""");
+      Run_CLI
+        ("database compact",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("compact"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "database compacted");
+      for Shell of Project_Tools.Processes.Argument_Items'
+        ([Project_Tools.Processes.Argument ("bash"), Project_Tools.Processes.Argument ("zsh"),
+          Project_Tools.Processes.Argument ("fish")])
+      loop
+         Run_CLI
+           ("completion " & To_String (Shell),
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("completion"), Shell]),
+            Expected_Text => "ada-quality");
+      end loop;
+      Run_CLI
+        ("database backup",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("backup"),
+             Project_Tools.Processes.Argument (Backup_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "backup created");
+      Run_CLI
+        ("database export",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("export"),
+             Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => "export created");
+      Run_CLI
+        ("database restore",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("restore"),
+             Project_Tools.Processes.Argument (Backup_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (Restored_Path)]),
+         Expected_Text => "restored ");
+      Run_CLI
+        ("restored database check",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("check"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Restored_Path)]),
+         Expected_Text => "integrity check passed");
       for Query of Queries loop
          Run_CLI
            (Ada.Strings.Unbounded.To_String (Query),
@@ -492,13 +770,13 @@ procedure Exercise_CLI is
             Project_Tools.Processes.Arguments
               ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
                 Project_Tools.Processes.Argument (DB_Path)]),
-            Expected_Text => "project 2 interrupted");
+            Expected_Text => "interrupted");
          Run_CLI
            ("completed final project",
             Project_Tools.Processes.Arguments
               ([Project_Tools.Processes.Argument ("status"), Project_Tools.Processes.Argument ("--database"),
                 Project_Tools.Processes.Argument (DB_Path)]),
-            Expected_Text => "project 3 completed");
+            Expected_Text => "completed");
       end Exercise_Batch_Continuation;
 begin
       Exercise_Happy_Path;

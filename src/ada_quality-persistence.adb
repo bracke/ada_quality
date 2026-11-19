@@ -370,6 +370,10 @@ package body Ada_Quality.Persistence is
    begin
       if Event_Kind = "started" and then Event_State = "running" then
          return Started_Lifecycle_Event;
+      elsif State = Ada_Quality.Types.Assessment_Completed and then
+        Event_Kind = "alias" and then Event_State = "alias"
+      then
+         return Alias_Event;
       elsif State in Ada_Quality.Types.Assessment_Completed | Ada_Quality.Types.Assessment_Invalid and then
         Event_Kind = "published" and then
         Event_State = (if State = Ada_Quality.Types.Assessment_Completed then "completed" else "invalid")
@@ -388,23 +392,41 @@ package body Ada_Quality.Persistence is
      (State          : Ada_Quality.Types.Assessment_Status;
       Started_Count  : Natural;
       Terminal_Count : Natural;
+      Alias_Count    : Natural;
       Event_Count    : Natural) return Boolean
    is
    begin
       case State is
          when Ada_Quality.Types.Assessment_Running =>
-            return Started_Count = 1 and then Terminal_Count = 0 and then Event_Count = 1;
+            return Started_Count = 1 and then Terminal_Count = 0 and then Alias_Count = 0 and then Event_Count = 1;
          when Ada_Quality.Types.Assessment_Completed |
               Ada_Quality.Types.Assessment_Invalid |
               Ada_Quality.Types.Assessment_Interrupted =>
             return Started_Count <= 1 and then Terminal_Count = 1 and then
-              Event_Count = Started_Count + Terminal_Count;
+              (if State = Ada_Quality.Types.Assessment_Completed then True else Alias_Count = 0) and then
+              Event_Count = Started_Count + Terminal_Count + Alias_Count;
       end case;
    end Lifecycle_Counts_Are_Valid;
 
+   function Assessment_Alias_Is_Valid (Name : String) return Boolean is
+   begin
+      if Name'Length not in 1 .. 64 or else Name (Name'First) not in 'a' .. 'z' then
+         return False;
+      end if;
+      for Character of Name loop
+         if Character not in 'a' .. 'z' | '0' .. '9' | '.' | '_' | '-' then
+            return False;
+         end if;
+      end loop;
+      return True;
+   end Assessment_Alias_Is_Valid;
+
    function Event_Row_Is_Valid (Row : Entity) return Boolean is
      (Row.Parent_Id > 0 and then Length (Row.Kind) > 0 and then Row.Active and then
-      S (Row.State) in "running" | "completed" | "invalid" | "interrupted");
+      ((S (Row.Kind) = "alias" and then S (Row.State) = "alias" and then
+        Assessment_Alias_Is_Valid (S (Row.Payload))) or else
+       (S (Row.Kind) /= "alias" and then
+        S (Row.State) in "running" | "completed" | "invalid" | "interrupted")));
 
    function Result_Payload (Item : Ada_Quality.Types.Indicator_Result) return String is
      ("applicable=" & (if Item.Applicable then "true" else "false") & LF &

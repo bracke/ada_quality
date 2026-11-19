@@ -145,6 +145,43 @@ package body Ada_Quality.Indicators is
    function Direction_Of (Id : Indicator_Id) return Metric_Direction is
      (Descriptors (Id).Trend);
 
+   Remediations : constant array (Indicator_Id) of access constant String :=
+     [STR_01 => new String'("Add a valid alire.toml with the required crate name and version."),
+      STR_02 => new String'("Add a usable GPR project file and declare it in the manifest."),
+      STR_03 => new String'("Use the conventional src, tests, and documentation layout."),
+      STR_04 => new String'("Add an AUnit tests subcrate under tests/."),
+      STR_05 => new String'("Provide the release-check tooling required by the quality contract."),
+      BLD_01 => new String'("Fix compilation errors in the normal project build."),
+      BLD_02 => new String'("Fix errors exposed by the validation build configuration."),
+      BLD_03 => new String'("Resolve compiler warnings or narrowly document an intentional exception."),
+      BLD_04 => new String'("Run with a supported, discoverable GNAT toolchain."),
+      TST_01 => new String'("Fix the AUnit suite so every registered test completes successfully."),
+      TST_02 => new String'("Register executable AUnit test routines in the suite."),
+      TST_03 => new String'("Add tests for uncovered production paths until policy coverage is met."),
+      TST_04 => new String'("Remove nondeterministic output, state, ordering, or generated artifacts."),
+      SRC_01 => new String'("Wrap overlong lines and apply the configured source formatting rules."),
+      SRC_02 => new String'("Rename Ada source files to match their declared library units."),
+      SRC_03 => new String'("Split complex decision logic or add a narrowly scoped audited waiver."),
+      SRC_04 => new String'("Remove tabs, trailing whitespace, and other source hygiene findings."),
+      SRC_05 => new String'("Handle specific exceptions or mark and justify an audited boundary."),
+      SRC_06 => new String'("Split oversized source files or add a narrowly scoped audited waiver."),
+      DOC_01 => new String'("Document every public declaration with useful API comments."),
+      DOC_02 => new String'("Resolve GNATdoc generation errors and documentation warnings."),
+      DOC_03 => new String'("Add the required project, contributor, security, and release documents."),
+      DEP_01 => new String'("Correct dependency constraints until Alire resolves the dependency graph."),
+      DEP_02 => new String'("Replace local path pins with reproducible published dependencies."),
+      DEP_03 => new String'("Regenerate the lock file so it matches direct manifest dependencies."),
+      SEC_01 => new String'("Remove embedded credentials and load secrets from a protected provider."),
+      SEC_02 => new String'("Invoke programs with structured arguments instead of a command shell."),
+      SEC_03 => new String'("Remove forbidden artifacts and symbolic links from the project tree."),
+      REL_01 => new String'("Run the release checker and resolve every reported gate failure."),
+      REL_02 => new String'("Align the manifest SPDX expression with the repository license text."),
+      REL_03 => new String'("Complete the canonical release metadata in alire.toml."),
+      REL_04 => new String'("Prevent source mutation while an assessment is running."),
+      PRF_01 => new String'("Resolve applicable SPARK proof checks or supply a dedicated proof project.")];
+
+   function Remediation (Id : Indicator_Id) return String is (Remediations (Id).all);
+
    function Validate_Acyclic return Boolean is
       type Visit_State is (Unseen, Visiting, Complete);
       State : array (Indicator_Id) of Visit_State := [others => Unseen];

@@ -11,6 +11,7 @@ Transaction boundaries:
 - terminal run state, 33 results, measurements, findings, all execution records, and publication event commit together;
 - any publication exception rolls back the active transaction;
 - recovery state and its recovery event commit together and roll back together;
+- completed-run aliases append as globally unique validated events without rewriting terminal evidence;
 - completed/interrupted/invalid runs cannot be republished.
 
 The integrity fixture injects failures before schema-creation, assessment-start, publication, recovery, and migration
@@ -38,6 +39,6 @@ measurement fields would otherwise form a valid in-memory state.
 Assessments whose structure prevents a toolchain query publish the explicit single-line identity
 `toolchain-unavailable`; they never fall back to an empty or structurally invalid fingerprint.
 
-Opening version 1 atomically converts legacy assessment fingerprint payloads; opening version 2 preserves its rows.
-Both advance metadata to version 3 in the same migration transaction. Migration failure leaves the prior version
+Opening version 1 atomically converts legacy assessment fingerprint payloads; versions 2 and 3 preserve their rows.
+All advance metadata to version 4 in the same migration transaction. Migration failure leaves the prior version
 intact for retry. Silently rewriting an unknown version is forbidden.

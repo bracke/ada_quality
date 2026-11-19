@@ -28,7 +28,7 @@ package Ada_Quality.Reporting is
    Limit_Error     : exception;
    --  Raised when the snapshot exceeds a configured resource limit.
 
-   Supported_Schema : constant Positive := 3;
+   Supported_Schema : constant Positive := 4;
    --  The only logical schema version a reporting session accepts.
 
    type Load_Limits is record
@@ -118,6 +118,30 @@ package Ada_Quality.Reporting is
      (Index_Type => Positive, Element_Type => Project_Record);
    --  Projects in ascending identity order.
 
+   type Assessment_Alias is record
+      Name   : UString;
+      Run_Id : Positive;
+   end record;
+   --  Globally unique human-readable name assigned to a completed assessment.
+
+   package Alias_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Assessment_Alias);
+
+   type Snapshot_Statistics is record
+      Projects     : Natural := 0;
+      Assessments  : Natural := 0;
+      Results      : Natural := 0;
+      Measurements : Natural := 0;
+      Findings     : Natural := 0;
+      Executions   : Natural := 0;
+      Events       : Natural := 0;
+      Total_Rows   : Natural := 0;
+      Text_Bytes   : Long_Long_Integer := 0;
+      Row_Limit    : Positive := 2_500_000;
+      Text_Limit   : Positive := 268_435_456;
+   end record;
+   --  Persisted row and text consumption measured while loading the validated snapshot.
+
    type Execution_Record is record
       Id            : Positive;
       Run_Id        : Positive;
@@ -181,7 +205,7 @@ package Ada_Quality.Reporting is
    --  @param Limits Resource limits.
    --  @exception Reporting_Error Path is empty, missing, not a regular file, or unreadable.
    --  @exception Busy_Error A writer holds the database lock.
-   --  @exception Schema_Error The schema is missing, incomplete, or not version 3.
+   --  @exception Schema_Error The schema is missing, incomplete, or not version 4.
    --  @exception Integrity_Error Evidence is corrupt or the database requires recovery.
    --  @exception Limit_Error A load limit is exceeded.
 
@@ -229,6 +253,15 @@ package Ada_Quality.Reporting is
    --  Return a deterministic digest of every loaded row.
    --  @param Item Open session.
    --  @return Text of the form `fnv1a64:` followed by sixteen lowercase hexadecimal digits.
+
+   function Statistics (Item : Session) return Snapshot_Statistics;
+   --  Return row/text consumption for the loaded snapshot and its configured limits.
+
+   function Aliases (Item : Session; Run_Id : Natural := 0) return Alias_Vectors.Vector;
+   --  Return aliases in assessment/event order, optionally restricted to one assessment.
+
+   function Resolve_Assessment (Item : Session; Reference : String) return Positive;
+   --  Resolve a positive numeric identity or canonical assessment alias.
 
    function History_Items
      (Item : Session; Project_Id : Natural := 0) return Ada_Quality.History_Data.History_Vectors.Vector;
@@ -398,6 +431,7 @@ private
       Opened     : Boolean := False;
       Version    : Positive := Supported_Schema;
       Identity   : UString;
+      Stats      : Snapshot_Statistics;
       All_Projects : Project_Vectors.Vector;
       All_Runs   : Run_Vectors.Vector;
       Run_Index  : Run_Index_Maps.Map;

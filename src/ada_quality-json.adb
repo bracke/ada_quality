@@ -5,6 +5,7 @@ with Jsonlib.Serializers;
 package body Ada_Quality.JSON is
    use Ada.Strings.Unbounded;
    use Ada_Quality.Types;
+   use type Ada_Quality.Indicators.Indicator_Category;
    use Jsonlib.Documents;
 
    procedure Populate_Assessment
@@ -143,10 +144,14 @@ package body Ada_Quality.JSON is
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;
       Pretty           : Boolean := False;
-      Max_Output_Bytes : Positive := 268_435_456) return String
+      Max_Output_Bytes : Positive := 268_435_456;
+      Project_Id       : Natural := 0;
+      Since_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False);
+      Until_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False)) return String
    is
    begin
-      return Ada_Quality.Archive_JSON.Render (Item, Pretty, Max_Output_Bytes);
+      return Ada_Quality.Archive_JSON.Render
+        (Item, Pretty, Max_Output_Bytes, Project_Id, Since_Time, Until_Time);
    end Render_Archive;
 
    function Render_Trend
@@ -293,4 +298,270 @@ package body Ada_Quality.JSON is
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Comparison;
+
+   function Render_Status
+     (Item     : Ada_Quality.Reporting.Session;
+      Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Pretty   : Boolean := False) return String
+   is
+      Doc      : Document;
+      Root     : constant Node := Doc.New_Object;
+      Nodes    : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("portfolio-status"));
+      for Project of Projects loop
+         declare
+            Object     : constant Node := Doc.New_Object;
+            Runs       : constant Ada_Quality.Reporting.Run_Vectors.Vector :=
+              Ada_Quality.Reporting.Runs (Item, Project.Id);
+            Comparison : constant Ada_Quality.Reporting.Project_Comparison :=
+              Ada_Quality.Reporting.Compare_Project (Item, Project.Id);
+         begin
+            Doc.Insert (Object, "project_id", Doc.New_Integer (Long_Long_Integer (Project.Id)));
+            Doc.Insert (Object, "path", Doc.New_String (To_String (Project.Path)));
+            Doc.Insert (Object, "enabled", Doc.New_Boolean (Project.Enabled));
+            if Runs.Is_Empty then
+               Doc.Insert (Object, "latest_assessment_id", Doc.New_Integer (0));
+               Doc.Insert (Object, "latest_status", Doc.New_String ("never"));
+               Doc.Insert (Object, "started_at", Doc.New_String (""));
+            else
+               declare
+                  Run : constant Ada_Quality.Reporting.Run_Record := Runs.Last_Element;
+               begin
+                  Doc.Insert
+                    (Object, "latest_assessment_id", Doc.New_Integer (Long_Long_Integer (Run.Id)));
+                  Doc.Insert (Object, "latest_status", Doc.New_String (Status_Image (Run.State)));
+                  Doc.Insert
+                    (Object, "started_at", Doc.New_String (Ada_Quality.Reporting.Image (Run.Started_At)));
+               end;
+            end if;
+            Doc.Insert
+              (Object, "comparison_status",
+               Doc.New_String (Ada_Quality.History.Image (Comparison.Selection.Status)));
+            Doc.Insert
+              (Object, "regression_count",
+               Doc.New_Integer (Long_Long_Integer (Comparison.Changes.Length)));
+            Doc.Append (Nodes, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "projects", Nodes);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Status;
+
+   function Render_Status
+     (Item : Ada_Quality.Reporting.Session; Pretty : Boolean := False) return String is
+   begin
+      return Render_Status
+        (Item, Ada_Quality.Reporting.Projects (Item), Pretty);
+   end Render_Status;
+
+   function Render_Scan
+     (Project_Id : Positive;
+      Metrics    : Ada_Quality.Checks.Source_Analysis;
+      Pretty     : Boolean := False) return String
+   is
+      Doc      : Document;
+      Root     : constant Node := Doc.New_Object;
+      Counts   : constant Node := Doc.New_Object;
+      Findings : constant Node := Doc.New_Array;
+      Violations : constant Natural :=
+        Metrics.Long_Lines + Metrics.Hygiene_Errors + Metrics.Naming_Errors +
+        Metrics.Oversized_Files + Metrics.Undocumented_Specs + Metrics.Broad_Handlers +
+        Metrics.Complexity_Violations + Metrics.Secret_Matches + Metrics.Unsafe_Processes;
+
+      procedure Count (Name : String; Value : Natural) is
+      begin
+         Doc.Insert (Counts, Name, Doc.New_Integer (Long_Long_Integer (Value)));
+      end Count;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("changed-source-scan"));
+      Doc.Insert (Root, "project_id", Doc.New_Integer (Long_Long_Integer (Project_Id)));
+      Count ("files", Metrics.File_Count);
+      Count ("lines", Metrics.Lines);
+      Count ("long_lines", Metrics.Long_Lines);
+      Count ("hygiene_errors", Metrics.Hygiene_Errors);
+      Count ("naming_errors", Metrics.Naming_Errors);
+      Count ("oversized_files", Metrics.Oversized_Files);
+      Count ("undocumented_specs", Metrics.Undocumented_Specs);
+      Count ("broad_handlers", Metrics.Broad_Handlers);
+      Count ("complexity_violations", Metrics.Complexity_Violations);
+      Count ("secret_matches", Metrics.Secret_Matches);
+      Count ("unsafe_processes", Metrics.Unsafe_Processes);
+      Count ("violations", Violations);
+      Doc.Insert (Root, "counts", Counts);
+      for Finding of Metrics.Findings loop
+         declare
+            Object : constant Node := Doc.New_Object;
+         begin
+            Doc.Insert (Object, "indicator", Doc.New_String (Image (Finding.Indicator)));
+            Doc.Insert (Object, "rule", Doc.New_String (To_String (Finding.Rule)));
+            Doc.Insert (Object, "severity", Doc.New_String (Severity'Image (Finding.Level)));
+            Doc.Insert (Object, "message", Doc.New_String (To_String (Finding.Message)));
+            Doc.Insert (Object, "path", Doc.New_String (To_String (Finding.Relative_Path)));
+            Doc.Insert (Object, "line", Doc.New_Integer (Long_Long_Integer (Finding.Line)));
+            Doc.Insert (Object, "fingerprint", Doc.New_String (To_String (Finding.Fingerprint)));
+            Doc.Append (Findings, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "findings", Findings);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Scan;
+
+   function Render_Projects
+     (Items : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("project-list"));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "id", Doc.New_Integer (Long_Long_Integer (Item.Id)));
+            Doc.Insert (Object, "path", Doc.New_String (To_String (Item.Path)));
+            Doc.Insert (Object, "enabled", Doc.New_Boolean (Item.Enabled));
+            Doc.Insert (Object, "removed", Doc.New_Boolean (Item.Removed));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "projects", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Projects;
+
+   function Render_Discovery
+     (Items : Discovery_Vectors.Vector; Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("project-discovery"));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "path", Doc.New_String (To_String (Item.Path)));
+            Doc.Insert (Object, "project_id", Doc.New_Integer (Long_Long_Integer (Item.Project_Id)));
+            Doc.Insert
+              (Object, "status", Doc.New_String
+                 ((case Item.Status is
+                     when Already_Registered => "registered",
+                     when Discovered => "found",
+                     when Added => "added")));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "projects", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Discovery;
+
+   function Render_Aliases
+     (Items : Ada_Quality.Reporting.Alias_Vectors.Vector;
+      Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("assessment-aliases"));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "name", Doc.New_String (To_String (Item.Name)));
+            Doc.Insert (Object, "assessment_id", Doc.New_Integer (Long_Long_Integer (Item.Run_Id)));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "aliases", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Aliases;
+
+   function Render_Statistics
+     (Item : Ada_Quality.Reporting.Snapshot_Statistics;
+      Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      procedure Add (Name : String; Value : Long_Long_Integer) is
+      begin
+         Doc.Insert (Root, Name, Doc.New_Integer (Value));
+      end Add;
+   begin
+      Add ("schema_version", 1);
+      Doc.Insert (Root, "kind", Doc.New_String ("database-statistics"));
+      Add ("projects", Long_Long_Integer (Item.Projects));
+      Add ("assessments", Long_Long_Integer (Item.Assessments));
+      Add ("results", Long_Long_Integer (Item.Results));
+      Add ("measurements", Long_Long_Integer (Item.Measurements));
+      Add ("findings", Long_Long_Integer (Item.Findings));
+      Add ("executions", Long_Long_Integer (Item.Executions));
+      Add ("events", Long_Long_Integer (Item.Events));
+      Add ("total_rows", Long_Long_Integer (Item.Total_Rows));
+      Add ("text_bytes", Item.Text_Bytes);
+      Add ("row_limit", Long_Long_Integer (Item.Row_Limit));
+      Add ("text_limit", Long_Long_Integer (Item.Text_Limit));
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Statistics;
+
+   function Render_Indicators
+     (Filter_Category : Boolean := False;
+      Category        : Ada_Quality.Indicators.Indicator_Category := Ada_Quality.Indicators.Structure;
+      Pretty          : Boolean := False) return String
+   is
+      Doc      : Document;
+      Root     : constant Node := Doc.New_Object;
+      Items    : constant Node := Doc.New_Array;
+      Registry : constant Ada_Quality.Indicators.Descriptor_Array := Ada_Quality.Indicators.Registry;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("indicator-catalog"));
+      for Id in Indicator_Id loop
+         declare
+            Descriptor : constant Ada_Quality.Indicators.Indicator_Descriptor := Registry (Id);
+         begin
+            if not Filter_Category or else Descriptor.Category = Category then
+               declare
+                  Object       : constant Node := Doc.New_Object;
+                  Prerequisites : constant Node := Doc.New_Array;
+               begin
+                  Doc.Insert (Object, "id", Doc.New_String (Image (Id)));
+                  Doc.Insert (Object, "name", Doc.New_String (Descriptor.Name.all));
+                  Doc.Insert
+                    (Object, "category",
+                     Doc.New_String (Ada_Quality.Indicators.Indicator_Category'Image (Descriptor.Category)));
+                  Doc.Insert (Object, "version", Doc.New_Integer (Long_Long_Integer (Descriptor.Version)));
+                  Doc.Insert
+                    (Object, "measurement_version",
+                     Doc.New_Integer (Long_Long_Integer (Descriptor.Measurement_Version)));
+                  Doc.Insert (Object, "unit", Doc.New_String (Descriptor.Unit_Name.all));
+                  Doc.Insert (Object, "gate", Doc.New_Boolean (Descriptor.Gate));
+                  Doc.Insert
+                    (Object, "trend",
+                     Doc.New_String (Ada_Quality.Indicators.Metric_Direction'Image (Descriptor.Trend)));
+                  for Dependency in Indicator_Id loop
+                     if Descriptor.Prerequisites (Dependency) then
+                        Doc.Append (Prerequisites, Doc.New_String (Image (Dependency)));
+                     end if;
+                  end loop;
+                  Doc.Insert (Object, "prerequisites", Prerequisites);
+                  Doc.Insert
+                    (Object, "remediation", Doc.New_String (Ada_Quality.Indicators.Remediation (Id)));
+                  Doc.Append (Items, Object);
+               end;
+            end if;
+         end;
+      end loop;
+      Doc.Insert (Root, "indicators", Items);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Indicators;
 end Ada_Quality.JSON;

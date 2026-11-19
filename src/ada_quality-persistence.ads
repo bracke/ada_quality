@@ -32,8 +32,8 @@ private package Ada_Quality.Persistence is
    Metadata_Table          : constant Positive := 8;
    --  Schema metadata table index.
 
-   Current_Schema_Version : constant Positive := 3;
-   --  Logical schema version written by this implementation.
+   Current_Schema_Version : constant Positive := 4;
+   --  Logical schema version written by this implementation. Version 4 adds validated append-only alias events.
 
    Lossless_Evidence_Format : constant String := "3";
    --  Run payload marker for escaped key-value result and finding payloads.
@@ -211,7 +211,8 @@ private package Ada_Quality.Persistence is
       State   : out Ada_Quality.Types.Assessment_Status) return Boolean;
    --  Decode and validate one assessment row independently of project ownership and child cardinality.
 
-   type Lifecycle_Event_Class is (Invalid_Lifecycle_Event, Started_Lifecycle_Event, Terminal_Lifecycle_Event);
+   type Lifecycle_Event_Class is
+     (Invalid_Lifecycle_Event, Started_Lifecycle_Event, Terminal_Lifecycle_Event, Alias_Event);
    --  Meaning of one event relative to its owning assessment state.
 
    function Classify_Lifecycle_Event
@@ -224,11 +225,18 @@ private package Ada_Quality.Persistence is
      (State          : Ada_Quality.Types.Assessment_Status;
       Started_Count  : Natural;
       Terminal_Count : Natural;
+      Alias_Count    : Natural;
       Event_Count    : Natural) return Boolean;
    --  Validate lifecycle-event cardinality for one assessment state.
 
    function Event_Row_Is_Valid (Row : Entity) return Boolean;
    --  Validate the invariant fields of one lifecycle-event row.
+
+   function Assessment_Alias_Is_Valid (Name : String) return Boolean;
+   --  Validate a canonical, nonnumeric assessment alias.
+   --  @param Name Candidate alias.
+   --  @return True for 1..64 lowercase ASCII letters, digits, dots, underscores, or hyphens,
+   --  beginning with a letter.
 
    function Result_Payload (Item : Ada_Quality.Types.Indicator_Result) return String;
    --  Encode applicability, summary, and evidence losslessly.

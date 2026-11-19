@@ -2,25 +2,37 @@
 
 ```
 ada-quality project add PATH
-ada-quality project list
+ada-quality project discover ROOT [--add] [--format text|json]
+ada-quality project list [--format text|json]
 ada-quality project show ID
 ada-quality project enable|disable|remove ID
+ada-quality project relocate ID PATH
 ada-quality check --all | --project ID [--json]
-ada-quality assessment show RUN_ID [--format text|json|sarif|junit]
-ada-quality assessment diff BASELINE_ID CURRENT_ID [--format text|json]
-ada-quality status
+ada-quality scan --project ID --changed-file PATH [--changed-file PATH ...] [--format text|json|sarif]
+ada-quality scan --project ID --files-from FILE|- [--format text|json|sarif]
+ada-quality assessment show RUN_REF [--format text|json|sarif|junit]
+ada-quality assessment diff BASELINE_REF CURRENT_REF [--format text|json]
+ada-quality assessment alias NAME RUN_ID
+ada-quality assessment aliases [RUN_REF] [--format text|json]
+ada-quality status [--only unhealthy|stale|regressed] [--since TIME] [--json]
 ada-quality findings
-ada-quality regressions [--project ID] [--current RUN_ID]
-ada-quality regressions --baseline RUN_ID --current RUN_ID
+ada-quality regressions [--project ID] [--current RUN_REF] [--fail-on-regression]
+ada-quality regressions --baseline RUN_REF --current RUN_REF [--fail-on-regression]
 ada-quality history [--project ID] [--status STATE] [--limit N]
                     [--since YYYY-MM-DDTHH:MM:SSZ] [--until YYYY-MM-DDTHH:MM:SSZ] [--json]
 ada-quality trend --project ID (--indicator TST-03 | --all)
-                  [--from-run ID] [--to-run ID]
+                  [--from-run RUN_REF] [--to-run RUN_REF]
                   [--since YYYY-MM-DDTHH:MM:SSZ] [--until YYYY-MM-DDTHH:MM:SSZ]
                   [--format text|json|csv]
-ada-quality report --format json
+ada-quality explain INDICATOR_ID
+ada-quality indicator list [--category CATEGORY] [--format text|json]
+ada-quality report --format json [--project ID] [--since TIME] [--until TIME]
 ada-quality policy validate|show
-ada-quality database init|check|recover
+ada-quality database init|check|recover|compact
+ada-quality database stats [--format text|json]
+ada-quality database backup|export DESTINATION
+ada-quality database restore SOURCE --database DESTINATION
+ada-quality completion bash|zsh|fish
 ```
 
 Global options are `--database PATH`, `--policy PATH`, `--no-color`, and `--color never`. Environment variables
@@ -44,6 +56,36 @@ limit. Filtered results remain in ascending assessment-ID order. `--json` emits 
 `trend --all` exports every registry metric with a defined regression direction. Run-ID and finished-time bounds are
 inclusive. Single-indicator JSON remains metric-trend-v1; `--all --format json` emits metric-trends-v1. CSV uses the
 stable columns `project_id,indicator,unit,run_id,value` and emits one header even when the selected range is empty.
+
+`scan` runs native source checks only for the named project-relative Ada files,
+which makes it suitable for a changed-file preflight hook. `--files-from` reads one path per line; `-` reads standard
+input, avoiding shell argument-length limits. `project discover ROOT` recursively reports Alire crates while skipping
+generated directories and links; `--add` registers new discoveries. `project relocate`
+revalidates a new crate root while preserving the project ID and assessment
+history. `explain` prints registry metadata, prerequisites, and remediation. `indicator list` exposes the discoverable
+registry, optionally filtered by category; JSON uses indicator-catalog-v1.
+
+Scan JSON uses changed-source-scan-v1; SARIF uses the same finding contract as full assessments. Project list,
+discovery, alias listing, and database statistics have versioned JSON forms. Filtered archive reports retain only
+selected assessment evidence and omit comparisons unless every referenced run is selected. Trend run bounds accept
+numeric IDs or aliases. `status --only stale` requires `--since` and selects projects with no newer timestamp.
+
+`status` is a latest-per-project portfolio view rather than a history alias. It reports enabled state, the newest run,
+comparison availability, and regression count; JSON uses portfolio-status-v1. `regressions --fail-on-regression`
+turns comparison into a CI gate: exit 0 is comparable and clean, exit 1 means regressions, and exit 3 means comparison
+is unavailable. In a multi-project gate, unavailable evidence takes precedence over regressions.
+
+`assessment alias NAME RUN_ID` adds a globally unique append-only name to a completed assessment. Names begin with a
+lowercase letter and contain at most 64 lowercase letters, digits, dots, underscores, or hyphens. Numeric IDs and
+aliases are accepted by all run selectors, including trend bounds. Aliases never rewrite the
+immutable assessment evidence.
+
+`database backup` creates a verified physical backup directory, `export`
+creates a verified database-native logical export, and `restore` creates a new
+database from a physical backup. Existing destinations are not overwritten. `database stats` reports per-table row
+counts plus total row and UTF-8 text consumption against the reporting snapshot limits. `database compact` performs
+an integrity check before and after transactional vacuuming. `completion` prints a definition for the named shell;
+the roff manual is installed from `docs/ada-quality.1`.
 
 Exit status meanings are:
 

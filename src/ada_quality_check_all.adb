@@ -58,6 +58,9 @@ begin
    Check.Require_File ("ada_quality.gpr");
    Check.Require_File ("quality-policy.toml");
    Check.Require_File ("README.md");
+   Check.Require_File ("CHANGELOG.md");
+   Check.Require_File ("CONTRIBUTING.md");
+   Check.Require_File ("SECURITY.md");
    Check.Require_File ("LICENSE");
    Check.Require_File ("docs/ARCHITECTURE.md");
    Check.Require_File ("docs/DATABASE.md");
@@ -70,6 +73,14 @@ begin
    Check.Require_File ("docs/metric-trends.schema.json");
    Check.Require_File ("docs/assessment-history.schema.json");
    Check.Require_File ("docs/assessment-comparison.schema.json");
+   Check.Require_File ("docs/portfolio-status.schema.json");
+   Check.Require_File ("docs/indicator-catalog.schema.json");
+   Check.Require_File ("docs/changed-source-scan.schema.json");
+   Check.Require_File ("docs/project-list.schema.json");
+   Check.Require_File ("docs/project-discovery.schema.json");
+   Check.Require_File ("docs/assessment-aliases.schema.json");
+   Check.Require_File ("docs/database-statistics.schema.json");
+   Check.Require_File ("docs/ada-quality.1");
    for Name of Required_Phase_Documents loop
       Check.Require_File ("docs/" & Name.all);
    end loop;
@@ -116,6 +127,7 @@ begin
          Args => No_Arguments);
    end;
    Ada.Text_IO.Put_Line ("ada_quality release structure: OK");
+   Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Success);
 exception
    when Error : Coverage_Stale =>
       Ada.Text_IO.Put_Line

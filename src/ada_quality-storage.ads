@@ -87,6 +87,32 @@ package Ada_Quality.Storage is
    --  @param Item Open store.
    --  @param Id Project identity.
 
+   procedure Relocate_Project (Item : in out Store; Id : Positive; Path : String);
+   --  Change a registered project's root without changing its identity or history.
+   --  The replacement path is validated with the same rules as a newly added project.
+   --  @param Item Open store.
+   --  @param Id Project identity.
+   --  @param Path New project root.
+
+   procedure Backup (Item : in out Store; Destination : String);
+   --  Create and verify a physical backup directory for the open store.
+   --  @param Item Open store.
+   --  @param Destination New backup directory.
+
+   procedure Export (Item : in out Store; Destination : String);
+   --  Create and verify a database-native logical export file.
+   --  @param Item Open store.
+   --  @param Destination New logical export file.
+
+   procedure Restore (Source, Destination : String);
+   --  Restore and verify a physical backup into a new database file.
+   --  @param Source Existing physical backup directory.
+   --  @param Destination New database file.
+
+   procedure Compact (Item : in out Store);
+   --  Reclaim unused database pages inside one exclusive transaction.
+   --  @param Item Open store.
+
    function Start_Assessment
      (Item               : in out Store;
       Project_Id         : Positive;
@@ -140,6 +166,12 @@ package Ada_Quality.Storage is
    --  @param Item Open store.
    --  @param Run_Id Optional assessment filter; zero selects every assessment.
    --  @return Matching event rows.
+
+   procedure Add_Assessment_Alias (Item : in out Store; Run_Id : Positive; Name : String);
+   --  Assign one globally unique, append-only alias to a completed assessment.
+   --  @param Item Open store.
+   --  @param Run_Id Completed assessment identity.
+   --  @param Name Canonical lowercase alias.
 
    procedure Interrupt_Assessment (Item : in out Store; Run_Id : Positive; Reason : String);
    --  Atomically mark a running assessment interrupted and record its reason.

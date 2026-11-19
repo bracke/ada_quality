@@ -13,7 +13,8 @@ begin
         Registry (Expected).Measurement_Version = 1 and then
         Registry (Expected).Unit_Name.all = Ada_Quality.Indicators.Measurement_Unit (Expected) and then
         Registry (Expected).Gate = Ada_Quality.Indicators.Is_Gate (Expected) and then
-        Registry (Expected).Trend = Ada_Quality.Indicators.Direction_Of (Expected),
+        Registry (Expected).Trend = Ada_Quality.Indicators.Direction_Of (Expected) and then
+        Ada_Quality.Indicators.Remediation (Expected)'Length > 0,
         "registry descriptors preserve strong IDs and versions");
    end loop;
    for Tool in Ada_Quality.Tools.Tool_Id loop

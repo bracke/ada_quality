@@ -4,12 +4,17 @@ procedure Run_Storage_Test is
 begin
 declare
    Path  : constant String := Fixture_Root & "/storage_test.db";
+   Backup_Path : constant String := Fixture_Root & "/storage_test.backup";
+   Export_Path : constant String := Fixture_Root & "/storage_test.export";
+   Restored_Path : constant String := Fixture_Root & "/storage_test_restored.db";
+   Relocated_Root : constant String := Fixture_Root & "/relocated-project";
    Root  : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
    Store : Ada_Quality.Storage.Store;
    Pid   : Positive;
    Run_Id : Positive;
    Count  : Natural;
+   First_Alias_Event : Positive := 1;
    Value  : Assessment;
    Raised : Boolean := False;
 
@@ -31,9 +36,13 @@ declare
    end Set_Coverage;
 begin
    if Ada.Directories.Exists (Path) then Ada.Directories.Delete_File (Path); end if;
+   if Ada.Directories.Exists (Backup_Path) then Project_Tools.Files.Delete_Tree (Backup_Path); end if;
+   if Ada.Directories.Exists (Export_Path) then Ada.Directories.Delete_File (Export_Path); end if;
+   if Ada.Directories.Exists (Restored_Path) then Ada.Directories.Delete_File (Restored_Path); end if;
+   if Ada.Directories.Exists (Relocated_Root) then Project_Tools.Files.Delete_Tree (Relocated_Root); end if;
    Ada_Quality.Storage.Open (Store, Path);
    Ada_Quality.Storage.Check (Store);
-   Assert (Ada_Quality.Storage.Schema_Version (Store) = 3,
+   Assert (Ada_Quality.Storage.Schema_Version (Store) = 4,
      "new databases use the current migrated schema version");
    Raised := False;
    begin
@@ -50,6 +59,15 @@ begin
    Assert (Raised, "invalid projects are rejected before identifier reservation");
    Pid := Ada_Quality.Storage.Add_Project (Store, Root);
    Assert (Pid = 1, "first persisted project ID is one");
+   Ada.Directories.Create_Path (Relocated_Root);
+   Project_Tools.Files.Write_Text_File
+     (Relocated_Root & "/alire.toml", "name = ""relocated_fixture""" & ASCII.LF &
+      "version = ""0.1.0""" & ASCII.LF);
+   Ada_Quality.Storage.Relocate_Project (Store, Pid, Relocated_Root);
+   Assert (To_String (Ada_Quality.Storage.Project (Store, Pid).Path) =
+     Ada.Directories.Full_Name (Relocated_Root),
+     "project relocation preserves the project identity and replaces its canonical path");
+   Ada_Quality.Storage.Relocate_Project (Store, Pid, Root);
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
    Assert (Ada_Quality.Storage.Project (Store, 1).Enabled, "project survives close and reopen");
@@ -140,6 +158,29 @@ begin
    end;
    Assert (Ada_Quality.Storage.Publish (Store, Value) = Run_Id,
      "publication finalizes the pre-created running assessment");
+   Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1");
+   Assert
+     (Ada_Quality.Storage.Events (Store, Run_Id).Length = 3,
+      "a completed assessment accepts an append-only alias event");
+   First_Alias_Event := Ada_Quality.Storage.Events (Store, Run_Id).Last_Element.Id;
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1");
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "assessment aliases are globally unique");
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "Invalid Alias");
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "assessment aliases use one canonical safe spelling");
+   Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1.1");
+   Assert
+     (Ada_Quality.Storage.Events (Store, Run_Id).Last_Element.Id = First_Alias_Event + 1,
+      "rejected aliases do not consume persistent event identities");
    Assert (Ada_Quality.Storage.Measurements (Store, Run_Id).Length = 33,
      "typed measurement rows are persisted for every indicator");
    Assert (Ada_Quality.Storage.Executions (Store, Run_Id).Length = 1,
@@ -193,11 +234,33 @@ begin
    end;
    Assert (Raised, "database integrity checking enforces its aggregate text limit while scanning");
    Ada_Quality.Storage.Check (Store);
+   Ada_Quality.Storage.Compact (Store);
+   Ada_Quality.Storage.Check (Store);
+   Assert (True, "transactional compaction preserves database integrity");
    declare
       Session : Ada_Quality.Reporting.Session;
    begin
       Ada_Quality.Storage.Close (Store);
       Ada_Quality.Reporting.Open (Session, Path);
+      Assert
+        (Ada_Quality.Reporting.Resolve_Assessment (Session, "release-1") = 2 and then
+         Ada_Quality.Reporting.Resolve_Assessment (Session, "2") = 2 and then
+         Ada_Quality.Reporting.Aliases (Session, 2).Length = 2,
+         "reporting resolves numeric and human-readable assessment references");
+      declare
+         Stats : constant Ada_Quality.Reporting.Snapshot_Statistics :=
+           Ada_Quality.Reporting.Statistics (Session);
+         Status_JSON : constant String := Ada_Quality.JSON.Render_Status (Session);
+      begin
+         Assert
+           (Stats.Projects = 1 and then Stats.Assessments = 3 and then
+            Stats.Events = 7 and then Stats.Total_Rows > Stats.Events and then Stats.Text_Bytes > 0,
+            "reporting exposes bounded database row and text consumption");
+         Assert
+           (Ada.Strings.Fixed.Index (Status_JSON, """kind"":""portfolio-status""") > 0 and then
+            Ada.Strings.Fixed.Index (Status_JSON, """latest_assessment_id"":3") > 0,
+            "portfolio status JSON summarizes each project's latest assessment");
+      end;
       declare
          Archive : constant String := Ada_Quality.JSON.Render_Archive (Session);
          Pretty_Archive : constant String :=
@@ -307,7 +370,30 @@ begin
       Assert (Ada_Quality.Storage.Events (Store, Following).Length = 2,
         "event allocation remains synchronized after multi-run recovery");
    end;
+   Ada_Quality.Storage.Backup (Store, Backup_Path);
+   Ada_Quality.Storage.Export (Store, Export_Path);
+   Assert (Ada.Directories.Exists (Backup_Path & "/manifest.dbbackup") and then
+     Ada.Directories.Exists (Export_Path),
+     "verified physical backup and logical export artifacts are created");
+   Raised := False;
+   begin
+      Ada_Quality.Storage.Export (Store, Export_Path);
+   exception
+      when Ada_Quality.Storage.Storage_Error => Raised := True;
+   end;
+   Assert (Raised, "database artifacts are never overwritten implicitly");
+   Ada_Quality.Storage.Close (Store);
+   Ada_Quality.Storage.Restore (Backup_Path, Restored_Path);
+   Ada_Quality.Storage.Open (Store, Restored_Path, Create_If_Missing => False);
+   Ada_Quality.Storage.Check (Store);
+   Assert (Ada_Quality.Storage.Projects (Store).Length = 1 and then
+     Ada_Quality.Storage.History (Store, Pid).Length > 0,
+     "a restored backup retains registry and assessment history");
    Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
+   Ada.Directories.Delete_File (Export_Path);
+   Ada.Directories.Delete_File (Restored_Path);
+   Project_Tools.Files.Delete_Tree (Backup_Path);
+   Project_Tools.Files.Delete_Tree (Relocated_Root);
 end;
 end Run_Storage_Test;

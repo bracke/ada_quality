@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/indicator-catalog-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "kind", "indicators"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "kind": { "const": "indicator-catalog" },
+    "indicators": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "category", "version", "measurement_version", "unit", "gate", "trend", "prerequisites", "remediation"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Z]{3}-[0-9]{2}$" },
+          "name": { "type": "string", "minLength": 1 },
+          "category": { "enum": ["STRUCTURE", "BUILD", "TEST", "SOURCE", "DOCUMENTATION", "DEPENDENCY", "SECURITY", "RELEASE", "PROOF"] },
+          "version": { "type": "integer", "minimum": 1 },
+          "measurement_version": { "type": "integer", "minimum": 1 },
+          "unit": { "type": "string", "minLength": 1 },
+          "gate": { "type": "boolean" },
+          "trend": { "enum": ["HIGHER_IS_BETTER", "LOWER_IS_BETTER", "NO_TREND"] },
+          "prerequisites": {
+            "type": "array",
+            "items": { "type": "string", "pattern": "^[A-Z]{3}-[0-9]{2}$" },
+            "uniqueItems": true
+          },
+          "remediation": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

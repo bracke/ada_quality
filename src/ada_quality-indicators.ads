@@ -81,6 +81,11 @@ package Ada_Quality.Indicators is
    function Direction_Of (Id : Indicator_Id) return Metric_Direction;
    --  Return the numeric trend direction registered for Id.
 
+   function Remediation (Id : Indicator_Id) return String;
+   --  Return concise guidance for resolving a violation of Id.
+   --  @param Id Indicator identity.
+   --  @return Stable human-readable remediation guidance.
+
    function Validate_Acyclic return Boolean;
    --  Validate that prerequisite relationships form an acyclic graph.
    --  @return True when every dependency is valid and no cycle exists.

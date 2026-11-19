@@ -1,0 +1,51 @@
+.TH ADA-QUALITY 1 "2026-11-19" "ada-quality 0.1.0" "User Commands"
+.SH NAME
+ada-quality \- assess and report Ada project quality
+.SH SYNOPSIS
+.B ada-quality
+[global options] command [options]
+.SH DESCRIPTION
+Ada Quality registers Ada projects, runs reproducible assessments, persists evidence, and exports text, JSON, SARIF, JUnit, and CSV reports.
+.SH COMMANDS
+.TP
+.B project
+Add, discover, list, show, enable, disable, relocate, or remove projects.
+.TP
+.B check, scan
+Run a complete assessment or analyze selected changed source files.
+.TP
+.B assessment, history, status, regressions, trend
+Inspect assessments, aliases, portfolio state, comparisons, and metric history.
+.TP
+.B report --format json
+Export the archive. Use --project, --since, and --until to select a self-contained subset.
+.TP
+.B database
+Initialize, check, recover, compact, inspect, back up, export, or restore the database.
+.TP
+.B completion bash|zsh|fish
+Write a shell completion definition to standard output.
+.SH GLOBAL OPTIONS
+.TP
+.B --database PATH
+Select the database (default .ada-quality.db).
+.TP
+.B --policy PATH
+Select the policy file (default quality-policy.toml).
+.TP
+.B --format FORMAT, --json
+Select machine-readable output where supported.
+.TP
+.B --no-color
+Disable terminal styling.
+.SH STATUS FILTERS
+Use --only unhealthy or --only regressed. Stale filtering requires --only stale together with --since UTC, and selects projects whose latest assessment predates that instant or has no timestamp.
+.SH EXIT STATUS
+Zero means success. Assessment or scan violations return 1, usage errors 2, incomplete execution 3, and storage/reporting errors 4.
+.SH FILES
+.TP
+.I quality-policy.toml
+Default quality policy.
+.TP
+.I .ada-quality.db
+Default persistent database.

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/project-list-v1.schema.json",
+  "type": "object", "required": ["schema_version", "kind", "projects"],
+  "properties": {
+    "schema_version": { "const": 1 }, "kind": { "const": "project-list" },
+    "projects": { "type": "array", "items": { "type": "object",
+      "required": ["id", "path", "enabled", "removed"],
+      "properties": { "id": { "type": "integer", "minimum": 1 }, "path": { "type": "string" },
+        "enabled": { "type": "boolean" }, "removed": { "type": "boolean" } },
+      "additionalProperties": false } }
+  }, "additionalProperties": false
+}

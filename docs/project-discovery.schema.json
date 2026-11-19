@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/project-discovery-v1.schema.json",
+  "type": "object", "required": ["schema_version", "kind", "projects"],
+  "properties": {
+    "schema_version": { "const": 1 }, "kind": { "const": "project-discovery" },
+    "projects": { "type": "array", "items": { "type": "object",
+      "required": ["path", "project_id", "status"],
+      "properties": { "path": { "type": "string" }, "project_id": { "type": "integer", "minimum": 0 },
+        "status": { "enum": ["registered", "found", "added"] } }, "additionalProperties": false } }
+  }, "additionalProperties": false
+}
