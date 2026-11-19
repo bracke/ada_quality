@@ -9,6 +9,7 @@ procedure Print_Findings (DB_Path : String) is
    Structured : constant Boolean := Requested /= "" or else JSON_Mode or else
      Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
      Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
+     Option ("--tag", "") /= "" or else
      Option ("--since", "") /= "" or else Option ("--until", "") /= "" or else
      Option ("--limit", "") /= "" or else Option ("--offset", "") /= "";
    Output : Ada.Strings.Unbounded.Unbounded_String;
@@ -26,9 +27,13 @@ begin
          Filter_Indicator : constant Boolean := Option ("--indicator", "") /= "";
          Minimum : Severity := Severity'First;
          Path_Filter : constant String := Option ("--path", "");
+         Tag_Filter : constant String := Option ("--tag", "");
          Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
          Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
          Items : Finding_Vectors.Vector;
+         Offset : Natural := 0;
+         Limit : Natural := 0;
+         Total : Natural := 0;
          use type Ada.Calendar.Time;
       begin
          if Format not in "text" | "json" | "sarif" then
@@ -39,6 +44,8 @@ begin
            Since_Time.Value > Until_Time.Value
          then
             raise Usage_Error with "--since must not be later than --until";
+         elsif Tag_Filter /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Tag_Filter) then
+            raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
          end if;
          if Option ("--project", "") /= "" then
             Project_Id := Positive_Option ("--project", "project");
@@ -58,6 +65,8 @@ begin
          end if;
          for Run of Ada_Quality.Reporting.Runs (Session, Project_Id) loop
             if Run.State = Assessment_Completed and then
+              (Tag_Filter = "" or else Has_Tag
+                 (To_String (Ada_Quality.Reporting.Project (Session, Run.Project_Id).Tags), Tag_Filter)) and then
               In_Time_Range (Run.Started_At, Since_Time, Until_Time)
             then
                declare
@@ -78,11 +87,10 @@ begin
                end;
             end if;
          end loop;
-         declare Offset : Natural := 0; Limit : Natural := 0; begin
+         Total := Natural (Items.Length);
+         declare begin
             begin
-               if Option ("--offset", "") /= "" then
-                  Offset := Natural'Value (Option ("--offset", ""));
-               end if;
+               Offset := Page_Offset;
                if Option ("--limit", "") /= "" then
                   Limit := Positive'Value (Option ("--limit", ""));
                end if;
@@ -100,7 +108,10 @@ begin
          end;
          if Format = "json" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
-            Emit_Document (Ada_Quality.JSON.Render_Findings (Items, Pretty => True));
+            Emit_Document
+              (Ada_Quality.JSON.Render_Findings
+                 (Items, Page_Metadata (Total, Offset, Natural (Items.Length), Limit),
+                  Pretty => True));
          elsif Format = "sarif" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
             Emit_Document (Ada_Quality.CI_Formats.Render_SARIF (Items, Pretty => True));

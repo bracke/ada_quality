@@ -5,9 +5,17 @@ with Ada_Quality.History;
 with Ada_Quality.Indicators;
 with Ada_Quality.Checks;
 with Ada_Quality.Types;
+with Ada_Quality.Storage;
 
 --  Deterministic JSON serialization for assessments and persistent archives.
 package Ada_Quality.JSON is
+   type Page_Info is record
+      Present     : Boolean := False;
+      Total       : Natural := 0;
+      Offset      : Natural := 0;
+      Limit       : Natural := 0;
+      Next_Cursor : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
    --  Deterministic JSON serialization for assessments and persistent archives.
    function Render (Item : Ada_Quality.Types.Assessment; Pretty : Boolean := False) return String;
    --  Serialize one assessment using the versioned deterministic JSON contract.
@@ -95,6 +103,7 @@ package Ada_Quality.JSON is
 
    function Render_History
      (Items : Ada_Quality.Reporting.Run_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    --  Serialize a filtered assessment history as assessment-history-v1.
 
@@ -104,12 +113,14 @@ package Ada_Quality.JSON is
    --  Serialize one selected assessment comparison as assessment-comparison-v1.
 
    function Render_Status
-     (Item : Ada_Quality.Reporting.Session; Pretty : Boolean := False) return String;
+     (Item : Ada_Quality.Reporting.Session;
+      Page : Page_Info := (others => <>); Pretty : Boolean := False) return String;
    --  Serialize the latest portfolio state as portfolio-status-v1.
 
    function Render_Status
      (Item     : Ada_Quality.Reporting.Session;
       Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Page     : Page_Info := (others => <>);
       Pretty   : Boolean := False) return String;
    --  Serialize the latest portfolio state for a selected project set.
 
@@ -121,6 +132,7 @@ package Ada_Quality.JSON is
 
    function Render_Findings
      (Items : Ada_Quality.Types.Finding_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    --  Serialize a filtered finding collection as findings-v1.
 
@@ -135,11 +147,13 @@ package Ada_Quality.JSON is
 
    function Render_Projects
      (Items : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    function Render_Discovery
      (Items : Discovery_Vectors.Vector; Pretty : Boolean := False) return String;
    function Render_Aliases
      (Items : Ada_Quality.Reporting.Alias_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    function Render_Statistics
      (Item : Ada_Quality.Reporting.Snapshot_Statistics;
@@ -150,4 +164,26 @@ package Ada_Quality.JSON is
       Category        : Ada_Quality.Indicators.Indicator_Category := Ada_Quality.Indicators.Structure;
       Pretty          : Boolean := False) return String;
    --  Serialize the complete or category-filtered indicator registry as indicator-catalog-v1.
+
+   type Diagnostic_Item is record
+      Name   : Ada.Strings.Unbounded.Unbounded_String;
+      Passed : Boolean := False;
+      Detail : Ada.Strings.Unbounded.Unbounded_String;
+   end record;
+   package Diagnostic_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Diagnostic_Item);
+
+   function Render_Doctor
+     (Items : Diagnostic_Vectors.Vector; Pretty : Boolean := False) return String;
+   function Render_Waivers
+     (Items : Ada_Quality.Checks.Waiver_Audit_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Retention
+     (Items : Ada_Quality.Storage.History_Vectors.Vector;
+      Before : String; Keep : Natural; Pretty : Boolean := False) return String;
+   function Render_Merge
+     (Source : String; Dry_Run : Boolean;
+      Added_Projects, Added_Assessments, Reused_Assessments, Added_Aliases : Natural;
+      Conflicts : Diagnostic_Vectors.Vector;
+      Pretty : Boolean := False) return String;
 end Ada_Quality.JSON;

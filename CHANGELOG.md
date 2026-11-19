@@ -8,6 +8,7 @@ All notable changes are recorded here. This project follows semantic versioning.
 - Added verified archive-before-prune retention and staged, unstaged, and untracked Git scan modes.
 - Added diagnostics and no-write check plans, expiring owned waivers, project tags, retention previews, paged output,
   and verified database merging.
+- Added Ed25519 signing and trusted-key verification for physical backups and logical exports.
 
 - Added historical metric trends and JSON trend output.
 - Added SARIF and JUnit exports for stored assessments.

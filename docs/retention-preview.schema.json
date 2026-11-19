@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/retention-preview-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "before", "keep", "candidates"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "retention-preview" }, "before": { "type": "string" },
+    "keep": { "type": "integer", "minimum": 0 }, "candidates": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["assessment_id", "project_id", "status"], "properties": { "assessment_id": { "type": "integer", "minimum": 1 },
+        "project_id": { "type": "integer", "minimum": 1 }, "status": { "type": "string" } } } } }
+}

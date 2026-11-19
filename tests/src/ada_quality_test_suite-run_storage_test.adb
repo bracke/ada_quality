@@ -446,16 +446,23 @@ begin
    end;
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Merge_Path);
-   declare Added_Projects, Added_Assessments, Again_Projects, Again_Assessments : Natural; begin
-      Ada_Quality.Storage.Merge
-        (Store, Retention_Restore_Path, Added_Projects, Added_Assessments);
+   declare
+      Preview, Applied : Ada_Quality.Storage.Merge_Report;
+      Again_Projects, Again_Assessments : Natural;
+   begin
+      Ada_Quality.Storage.Merge (Store, Retention_Restore_Path, Dry_Run => True, Report => Preview);
+      Assert
+        (Preview.Added_Projects = 1 and then Preview.Added_Assessments = 3 and then
+         Ada_Quality.Storage.Projects (Store).Is_Empty,
+         "merge dry-run returns the exact plan without changing the target");
+      Ada_Quality.Storage.Merge (Store, Retention_Restore_Path, Dry_Run => False, Report => Applied);
       Ada_Quality.Storage.Merge
         (Store, Retention_Restore_Path, Again_Projects, Again_Assessments);
       Assert
-        (Added_Projects = 1 and then Added_Assessments = 3 and then
+        (Applied.Added_Projects = 1 and then Applied.Added_Assessments = 3 and then
          Again_Projects = 0 and then Again_Assessments = 0 and then
          To_String (Ada_Quality.Storage.Project (Store, 1).Tags) = "core",
-         "database merge remaps projects, preserves tags, imports completed evidence, and deduplicates retries");
+         "atomic database merge remaps projects, preserves tags, imports evidence, and deduplicates retries");
    end;
    Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);

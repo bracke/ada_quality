@@ -52,8 +52,14 @@ begin
       Loaded := Ada_Quality.Policy.Load_Overlay (Path, Base);
       Assert
         (Loaded.Success and then Loaded.Value.Maximum_Complexity = 7 and then
-         Loaded.Value.Maximum_Source_Lines = 800,
-         "partial policy overlays replace only explicitly supplied values");
+         Loaded.Value.Maximum_Source_Lines = 800 and then
+         Loaded.Present.Maximum_Complexity and then not Loaded.Present.Maximum_Source_Lines and then
+         Ada.Strings.Fixed.Index
+           (Ada_Quality.Policy.Explain (Loaded.Value, Loaded.Present, "base", "override"),
+            "maximum_complexity = 7    # from override") > 0 and then
+         Ada.Strings.Fixed.Index (Ada_Quality.Policy.Diff (Base, Loaded.Value),
+           "maximum_complexity: 12 -> 7") > 0,
+         "partial overlays retain per-key provenance and deterministic policy differences");
    end;
    Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
    Ada.Text_IO.Put_Line (File, "maximum_source_lines = 700 # bounded source size");

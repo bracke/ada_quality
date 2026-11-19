@@ -15,7 +15,9 @@ package body Ada_Quality.Policy is
 
    function Load_Overlay
      (Path : String; Base : Quality_Policy) return Load_Result is
-      Result  : Load_Result := (Success => True, Value => Base, Error => Null_Unbounded_String);
+      Result  : Load_Result :=
+        (Success => True, Value => Base, Present => (others => False),
+         Error => Null_Unbounded_String);
       Content : Unbounded_String;
       Start   : Positive := 1;
       type Policy_Key is
@@ -26,6 +28,14 @@ package body Ada_Quality.Policy is
       begin
          if Seen (Key) then raise Constraint_Error with "duplicate policy key"; end if;
          Seen (Key) := True;
+         case Key is
+            when Coverage_Key => Result.Present.Coverage_Minimum_Basis_Points := True;
+            when Source_Lines_Key => Result.Present.Maximum_Source_Lines := True;
+            when Complexity_Key => Result.Present.Maximum_Complexity := True;
+            when Timeout_Key => Result.Present.Process_Timeout_Seconds := True;
+            when Output_Key => Result.Present.Maximum_Output_Bytes := True;
+            when Clean_Key => Result.Present.Require_Clean_Worktree := True;
+         end case;
       end Mark;
 
       function Parse_Key (Text : String) return Policy_Key is
@@ -116,7 +126,9 @@ package body Ada_Quality.Policy is
       end Apply;
    begin
       if not Project_Tools.Files.File_Exists (Path) then
-         return (Success => False, Value => Base, Error => To_Unbounded_String ("policy file not found: " & Path));
+         return
+           (Success => False, Value => Base, Present => (others => False),
+            Error => To_Unbounded_String ("policy file not found: " & Path));
       end if;
 
       Content := To_Unbounded_String (Project_Tools.Files.Read_Raw_File (Path));
@@ -174,6 +186,64 @@ package body Ada_Quality.Policy is
          "require_clean_worktree = " &
            (if Item.Require_Clean_Worktree then "true" else "false") & ASCII.LF);
    end Render;
+
+   function Explain
+     (Item : Quality_Policy; Sources : Key_Presence;
+      Base_Source, Overlay_Source : String) return String
+   is
+      function Image (Value : Natural) return String is
+        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+      function Source (Overlay : Boolean) return String is
+        (if Overlay then Overlay_Source else Base_Source);
+   begin
+      return
+        "coverage_minimum_basis_points = " & Image (Item.Coverage_Minimum_Basis_Points) &
+          "    # from " & Source (Sources.Coverage_Minimum_Basis_Points) & ASCII.LF &
+        "maximum_source_lines = " & Image (Item.Maximum_Source_Lines) &
+          "    # from " & Source (Sources.Maximum_Source_Lines) & ASCII.LF &
+        "maximum_complexity = " & Image (Item.Maximum_Complexity) &
+          "    # from " & Source (Sources.Maximum_Complexity) & ASCII.LF &
+        "process_timeout_seconds = " & Image (Item.Process_Timeout_Seconds) &
+          "    # from " & Source (Sources.Process_Timeout_Seconds) & ASCII.LF &
+        "maximum_output_bytes = " & Image (Item.Maximum_Output_Bytes) &
+          "    # from " & Source (Sources.Maximum_Output_Bytes) & ASCII.LF &
+        "require_clean_worktree = " &
+          (if Item.Require_Clean_Worktree then "true" else "false") &
+          "    # from " & Source (Sources.Require_Clean_Worktree) & ASCII.LF;
+   end Explain;
+
+   function Diff (Left, Right : Quality_Policy) return String is
+      Result : Unbounded_String;
+      procedure Add (Key, Before, After : String) is
+      begin
+         Append (Result, Key & ": " & Before & " -> " & After & ASCII.LF);
+      end Add;
+      function Image (Value : Natural) return String is
+        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+   begin
+      if Left.Coverage_Minimum_Basis_Points /= Right.Coverage_Minimum_Basis_Points then
+         Add ("coverage_minimum_basis_points", Image (Left.Coverage_Minimum_Basis_Points),
+              Image (Right.Coverage_Minimum_Basis_Points));
+      end if;
+      if Left.Maximum_Source_Lines /= Right.Maximum_Source_Lines then
+         Add ("maximum_source_lines", Image (Left.Maximum_Source_Lines), Image (Right.Maximum_Source_Lines));
+      end if;
+      if Left.Maximum_Complexity /= Right.Maximum_Complexity then
+         Add ("maximum_complexity", Image (Left.Maximum_Complexity), Image (Right.Maximum_Complexity));
+      end if;
+      if Left.Process_Timeout_Seconds /= Right.Process_Timeout_Seconds then
+         Add ("process_timeout_seconds", Image (Left.Process_Timeout_Seconds),
+              Image (Right.Process_Timeout_Seconds));
+      end if;
+      if Left.Maximum_Output_Bytes /= Right.Maximum_Output_Bytes then
+         Add ("maximum_output_bytes", Image (Left.Maximum_Output_Bytes), Image (Right.Maximum_Output_Bytes));
+      end if;
+      if Left.Require_Clean_Worktree /= Right.Require_Clean_Worktree then
+         Add ("require_clean_worktree", Boolean'Image (Left.Require_Clean_Worktree),
+              Boolean'Image (Right.Require_Clean_Worktree));
+      end if;
+      return (if Length (Result) = 0 then "no policy differences" & ASCII.LF else To_String (Result));
+   end Diff;
 
    function Fingerprint (Item : Quality_Policy) return String is
       Text : constant String :=

@@ -18,3 +18,10 @@ release. Older releases may require upgrading to receive a fix.
 
 The database parser, project traversal, command execution boundary, report
 renderers, and handling of untrusted repository contents are in scope.
+
+## Artifact signing keys
+
+Keep generated private signing keys outside repositories and shared artifact
+directories. `database keygen` creates private keys with owner-only permissions
+and refuses to overwrite existing key files. Verification is meaningful only
+when the public key was obtained through a trusted channel.

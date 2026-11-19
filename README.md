@@ -32,7 +32,7 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality database init
 ./bin/ada-quality project add /absolute/path/to/an/alire/crate
 ./bin/ada-quality project tag 1 ci
-./bin/ada-quality doctor --project 1
+./bin/ada-quality doctor --project 1 --json
 ./bin/ada-quality check --tag ci --dry-run --json
 ./bin/ada-quality check --all
 ./bin/ada-quality check --all --jobs 4 --reuse-unchanged
@@ -41,7 +41,7 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality status --json
 ./bin/ada-quality assessment show 1 --format sarif
 ./bin/ada-quality assessment diff 1 2 --format json
-./bin/ada-quality history --project 1 --status completed --limit 20 --json
+./bin/ada-quality history --tag ci --status completed --limit 20 --json
 ./bin/ada-quality trend --project 1 --indicator TST-03 --json
 ./bin/ada-quality trend --project 1 --all --format csv
 ./bin/ada-quality scan --project 1 --changed-file src/example.adb
@@ -56,12 +56,16 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality project sync /absolute/path/to/projects --remove-missing
 ./bin/ada-quality policy init --profile ci
 ./bin/ada-quality policy profiles
-./bin/ada-quality policy effective --project 1 --profile ci
+./bin/ada-quality policy effective --project 1 --profile ci --explain
+./bin/ada-quality policy diff default ci
 ./bin/ada-quality database stats
 ./bin/ada-quality database archive history.export --before 2026-01-01T00:00:00Z --keep 10
-./bin/ada-quality database archive --dry-run --before 2026-01-01T00:00:00Z --keep 10
-./bin/ada-quality database merge other-quality.export
-./bin/ada-quality waiver audit --project 1
+./bin/ada-quality database archive --dry-run --before 2026-01-01T00:00:00Z --keep 10 --json
+./bin/ada-quality database merge other-quality.export --dry-run --json
+./bin/ada-quality database keygen signing.key signing.pub
+./bin/ada-quality database export evidence.export --sign-key signing.key
+./bin/ada-quality database verify evidence.export --public-key signing.pub
+./bin/ada-quality waiver audit --project 1 --json
 ./bin/ada-quality report --format json
 ./bin/ada-quality report --format html --output quality-report.html
 ```
@@ -69,9 +73,11 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 The default database is `.ada-quality.db`; `ADA_QUALITY_DATABASE` or `--database` selects another path. The default
 central policy is `quality-policy.toml`; `ADA_QUALITY_POLICY` or `--policy` selects another file.
 
-Read commands accept `--output FILE`; collection views also accept `--limit N` and `--offset N`. Project tags can
-select checks, status views, and reports. Structured source waivers require an owner, expiry date, and justification,
-remain visible in findings, and stop suppressing violations after expiry.
+Read commands accept `--output FILE`; collection JSON includes total counts and a `next_cursor` accepted by
+`--cursor`. Project tags select checks, history, findings, regressions, trends, status, and reports. Administrative
+JSON is available for doctor, waiver inventory, retention previews, and merge plans/results. Waiver inventory marks
+active, unused, expired, malformed, and within-30-day expiry. Database merge is preflighted and committed atomically;
+policy explanation and diff commands expose the source and change of each effective value.
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/ASSESSMENT.md`](docs/ASSESSMENT.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for operational details. Development and disclosure guidance is in

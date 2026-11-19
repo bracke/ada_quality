@@ -5,6 +5,8 @@ procedure Exercise_CLI is
       DB_Path    : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.db");
       Backup_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.backup");
       Export_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage.export");
+      Private_Key_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "signing.key");
+      Public_Key_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "signing.pub");
       Restored_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-restored.db");
       Imported_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-imported.db");
       Merge_Path : constant String := Ada_Quality.Temporary_Directories.Child (Scratch, "coverage-merge.db");
@@ -41,6 +43,9 @@ procedure Exercise_CLI is
          Project_Tools.Files.Delete_File_If_Present (DB_Path & ".fts");
          Project_Tools.Files.Delete_File_If_Present (DB_Path & ".lock");
          Project_Tools.Files.Delete_File_If_Present (Export_Path);
+         Project_Tools.Files.Delete_File_If_Present (Export_Path & ".sig");
+         Project_Tools.Files.Delete_File_If_Present (Private_Key_Path);
+         Project_Tools.Files.Delete_File_If_Present (Public_Key_Path);
          Project_Tools.Files.Delete_File_If_Present (Restored_Path);
          Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".wal");
          Project_Tools.Files.Delete_File_If_Present (Restored_Path & ".fts");
@@ -236,6 +241,13 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("explain"), Project_Tools.Processes.Argument ("SRC-03")]),
          Expected_Text => "remediation:");
       Run_CLI
+        ("policy diff",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("diff"),
+             Project_Tools.Processes.Argument ("default"), Project_Tools.Processes.Argument ("ci"),
+             Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base)]),
+         Expected_Text => "no policy differences");
+      Run_CLI
         ("indicator list JSON",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("indicator"), Project_Tools.Processes.Argument ("list"),
@@ -261,6 +273,7 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("policy"), Project_Tools.Processes.Argument ("effective"),
              Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1"),
              Project_Tools.Processes.Argument ("--profile"), Project_Tools.Processes.Argument ("ci"),
+             Project_Tools.Processes.Argument ("--explain"),
              Project_Tools.Processes.Argument ("--output"), Project_Tools.Processes.Argument (Effective_Output),
              Project_Tools.Processes.Argument ("--policy"), Project_Tools.Processes.Argument (Policy_Base),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]));
@@ -336,8 +349,9 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("doctor"), Project_Tools.Processes.Argument ("--project"),
              Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
-         Allow_Three => True, Expected_Text => "database");
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
+             Project_Tools.Processes.Argument ("--json")]),
+         Allow_Three => True, Expected_Text => "doctor-report");
       Run_CLI
         ("waiver audit",
          Project_Tools.Processes.Arguments
@@ -345,8 +359,9 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--project"), Project_Tools.Processes.Argument ("1"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
              Project_Tools.Processes.Argument ("--policy"),
-             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml"))]),
-         Allow_One => True, Expected_Text => "waiver audit:");
+             Project_Tools.Processes.Argument (Project_Tools.Files.Join (Root, "quality-policy.toml")),
+             Project_Tools.Processes.Argument ("--json")]),
+         Allow_One => True, Expected_Text => "waiver-audit");
       Run_CLI
         ("changed source scan",
          Project_Tools.Processes.Arguments
@@ -597,8 +612,8 @@ procedure Exercise_CLI is
       Run_CLI
         ("filtered history JSON",
          Project_Tools.Processes.Arguments
-           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--project"),
-             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--status"),
+           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--tag"),
+             Project_Tools.Processes.Argument ("ci"), Project_Tools.Processes.Argument ("--status"),
              Project_Tools.Processes.Argument ("completed"), Project_Tools.Processes.Argument ("--limit"),
              Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--since"),
              Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
@@ -606,13 +621,23 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("2099-12-31T23:59:59Z"),
              Project_Tools.Processes.Argument ("--json"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
-         Expected_Text => """kind"": ""assessment-history""");
+         Expected_Text => """page""");
+      Run_CLI
+        ("history cursor page",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("history"), Project_Tools.Processes.Argument ("--tag"),
+             Project_Tools.Processes.Argument ("ci"), Project_Tools.Processes.Argument ("--limit"),
+             Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--cursor"),
+             Project_Tools.Processes.Argument ("v1:1"), Project_Tools.Processes.Argument ("--json"),
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
+         Expected_Text => """offset"": 1");
       Run_CLI
         ("metric trend text",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("trend"), Project_Tools.Processes.Argument ("--project"),
              Project_Tools.Processes.Argument ("1"), Project_Tools.Processes.Argument ("--indicator"),
-             Project_Tools.Processes.Argument ("SRC-03"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument ("SRC-03"), Project_Tools.Processes.Argument ("--tag"),
+             Project_Tools.Processes.Argument ("ci"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => "SRC-03=");
       Run_CLI
@@ -681,7 +706,8 @@ procedure Exercise_CLI is
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("findings"), Project_Tools.Processes.Argument ("--severity"),
              Project_Tools.Processes.Argument ("high"), Project_Tools.Processes.Argument ("--format"),
-             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument ("json"), Project_Tools.Processes.Argument ("--tag"),
+             Project_Tools.Processes.Argument ("ci"), Project_Tools.Processes.Argument ("--database"),
              Project_Tools.Processes.Argument (DB_Path)]),
          Expected_Text => """kind"": ""findings""");
       Run_CLI
@@ -754,19 +780,39 @@ procedure Exercise_CLI is
             Expected_Text => "ada-quality");
       end loop;
       Run_CLI
+        ("database signing key generation",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("keygen"),
+             Project_Tools.Processes.Argument (Private_Key_Path),
+             Project_Tools.Processes.Argument (Public_Key_Path)]),
+         Expected_Text => "generated Ed25519 keypair");
+      Run_CLI
         ("database backup",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("backup"),
              Project_Tools.Processes.Argument (Backup_Path), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]),
+             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--sign-key"),
+             Project_Tools.Processes.Argument (Private_Key_Path)]),
          Expected_Text => "backup created");
       Run_CLI
         ("database export",
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("export"),
              Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (DB_Path)]),
+             Project_Tools.Processes.Argument (DB_Path), Project_Tools.Processes.Argument ("--sign-key"),
+             Project_Tools.Processes.Argument (Private_Key_Path)]),
          Expected_Text => "export created");
+      for Artifact of Project_Tools.Processes.Argument_Items'
+        ([Project_Tools.Processes.Argument (Backup_Path), Project_Tools.Processes.Argument (Export_Path)])
+      loop
+         Run_CLI
+           ("database signature verification",
+            Project_Tools.Processes.Arguments
+              ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("verify"),
+                Artifact, Project_Tools.Processes.Argument ("--public-key"),
+                Project_Tools.Processes.Argument (Public_Key_Path)]),
+            Expected_Text => "artifact signature verified");
+      end loop;
       Run_CLI
         ("database retention preview",
          Project_Tools.Processes.Arguments
@@ -774,8 +820,9 @@ procedure Exercise_CLI is
              Project_Tools.Processes.Argument ("--dry-run"), Project_Tools.Processes.Argument ("--before"),
              Project_Tools.Processes.Argument ("2000-01-01T00:00:00Z"),
              Project_Tools.Processes.Argument ("--keep"), Project_Tools.Processes.Argument ("1"),
-             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path)]),
-         Expected_Text => "retention preview:");
+             Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (DB_Path),
+             Project_Tools.Processes.Argument ("--json")]),
+         Expected_Text => "retention-preview");
       Run_CLI
         ("database retention archive",
          Project_Tools.Processes.Arguments
@@ -790,7 +837,8 @@ procedure Exercise_CLI is
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("restore"),
              Project_Tools.Processes.Argument (Backup_Path), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (Restored_Path)]),
+             Project_Tools.Processes.Argument (Restored_Path), Project_Tools.Processes.Argument ("--public-key"),
+             Project_Tools.Processes.Argument (Public_Key_Path)]),
          Expected_Text => "restored ");
       Run_CLI
         ("restored database check",
@@ -803,7 +851,8 @@ procedure Exercise_CLI is
          Project_Tools.Processes.Arguments
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("import"),
              Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
-             Project_Tools.Processes.Argument (Imported_Path)]),
+             Project_Tools.Processes.Argument (Imported_Path), Project_Tools.Processes.Argument ("--public-key"),
+             Project_Tools.Processes.Argument (Public_Key_Path)]),
          Expected_Text => "imported ");
       Run_CLI
         ("imported database check",
@@ -817,6 +866,14 @@ procedure Exercise_CLI is
            ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("init"),
              Project_Tools.Processes.Argument ("--database"), Project_Tools.Processes.Argument (Merge_Path)]),
          Expected_Text => "initialized");
+      Run_CLI
+        ("database merge preview",
+         Project_Tools.Processes.Arguments
+           ([Project_Tools.Processes.Argument ("database"), Project_Tools.Processes.Argument ("merge"),
+             Project_Tools.Processes.Argument (Export_Path), Project_Tools.Processes.Argument ("--database"),
+             Project_Tools.Processes.Argument (Merge_Path), Project_Tools.Processes.Argument ("--dry-run"),
+             Project_Tools.Processes.Argument ("--json")]),
+         Expected_Text => "database-merge");
       Run_CLI
         ("database merge export",
          Project_Tools.Processes.Arguments

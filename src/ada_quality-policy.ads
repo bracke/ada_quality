@@ -14,6 +14,16 @@ package Ada_Quality.Policy is
       Maximum_Output_Bytes          : Positive := 1_048_576;
       Require_Clean_Worktree        : Boolean := True;
    end record;
+
+   type Key_Presence is record
+      Coverage_Minimum_Basis_Points : Boolean := False;
+      Maximum_Source_Lines          : Boolean := False;
+      Maximum_Complexity            : Boolean := False;
+      Process_Timeout_Seconds       : Boolean := False;
+      Maximum_Output_Bytes          : Boolean := False;
+      Require_Clean_Worktree        : Boolean := False;
+   end record;
+   --  Keys explicitly selected by one policy document.
    --  Resource limits and release requirements applied to one assessment.
    --  @field Coverage_Minimum_Basis_Points Minimum acceptable production coverage in hundredths of a percent.
    --  @field Maximum_Source_Lines Maximum permitted physical lines in one source file.
@@ -25,6 +35,7 @@ package Ada_Quality.Policy is
    type Load_Result is record
       Success : Boolean := False;
       Value   : Quality_Policy;
+      Present : Key_Presence;
       Error   : Unbounded_String;
    end record;
    --  Structured result of strict policy parsing.
@@ -55,6 +66,14 @@ package Ada_Quality.Policy is
    --  Render a complete deterministic TOML policy document.
 
    function Fingerprint (Item : Quality_Policy) return String;
+
+   function Explain
+     (Item : Quality_Policy; Sources : Key_Presence;
+      Base_Source, Overlay_Source : String) return String;
+   --  Render every effective value together with the document that selected it.
+
+   function Diff (Left, Right : Quality_Policy) return String;
+   --  Render only policy values that differ.
    --  Compute the deterministic identity of a policy.
    --  @param Item Policy to identify.
    --  @return Stable fingerprint text.

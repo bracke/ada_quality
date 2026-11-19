@@ -132,6 +132,25 @@ package Ada_Quality.Storage is
       Added_Projects, Added_Assessments : out Natural);
    --  Merge completed evidence from another database or native logical export.
 
+   type Merge_Conflict is record
+      Name   : Unbounded_String;
+      Detail : Unbounded_String;
+   end record;
+   package Merge_Conflict_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Merge_Conflict);
+   type Merge_Report is record
+      Added_Projects     : Natural := 0;
+      Added_Assessments  : Natural := 0;
+      Reused_Assessments : Natural := 0;
+      Added_Aliases      : Natural := 0;
+      Conflicts          : Merge_Conflict_Vectors.Vector;
+   end record;
+
+   procedure Merge
+     (Item : in out Store; Source : String; Dry_Run : Boolean;
+      Report : out Merge_Report);
+   --  Preflight a merge and, unless Dry_Run, commit every planned row atomically.
+
    procedure Archive_And_Prune
      (Item        : in out Store;
       Destination : String;

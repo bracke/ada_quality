@@ -42,12 +42,19 @@ Logical export/import is symmetric: `database import SOURCE --database DESTINATI
 native export format and performs a complete integrity check before reporting success. Existing destinations are
 never overwritten. Transactional compaction is likewise checked before and after vacuuming.
 
+Physical backups and logical exports may be authenticated with Ed25519. A physical-backup signature covers its
+verified checksum manifest; a logical-export signature covers a domain-separated streaming SHA-256 digest of every
+export byte. Verification always requires an explicitly supplied trusted public key, and restore/import can require
+verification before creating their destination database.
+
 `database archive DEST --before UTC [--keep N]` first creates and verifies a complete logical export. It then
 transactionally removes terminal assessments older than UTC, retaining at least the newest N terminal assessments
 per project and every running assessment. Owned evidence and aliases are removed with their archived assessment;
 the resulting live database is checked and compacted, and the archive remains importable.
 
-`database archive --dry-run --before UTC [--keep N]` lists the exact assessments that would be removed without
+`database archive --dry-run --before UTC [--keep N] [--json]` lists the exact assessments that would be removed without
 creating an archive or changing the database. `database merge SOURCE` accepts another database or native export,
 matches projects by canonical path, deduplicates completed runs by fingerprints, remaps identities, and preserves
-nonconflicting assessment aliases.
+nonconflicting assessment aliases. `--dry-run` reports additions, reuse, aliases, and conflicts without changing
+allocator or database state. A real merge applies projects, tags, assessments, evidence, events, and aliases in one
+write transaction, so any insertion failure rolls back the complete merge.

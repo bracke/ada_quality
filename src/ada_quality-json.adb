@@ -96,6 +96,19 @@ package body Ada_Quality.JSON is
          (Form => (if Pretty then Jsonlib.Serializers.Pretty else Jsonlib.Serializers.Compact),
           Indent => 2, Escape_Non_Ascii => False, Sort_Members => True)));
 
+   procedure Populate_Page (Doc : in out Document; Root : Node; Page : Page_Info) is
+      Object : constant Node := Doc.New_Object;
+   begin
+      if not Page.Present then return; end if;
+      Doc.Insert (Object, "total", Doc.New_Integer (Long_Long_Integer (Page.Total)));
+      Doc.Insert (Object, "offset", Doc.New_Integer (Long_Long_Integer (Page.Offset)));
+      Doc.Insert (Object, "limit", Doc.New_Integer (Long_Long_Integer (Page.Limit)));
+      if Length (Page.Next_Cursor) > 0 then
+         Doc.Insert (Object, "next_cursor", Doc.New_String (To_String (Page.Next_Cursor)));
+      end if;
+      Doc.Insert (Root, "page", Object);
+   end Populate_Page;
+
    function Render (Item : Assessment; Pretty : Boolean := False) return String is
       Doc  : Document;
       Root : constant Node := Doc.New_Object;
@@ -298,6 +311,7 @@ package body Ada_Quality.JSON is
 
    function Render_History
      (Items : Ada_Quality.Reporting.Run_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String
    is
       Doc  : Document;
@@ -322,6 +336,7 @@ package body Ada_Quality.JSON is
          end;
       end loop;
       Doc.Insert (Root, "runs", Runs);
+      Populate_Page (Doc, Root, Page);
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_History;
@@ -361,6 +376,7 @@ package body Ada_Quality.JSON is
    function Render_Status
      (Item     : Ada_Quality.Reporting.Session;
       Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Page     : Page_Info := (others => <>);
       Pretty   : Boolean := False) return String
    is
       Doc      : Document;
@@ -405,15 +421,17 @@ package body Ada_Quality.JSON is
          end;
       end loop;
       Doc.Insert (Root, "projects", Nodes);
+      Populate_Page (Doc, Root, Page);
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Status;
 
    function Render_Status
-     (Item : Ada_Quality.Reporting.Session; Pretty : Boolean := False) return String is
+     (Item : Ada_Quality.Reporting.Session;
+      Page : Page_Info := (others => <>); Pretty : Boolean := False) return String is
    begin
       return Render_Status
-        (Item, Ada_Quality.Reporting.Projects (Item), Pretty);
+        (Item, Ada_Quality.Reporting.Projects (Item), Page, Pretty);
    end Render_Status;
 
    function Render_Scan
@@ -472,6 +490,7 @@ package body Ada_Quality.JSON is
 
    function Render_Findings
      (Items : Finding_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String
    is
       Doc : Document;
@@ -493,12 +512,14 @@ package body Ada_Quality.JSON is
          end;
       end loop;
       Doc.Insert (Root, "findings", Values);
+      Populate_Page (Doc, Root, Page);
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Findings;
 
    function Render_Projects
      (Items : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String
    is
       Doc : Document;
@@ -531,6 +552,7 @@ package body Ada_Quality.JSON is
          end;
       end loop;
       Doc.Insert (Root, "projects", Values);
+      Populate_Page (Doc, Root, Page);
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Projects;
@@ -566,6 +588,7 @@ package body Ada_Quality.JSON is
 
    function Render_Aliases
      (Items : Ada_Quality.Reporting.Alias_Vectors.Vector;
+      Page : Page_Info := (others => <>);
       Pretty : Boolean := False) return String
    is
       Doc : Document;
@@ -582,6 +605,7 @@ package body Ada_Quality.JSON is
          end;
       end loop;
       Doc.Insert (Root, "aliases", Values);
+      Populate_Page (Doc, Root, Page);
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Aliases;
@@ -666,4 +690,119 @@ package body Ada_Quality.JSON is
       Doc.Set_Root (Root);
       return Serialize (Doc, Pretty);
    end Render_Indicators;
+
+   function Render_Doctor
+     (Items : Diagnostic_Vectors.Vector; Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+      Passed : Boolean := True;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("doctor-report"));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "name", Doc.New_String (To_String (Item.Name)));
+            Doc.Insert (Object, "passed", Doc.New_Boolean (Item.Passed));
+            Doc.Insert (Object, "detail", Doc.New_String (To_String (Item.Detail)));
+            Doc.Append (Values, Object);
+            Passed := Passed and Item.Passed;
+         end;
+      end loop;
+      Doc.Insert (Root, "passed", Doc.New_Boolean (Passed));
+      Doc.Insert (Root, "checks", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Doctor;
+
+   function Render_Waivers
+     (Items : Ada_Quality.Checks.Waiver_Audit_Vectors.Vector;
+      Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("waiver-audit"));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "rule", Doc.New_String (To_String (Item.Rule)));
+            Doc.Insert (Object, "target", Doc.New_String (To_String (Item.Target)));
+            Doc.Insert (Object, "owner", Doc.New_String (To_String (Item.Owner)));
+            Doc.Insert (Object, "expires", Doc.New_String (To_String (Item.Expires)));
+            Doc.Insert (Object, "justification", Doc.New_String (To_String (Item.Justification)));
+            Doc.Insert (Object, "path", Doc.New_String (To_String (Item.Relative_Path)));
+            Doc.Insert (Object, "line", Doc.New_Integer (Long_Long_Integer (Item.Line)));
+            Doc.Insert (Object, "expiring", Doc.New_Boolean (Item.Expiring));
+            Doc.Insert
+              (Object, "status", Doc.New_String
+                 ((case Item.Status is
+                     when Ada_Quality.Checks.Waiver_Active => "active",
+                     when Ada_Quality.Checks.Waiver_Unused => "unused",
+                     when Ada_Quality.Checks.Waiver_Expired => "expired",
+                     when Ada_Quality.Checks.Waiver_Invalid => "invalid")));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "waivers", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Waivers;
+
+   function Render_Retention
+     (Items : Ada_Quality.Storage.History_Vectors.Vector;
+      Before : String; Keep : Natural; Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("retention-preview"));
+      Doc.Insert (Root, "before", Doc.New_String (Before));
+      Doc.Insert (Root, "keep", Doc.New_Integer (Long_Long_Integer (Keep)));
+      for Item of Items loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "assessment_id", Doc.New_Integer (Long_Long_Integer (Item.Id)));
+            Doc.Insert (Object, "project_id", Doc.New_Integer (Long_Long_Integer (Item.Project_Id)));
+            Doc.Insert (Object, "status", Doc.New_String (To_String (Item.Status)));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "candidates", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Retention;
+
+   function Render_Merge
+     (Source : String; Dry_Run : Boolean;
+      Added_Projects, Added_Assessments, Reused_Assessments, Added_Aliases : Natural;
+      Conflicts : Diagnostic_Vectors.Vector;
+      Pretty : Boolean := False) return String
+   is
+      Doc : Document;
+      Root : constant Node := Doc.New_Object;
+      Values : constant Node := Doc.New_Array;
+   begin
+      Doc.Insert (Root, "schema_version", Doc.New_Integer (1));
+      Doc.Insert (Root, "kind", Doc.New_String ("database-merge"));
+      Doc.Insert (Root, "source", Doc.New_String (Source));
+      Doc.Insert (Root, "dry_run", Doc.New_Boolean (Dry_Run));
+      Doc.Insert (Root, "added_projects", Doc.New_Integer (Long_Long_Integer (Added_Projects)));
+      Doc.Insert (Root, "added_assessments", Doc.New_Integer (Long_Long_Integer (Added_Assessments)));
+      Doc.Insert (Root, "reused_assessments", Doc.New_Integer (Long_Long_Integer (Reused_Assessments)));
+      Doc.Insert (Root, "added_aliases", Doc.New_Integer (Long_Long_Integer (Added_Aliases)));
+      for Item of Conflicts loop
+         declare Object : constant Node := Doc.New_Object; begin
+            Doc.Insert (Object, "name", Doc.New_String (To_String (Item.Name)));
+            Doc.Insert (Object, "detail", Doc.New_String (To_String (Item.Detail)));
+            Doc.Append (Values, Object);
+         end;
+      end loop;
+      Doc.Insert (Root, "conflicts", Values);
+      Doc.Set_Root (Root);
+      return Serialize (Doc, Pretty);
+   end Render_Merge;
 end Ada_Quality.JSON;

@@ -239,13 +239,18 @@ begin
                Toolchain_Id => To_Unbounded_String ("toolchain"),
                Started_At => (Present => False), Finished_At => (Present => False),
                Format => Ada_Quality.Reporting.Lossless_Evidence));
-         History_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_History (Runs));
+         History_JSON := To_Unbounded_String
+           (Ada_Quality.JSON.Render_History
+              (Runs,
+               (Present => True, Total => 2, Offset => 0, Limit => 1,
+                Next_Cursor => To_Unbounded_String ("v1:1"))));
          Jsonlib.Parsers.Parse (To_String (History_JSON), Doc, Error);
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (To_String (History_JSON), """kind"":""assessment-history""") > 0 and then
-            Ada.Strings.Fixed.Index (To_String (History_JSON), """assessment_id"":9") > 0,
-            "filtered history has a versioned deterministic JSON representation");
+            Ada.Strings.Fixed.Index (To_String (History_JSON), """assessment_id"":9") > 0 and then
+            Ada.Strings.Fixed.Index (To_String (History_JSON), """next_cursor"":""v1:1""") > 0,
+            "filtered history has deterministic cursor and total-count metadata");
 
          Comparison.Changes.Append
            (Ada_Quality.History.Regression'
@@ -260,6 +265,48 @@ begin
             Ada.Strings.Fixed.Index (To_String (Comparison_JSON), """baseline_id"":7") > 0,
             "explicit comparisons have a versioned deterministic JSON representation");
       end;
+   end;
+   declare
+      Diagnostics : Ada_Quality.JSON.Diagnostic_Vectors.Vector;
+      Waivers : Ada_Quality.Checks.Waiver_Audit_Vectors.Vector;
+      Retention : Ada_Quality.Storage.History_Vectors.Vector;
+      Administrative : Ada.Strings.Unbounded.Unbounded_String;
+   begin
+      Diagnostics.Append
+        (Ada_Quality.JSON.Diagnostic_Item'
+           (Name => To_Unbounded_String ("fixture"), Passed => False,
+            Detail => To_Unbounded_String ("conflict")));
+      Administrative := To_Unbounded_String
+        (Ada_Quality.JSON.Render_Doctor (Diagnostics));
+      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "doctor-report") > 0,
+        "doctor diagnostics have versioned JSON");
+      for Status in Ada_Quality.Checks.Waiver_Status loop
+         Waivers.Append
+           (Ada_Quality.Checks.Waiver_Audit_Item'
+              (Rule => To_Unbounded_String ("src-03"), Target => To_Unbounded_String ("fixture"),
+               Owner => To_Unbounded_String ("team"), Expires => To_Unbounded_String ("2099-12-31"),
+               Justification => To_Unbounded_String ("fixture"),
+               Relative_Path => To_Unbounded_String ("src/fixture.adb"), Line => 1,
+               Status => Status, Expiring => Status = Ada_Quality.Checks.Waiver_Active));
+      end loop;
+      Administrative := To_Unbounded_String (Ada_Quality.JSON.Render_Waivers (Waivers));
+      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "waiver-audit") > 0,
+        "complete waiver inventory has versioned JSON");
+      Retention.Append
+        (Ada_Quality.Storage.History_Item'
+           (Id => 7, Project_Id => 2, Status => To_Unbounded_String ("completed"),
+            Summary => Null_Unbounded_String, Source_Fingerprint => Null_Unbounded_String,
+            Policy_Fingerprint => Null_Unbounded_String, Toolchain_Fingerprint => Null_Unbounded_String));
+      Administrative := To_Unbounded_String
+        (Ada_Quality.JSON.Render_Retention (Retention, "2026-01-01T00:00:00Z", 3));
+      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "retention-preview") > 0,
+        "retention previews have versioned JSON");
+      Administrative := To_Unbounded_String
+        (Ada_Quality.JSON.Render_Merge ("source.db", True, 1, 2, 3, 4, Diagnostics));
+      Assert
+        (Ada.Strings.Fixed.Index (To_String (Administrative), "database-merge") > 0 and then
+         Ada.Strings.Fixed.Index (To_String (Administrative), "conflict") > 0,
+         "merge plans and conflicts have versioned JSON");
    end;
    declare
       Root : constant String :=
@@ -316,6 +363,18 @@ begin
       Jsonlib.Parsers.Parse
         (Project_Tools.Files.Read_Raw_File (Root & "/docs/findings.schema.json"), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error), "filtered findings JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/doctor-report.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "doctor report JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/waiver-audit.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "waiver audit JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/retention-preview.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "retention preview JSON schema is valid JSON");
+      Jsonlib.Parsers.Parse
+        (Project_Tools.Files.Read_Raw_File (Root & "/docs/database-merge.schema.json"), Doc, Error);
+      Assert (not Jsonlib.Errors.Failed (Error), "database merge JSON schema is valid JSON");
    end;
 end;
 end Run_JSON_Test;

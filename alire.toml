@@ -15,6 +15,9 @@ gnat_native = "=15.2.1"
 database = "*"
 
 [[depends-on]]
+cryptolib = "*"
+
+[[depends-on]]
 project_tools = "*"
 
 [[depends-on]]

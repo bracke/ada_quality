@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/waiver-audit-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "waivers"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "waiver-audit" }, "waivers": { "type": "array",
+    "items": { "type": "object", "additionalProperties": false,
+      "required": ["rule", "target", "owner", "expires", "justification", "path", "line", "status", "expiring"],
+      "properties": { "rule": { "type": "string" }, "target": { "type": "string" }, "owner": { "type": "string" },
+        "expires": { "type": "string" }, "justification": { "type": "string" }, "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 }, "status": { "enum": ["active", "unused", "expired", "invalid"] },
+        "expiring": { "type": "boolean" } } } } }
+}

@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/database-merge-v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "kind", "source", "dry_run", "added_projects", "added_assessments", "reused_assessments", "added_aliases", "conflicts"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "database-merge" }, "source": { "type": "string" },
+    "dry_run": { "type": "boolean" }, "added_projects": { "type": "integer", "minimum": 0 },
+    "added_assessments": { "type": "integer", "minimum": 0 }, "reused_assessments": { "type": "integer", "minimum": 0 },
+    "added_aliases": { "type": "integer", "minimum": 0 }, "conflicts": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["name", "detail"], "properties": { "name": { "type": "string" }, "detail": { "type": "string" } } } } }
+}

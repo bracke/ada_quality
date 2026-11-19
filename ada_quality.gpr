@@ -1,4 +1,5 @@
 with "database";
+with "cryptolib";
 with "project_tools";
 with "jsonlib";
 with "terminal_styles";

@@ -106,6 +106,22 @@ begin
    Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 2,
      "legacy and mismatched complexity markers do not waive a measured occurrence");
    declare
+      Inventory : constant Ada_Quality.Checks.Waiver_Audit_Vectors.Vector :=
+        Ada_Quality.Checks.Audit_Waivers (Root, Policy);
+      Active, Unused : Natural := 0;
+   begin
+      for Item of Inventory loop
+         if Item.Status = Ada_Quality.Checks.Waiver_Active then Active := Active + 1;
+         elsif Item.Status = Ada_Quality.Checks.Waiver_Unused then Unused := Unused + 1;
+         end if;
+      end loop;
+      Assert
+        (Natural (Inventory.Length) = 4 and then Active = 2 and then Unused = 2,
+         "waiver inventory includes both applicable and unused structured markers; total" &
+         Natural'Image (Natural (Inventory.Length)) & " active" & Natural'Image (Active) &
+         " unused" & Natural'Image (Unused));
+   end;
+   declare
       Expired_Path : constant String := Root & "/src/expired_example.adb";
       Expired : Ada_Quality.Checks.Source_Analysis;
       Visible : Boolean := False;

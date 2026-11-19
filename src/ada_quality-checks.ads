@@ -2,9 +2,26 @@ with Ada_Quality.Policy;
 with Ada_Quality.Execution;
 with Ada_Quality.Types;
 with Project_Tools.Files;
+with Ada.Containers.Vectors;
+with Ada.Strings.Unbounded;
 
 --  Native and external quality measurements for one isolated project assessment.
 package Ada_Quality.Checks is
+   type Waiver_Status is (Waiver_Active, Waiver_Unused, Waiver_Expired, Waiver_Invalid);
+   type Waiver_Audit_Item is record
+      Rule          : Ada.Strings.Unbounded.Unbounded_String;
+      Target        : Ada.Strings.Unbounded.Unbounded_String;
+      Owner         : Ada.Strings.Unbounded.Unbounded_String;
+      Expires       : Ada.Strings.Unbounded.Unbounded_String;
+      Justification : Ada.Strings.Unbounded.Unbounded_String;
+      Relative_Path : Ada.Strings.Unbounded.Unbounded_String;
+      Line          : Positive := 1;
+      Status        : Waiver_Status := Waiver_Invalid;
+      Expiring      : Boolean := False;
+   end record;
+   package Waiver_Audit_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Waiver_Audit_Item);
+
    --  Native and external measurements for an isolated project assessment.
    type Source_Analysis is record
       File_Count          : Natural := 0;
@@ -138,6 +155,11 @@ package Ada_Quality.Checks is
    --  @param Root Canonical project root.
    --  @param Policy Validated source limits.
    --  @return Aggregate metrics and findings.
+
+   function Audit_Waivers
+     (Root   : String;
+      Policy : Ada_Quality.Policy.Quality_Policy) return Waiver_Audit_Vectors.Vector;
+   --  Inventory every structured waiver marker, including unused, expired, and malformed markers.
 
    function Analyze_Changed_Sources
      (Root    : String;

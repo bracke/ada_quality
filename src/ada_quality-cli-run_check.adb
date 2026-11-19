@@ -88,7 +88,9 @@ is
       if Use_Project_Policy and then Project_Tools.Files.File_Exists (Override_Path) then
          return Ada_Quality.Policy.Load_Overlay (Override_Path, Loaded.Value);
       end if;
-      return (Success => True, Value => Loaded.Value, Error => Null_Unbounded_String);
+      return
+        (Success => True, Value => Loaded.Value, Present => Loaded.Present,
+         Error => Null_Unbounded_String);
    end Effective_Policy;
 
    procedure Interrupt

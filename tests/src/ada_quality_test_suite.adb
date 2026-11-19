@@ -47,6 +47,7 @@ package body Ada_Quality_Test_Suite is
    use type Ada_Quality.Checks.Metadata_Evidence_Status;
    use type Ada_Quality.Checks.Proof_Applicability_Status;
    use type Ada_Quality.Checks.Dependency_Evidence_Status;
+   use type Ada_Quality.Checks.Waiver_Status;
    use type Ada_Quality.History.Finding_Lifecycle;
    use type Ada_Quality.History.Comparison_Status;
    use type Ada_Quality.History.Regression_Kind;
@@ -66,7 +67,7 @@ package body Ada_Quality_Test_Suite is
    type Test_Kind is
      (Registry_Test, Coverage_Test, Status_Test, Policy_Test, JSON_Test, Storage_Test, Execution_Test,
       Applicability_Test, Source_Analysis_Test, Integrity_Test, Symlink_Test, History_Test,
-      Finding_Identity_Test);
+      Finding_Identity_Test, Artifact_Signing_Test);
    type Quality_Test (Kind : Test_Kind) is new AUnit.Simple_Test_Cases.Test_Case with null record;
    overriding function Name (Item : Quality_Test) return AUnit.Message_String;
    overriding procedure Run_Test (Item : in out Quality_Test);
@@ -89,24 +90,29 @@ package body Ada_Quality_Test_Suite is
    procedure Run_Symlink_Test is separate;
    procedure Run_History_Test is separate;
    procedure Run_Finding_Identity_Test is separate;
+   procedure Run_Artifact_Signing_Test is separate;
 
+   type Test_Runner is access procedure;
+   Test_Runners : constant array (Test_Kind) of Test_Runner :=
+     [Registry_Test => Run_Registry_Test'Access,
+      Coverage_Test => Run_Coverage_Test'Access,
+      Status_Test => Run_Status_Test'Access,
+      Policy_Test => Run_Policy_Test'Access,
+      JSON_Test => Run_JSON_Test'Access,
+      Storage_Test => Run_Storage_Test'Access,
+      Execution_Test => Run_Execution_Test'Access,
+      Applicability_Test => Run_Applicability_Test'Access,
+      Source_Analysis_Test => Run_Source_Analysis_Test'Access,
+      Integrity_Test => Run_Integrity_Test'Access,
+      Symlink_Test => Run_Symlink_Test'Access,
+      History_Test => Run_History_Test'Access,
+      Finding_Identity_Test => Run_Finding_Identity_Test'Access,
+      Artifact_Signing_Test => Run_Artifact_Signing_Test'Access];
+
+   --  AQ-WAIVER: SRC-03 target=run_test owner=aq expires=2099-12-31 justification=aunit-dispatch-table
    overriding procedure Run_Test (Item : in out Quality_Test) is
    begin
-      case Item.Kind is
-         when Registry_Test => Run_Registry_Test;
-         when Coverage_Test => Run_Coverage_Test;
-         when Status_Test => Run_Status_Test;
-         when Policy_Test => Run_Policy_Test;
-         when JSON_Test => Run_JSON_Test;
-         when Storage_Test => Run_Storage_Test;
-         when Execution_Test => Run_Execution_Test;
-         when Applicability_Test => Run_Applicability_Test;
-         when Source_Analysis_Test => Run_Source_Analysis_Test;
-         when Integrity_Test => Run_Integrity_Test;
-         when Symlink_Test => Run_Symlink_Test;
-         when History_Test => Run_History_Test;
-         when Finding_Identity_Test => Run_Finding_Identity_Test;
-      end case;
+      Test_Runners (Item.Kind).all;
    end Run_Test;
 
    function Suite return AUnit.Test_Suites.Access_Test_Suite is

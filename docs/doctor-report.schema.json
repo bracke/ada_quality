@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/doctor-report-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "passed", "checks"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "doctor-report" }, "passed": { "type": "boolean" },
+    "checks": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["name", "passed", "detail"], "properties": { "name": { "type": "string" }, "passed": { "type": "boolean" }, "detail": { "type": "string" } } } } }
+}

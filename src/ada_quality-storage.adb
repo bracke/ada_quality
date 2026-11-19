@@ -53,6 +53,7 @@ package body Ada_Quality.Storage is
    end Trigger_Testing_Fault;
 
    procedure Initialize_Identifiers (Item : in out Store);
+   function Assessment_Status_Image (Value : Assessment_Status) return String;
 
    function Project_Less (Left, Right : Project_Info) return Boolean is (Left.Id < Right.Id);
    package Project_Sorting is new Project_Vectors.Generic_Sorting ("<" => Project_Less);
@@ -619,38 +620,45 @@ package body Ada_Quality.Storage is
          raise;
    end Import;
 
+
+   --  AQ-WAIVER: SRC-03 target=insert owner=aq expires=2099-12-31 justification=atomic-merge-preflight-and-commit
    procedure Merge
-     (Item : in out Store; Source : String;
-      Added_Projects, Added_Assessments : out Natural)
+     (Item : in out Store; Source : String; Dry_Run : Boolean;
+      Report : out Merge_Report)
    is
       package Id_Maps is new Ada.Containers.Ordered_Maps (Positive, Positive);
+      type Project_Action is record
+         Id : Positive;
+         Path, Tags : Unbounded_String;
+         Enabled, Removed, Inserted : Boolean;
+      end record;
+      package Project_Action_Vectors is new Ada.Containers.Vectors
+        (Index_Type => Positive, Element_Type => Project_Action);
+      type Run_Action is record
+         Id : Positive;
+         Value : Assessment;
+      end record;
+      package Run_Action_Vectors is new Ada.Containers.Vectors
+        (Index_Type => Positive, Element_Type => Run_Action);
+      type Alias_Action is record
+         Run_Id : Positive;
+         Name : Unbounded_String;
+      end record;
+      package Alias_Action_Vectors is new Ada.Containers.Vectors
+        (Index_Type => Positive, Element_Type => Alias_Action);
+
       Temp : Ada_Quality.Temporary_Directories.Temporary_Directory;
       Source_Path : Unbounded_String := To_Unbounded_String (Source);
       Session : Ada_Quality.Reporting.Session;
-      Projects_Map : Id_Maps.Map;
-      Runs_Map : Id_Maps.Map;
-
-      function Insert_Project
-        (Path, Tags : String; Enabled, Removed : Boolean) return Positive
-      is
-         Id : constant Positive := Next_Id (Item, Projects_Table);
-         Tx : Database.Transactions.Transaction;
-      begin
-         Database.Transactions.Begin_Write (Item.DB, Tx);
-         Require_OK
-           (Entity_Tables.Insert
-              (Tx, Item.DB, Item.Schemas (Projects_Table),
-               (Id => Id, Parent_Id => 0, Kind => WW ("ada_project"),
-                State => WW (if Removed then "removed" else "registered"),
-                Payload => WW (Project_Payload (Path, Tags)), Active => Enabled and then not Removed)),
-            "insert merged project");
-         Require_OK (Database.Transactions.Commit (Tx), "commit merged project");
-         return Id;
-      exception
-         when others =>
-            if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
-            raise;
-      end Insert_Project;
+      Project_Map, Run_Map : Id_Maps.Map;
+      Target_Projects : Project_Vectors.Vector := Projects (Item, Include_Removed => True);
+      Target_History : constant History_Vectors.Vector := History (Item);
+      Project_Actions : Project_Action_Vectors.Vector;
+      Run_Actions : Run_Action_Vectors.Vector;
+      Alias_Actions : Alias_Action_Vectors.Vector;
+      Next_Project : Positive := Item.Next_Identifiers (Projects_Table);
+      Next_Run : Positive := Item.Next_Identifiers (Assessments_Table);
+      Tx : Database.Transactions.Transaction;
 
       function Existing_Run
         (Project_Id : Positive; Run : Ada_Quality.Reporting.Run_Record;
@@ -658,8 +666,8 @@ package body Ada_Quality.Storage is
       is
          Seen : Natural := 0;
       begin
-         for Candidate of History (Item, Project_Id) loop
-            if To_String (Candidate.Status) = "completed" and then
+         for Candidate of Target_History loop
+            if Candidate.Project_Id = Project_Id and then To_String (Candidate.Status) = "completed" and then
               Candidate.Source_Fingerprint = Run.Source_Id and then
               Candidate.Policy_Fingerprint = Run.Policy_Id and then
               Candidate.Toolchain_Fingerprint = Run.Toolchain_Id
@@ -672,22 +680,107 @@ package body Ada_Quality.Storage is
       end Existing_Run;
 
       function Source_Occurrence (Run : Ada_Quality.Reporting.Run_Record) return Positive is
-         Result : Natural := 0;
+         Count : Natural := 0;
       begin
          for Candidate of Ada_Quality.Reporting.Runs (Session, Run.Project_Id) loop
             exit when Candidate.Id > Run.Id;
-            if Candidate.State = Assessment_Completed and then
-              Candidate.Source_Id = Run.Source_Id and then Candidate.Policy_Id = Run.Policy_Id and then
-              Candidate.Toolchain_Id = Run.Toolchain_Id
+            if Candidate.State = Assessment_Completed and then Candidate.Source_Id = Run.Source_Id and then
+              Candidate.Policy_Id = Run.Policy_Id and then Candidate.Toolchain_Id = Run.Toolchain_Id
             then
-               Result := Result + 1;
+               Count := Count + 1;
             end if;
          end loop;
-         return Positive (Result);
+         return Positive (Count);
       end Source_Occurrence;
+
+      function Target_Path (Id : Positive) return Unbounded_String is
+      begin
+         for Project of Target_Projects loop
+            if Project.Id = Id then return Project.Path; end if;
+         end loop;
+         raise Storage_Error with "merge project mapping is incomplete";
+      end Target_Path;
+
+      function Alias_Target (Name : String) return Natural is
+      begin
+         for Event of Events (Item) loop
+            if To_String (Event.Kind) = "alias" and then To_String (Event.Summary) = Name then
+               return Event.Run_Id;
+            end if;
+         end loop;
+         return 0;
+      end Alias_Target;
+
+      procedure Insert_Assessment (Action : Run_Action) is
+         Value : Assessment renames Action.Value;
+         Result_Id : Natural := Reserve_Ids
+           (Item, Indicator_Results_Table, Natural (Value.Results.Length));
+         Measure_Id : Natural := Reserve_Ids
+           (Item, Measurements_Table, Natural (Value.Results.Length));
+         Finding_Count : Natural := 0;
+         Finding_Id, Execution_Id : Natural;
+         Event_Id : Positive;
+         Stamp : constant String := UTC_Now;
+         procedure Insert (Table : Positive; Row : Entity; Context : String) is
+         begin
+            Require_OK (Entity_Tables.Insert (Tx, Item.DB, Item.Schemas (Table), Row), Context);
+         end Insert;
+      begin
+         for Result of Value.Results loop
+            Finding_Count := Finding_Count + Natural (Result.Findings.Length);
+         end loop;
+         Finding_Id := Reserve_Ids (Item, Findings_Table, Finding_Count);
+         Execution_Id := Reserve_Ids (Item, Executions_Table, Natural (Value.Executions.Length));
+         Event_Id := Next_Id (Item, Events_Table);
+         Insert
+           (Assessments_Table,
+            (Id => Action.Id, Parent_Id => Value.Project_Id, Kind => WW ("assessment"),
+             State => WW (Assessment_Status_Image (Value.Status)),
+             Payload => WW (Assessment_Payload
+               (To_String (Value.Source_Fingerprint), To_String (Value.Policy_Fingerprint),
+                To_String (Value.Toolchain_Fingerprint), Started_At => Stamp, Finished_At => Stamp)),
+             Active => Value.Status = Assessment_Completed), "insert merged assessment");
+         for Result of Value.Results loop
+            Insert
+              (Indicator_Results_Table,
+               (Id => Positive (Result_Id), Parent_Id => Action.Id, Kind => WW (Image (Result.Indicator)),
+                State => WW (Image (Result.Execution) & "/" & Image (Result.Compliance)),
+                Payload => WW (Result_Payload (Result)), Active => Result.Compliance = Pass),
+               "insert merged result");
+            Result_Id := Result_Id + 1;
+            Insert
+              (Measurements_Table,
+               (Id => Positive (Measure_Id), Parent_Id => Action.Id, Kind => WW (Image (Result.Indicator)),
+                State => WW (Measurement_State (Result.Indicator, Result.Measurement.Kind)),
+                Payload => WW (Image (Result.Measurement)), Active => Result.Execution = Succeeded),
+               "insert merged measurement");
+            Measure_Id := Measure_Id + 1;
+            for Finding of Result.Findings loop
+               Insert
+                 (Findings_Table,
+                  (Id => Positive (Finding_Id), Parent_Id => Action.Id,
+                   Kind => WW (To_String (Finding.Fingerprint)), State => WW (Severity'Image (Finding.Level)),
+                   Payload => WW (Finding_Payload (Finding)), Active => True), "insert merged finding");
+               Finding_Id := Finding_Id + 1;
+            end loop;
+         end loop;
+         for Execution of Value.Executions loop
+            Insert
+              (Executions_Table,
+               (Id => Positive (Execution_Id), Parent_Id => Action.Id,
+                Kind => WW (To_String (Execution.Tool)), State => WW (Image (Execution.Status)),
+                Payload => WW (Execution_Payload (Execution)),
+                Active => Execution.Status = Tool_Completed), "insert merged execution");
+            Execution_Id := Execution_Id + 1;
+         end loop;
+         Insert
+           (Events_Table,
+            (Id => Event_Id, Parent_Id => Action.Id, Kind => WW ("published"),
+             State => WW (Assessment_Status_Image (Value.Status)),
+             Payload => WW ("atomic merge publication"), Active => True), "insert merged event");
+      end Insert_Assessment;
    begin
-      Added_Projects := 0;
-      Added_Assessments := 0;
+      Report := (Conflicts => <>, others => 0);
       begin
          Ada_Quality.Reporting.Open (Session, Source);
       exception
@@ -701,46 +794,62 @@ package body Ada_Quality.Storage is
       end;
 
       for Source_Project of Ada_Quality.Reporting.Projects (Session, Include_Removed => True) loop
-         declare Target_Id : Natural := 0; begin
-            for Target of Projects (Item, Include_Removed => True) loop
-               if Target.Path = Source_Project.Path then Target_Id := Target.Id; end if;
+         declare Target_Index : Natural := 0; begin
+            for Index in Target_Projects.First_Index .. Target_Projects.Last_Index loop
+               if Target_Projects (Index).Path = Source_Project.Path then Target_Index := Index; end if;
             end loop;
-            if Target_Id = 0 then
-               Target_Id := Insert_Project
-                 (To_String (Source_Project.Path), To_String (Source_Project.Tags),
-                  Source_Project.Enabled, Source_Project.Removed);
-               Added_Projects := Added_Projects + 1;
+            if Target_Index = 0 then
+               Project_Map.Insert (Source_Project.Id, Next_Project);
+               Project_Actions.Append
+                 (Project_Action'
+                    (Id => Next_Project, Path => Source_Project.Path, Tags => Source_Project.Tags,
+                     Enabled => Source_Project.Enabled, Removed => Source_Project.Removed, Inserted => True));
+               Target_Projects.Append
+                 (Project_Info'
+                    (Id => Next_Project, Path => Source_Project.Path, Tags => Source_Project.Tags,
+                     Enabled => Source_Project.Enabled, Removed => Source_Project.Removed));
+               Next_Project := Next_Project + 1;
+               Report.Added_Projects := Report.Added_Projects + 1;
             else
-               declare Target : constant Project_Info := Project (Item, Positive (Target_Id)); begin
-                  if not Target.Removed then
-                     for Tag of Tag_Set (To_String (Source_Project.Tags)) loop
-                        Add_Project_Tag (Item, Target.Id, To_String (Tag));
-                     end loop;
+               declare
+                  Target : Project_Info := Target_Projects (Positive (Target_Index));
+                  Tags : Tag_Sets.Set := Tag_Set (To_String (Target.Tags));
+               begin
+                  for Tag of Tag_Set (To_String (Source_Project.Tags)) loop Tags.Include (Tag); end loop;
+                  if not Target.Removed and then Tag_List (Tags) /= To_String (Target.Tags) then
+                     Target.Tags := To_Unbounded_String (Tag_List (Tags));
+                     Target_Projects.Replace_Element (Positive (Target_Index), Target);
+                     Project_Actions.Append
+                       (Project_Action'
+                          (Id => Target.Id, Path => Target.Path, Tags => Target.Tags,
+                           Enabled => Target.Enabled, Removed => Target.Removed, Inserted => False));
                   end if;
+                  Project_Map.Insert (Source_Project.Id, Target.Id);
                end;
             end if;
-            Projects_Map.Insert (Source_Project.Id, Positive (Target_Id));
          end;
       end loop;
 
       for Run of Ada_Quality.Reporting.Runs (Session) loop
          if Run.State = Assessment_Completed then
             declare
-               Target_Project : constant Positive := Projects_Map.Element (Run.Project_Id);
-               Existing : constant Natural := Existing_Run
-                 (Target_Project, Run, Source_Occurrence (Run));
+               Target_Project : constant Positive := Project_Map.Element (Run.Project_Id);
+               Existing : constant Natural := Existing_Run (Target_Project, Run, Source_Occurrence (Run));
                Target_Run : Positive;
             begin
                if Existing > 0 then
                   Target_Run := Positive (Existing);
+                  Report.Reused_Assessments := Report.Reused_Assessments + 1;
                else
+                  Target_Run := Next_Run;
+                  Next_Run := Next_Run + 1;
                   declare
                      Stored : constant Ada_Quality.Reporting.Assessment_Record :=
                        Ada_Quality.Reporting.Read_Assessment (Session, Run.Id);
                      Value : Assessment;
                   begin
                      Value.Project_Id := Target_Project;
-                     Value.Project_Path := Project (Item, Target_Project).Path;
+                     Value.Project_Path := Target_Path (Target_Project);
                      Value.Source_Fingerprint := Run.Source_Id;
                      Value.Policy_Fingerprint := Run.Policy_Id;
                      Value.Toolchain_Fingerprint := Run.Toolchain_Id;
@@ -749,32 +858,109 @@ package body Ada_Quality.Storage is
                      for Execution of Stored.Executions loop
                         Value.Executions.Append
                           (Tool_Execution'
-                             (Tool => Execution.Tool, Command => Execution.Command,
-                              Status => Execution.Status, Exit_Code => Execution.Exit_Code,
-                              Output_Digest => Execution.Output_Digest,
+                             (Tool => Execution.Tool, Command => Execution.Command, Status => Execution.Status,
+                              Exit_Code => Execution.Exit_Code, Output_Digest => Execution.Output_Digest,
                               Output_Bytes => Execution.Output_Bytes, Truncated => Execution.Truncated));
                      end loop;
-                     Target_Run := Publish (Item, Value);
-                     Added_Assessments := Added_Assessments + 1;
+                     if not Is_Publishable (Value) then
+                        raise Storage_Error with "source contains an unpublishable completed assessment";
+                     end if;
+                     Run_Actions.Append (Run_Action'(Id => Target_Run, Value => Value));
+                     Report.Added_Assessments := Report.Added_Assessments + 1;
                   end;
                end if;
-               Runs_Map.Insert (Run.Id, Target_Run);
+               Run_Map.Insert (Run.Id, Target_Run);
             end;
          end if;
       end loop;
 
-      declare Existing_Aliases : Tag_Sets.Set; begin
-         for Event of Events (Item) loop
-            if To_String (Event.Kind) = "alias" then Existing_Aliases.Include (Event.Summary); end if;
-         end loop;
-         for Alias of Ada_Quality.Reporting.Aliases (Session) loop
-            if Runs_Map.Contains (Alias.Run_Id) and then not Existing_Aliases.Contains (Alias.Name) then
-               Add_Assessment_Alias (Item, Runs_Map.Element (Alias.Run_Id), To_String (Alias.Name));
-               Existing_Aliases.Include (Alias.Name);
-            end if;
-         end loop;
+      for Source_Alias of Ada_Quality.Reporting.Aliases (Session) loop
+         if Run_Map.Contains (Source_Alias.Run_Id) then
+            declare
+               Existing : constant Natural := Alias_Target (To_String (Source_Alias.Name));
+               Target : constant Positive := Run_Map.Element (Source_Alias.Run_Id);
+            begin
+               if Existing = 0 then
+                  Alias_Actions.Append (Alias_Action'(Run_Id => Target, Name => Source_Alias.Name));
+                  Report.Added_Aliases := Report.Added_Aliases + 1;
+               elsif Existing /= Target then
+                  Report.Conflicts.Append
+                    (Merge_Conflict'
+                       (Name => Source_Alias.Name,
+                        Detail => To_Unbounded_String
+                          ("target assessment" & Positive'Image (Target) &
+                           " conflicts with existing assessment" & Natural'Image (Existing))));
+               end if;
+            end;
+         end if;
+      end loop;
+      if Dry_Run then return; end if;
+      if not Report.Conflicts.Is_Empty then
+         return;
+      end if;
+
+      declare
+         Dummy : Positive;
+      begin
+         if Report.Added_Projects > 0 then
+            Dummy := Reserve_Ids (Item, Projects_Table, Report.Added_Projects);
+         end if;
+         if Report.Added_Assessments > 0 then
+            Dummy := Reserve_Ids (Item, Assessments_Table, Report.Added_Assessments);
+         end if;
+         pragma Unreferenced (Dummy);
       end;
+      Database.Transactions.Begin_Write (Item.DB, Tx);
+      for Action of Project_Actions loop
+         if Action.Inserted then
+            Require_OK
+              (Entity_Tables.Insert
+                 (Tx, Item.DB, Item.Schemas (Projects_Table),
+                  (Id => Action.Id, Parent_Id => 0, Kind => WW ("ada_project"),
+                   State => WW (if Action.Removed then "removed" else "registered"),
+                   Payload => WW (Project_Payload (To_String (Action.Path), To_String (Action.Tags))),
+                   Active => Action.Enabled and then not Action.Removed)), "insert merged project");
+         else
+            declare Row : Entity; begin
+               Require_OK
+                 (Entity_Tables.Find (Tx, Item.DB, Item.Schemas (Projects_Table), Action.Id, Row),
+                  "load merged project tags");
+               Row.Payload := WW (Project_Payload (To_String (Action.Path), To_String (Action.Tags)));
+               Require_OK
+                 (Entity_Tables.Update (Tx, Item.DB, Item.Schemas (Projects_Table), Row),
+                  "update merged project tags");
+            end;
+         end if;
+      end loop;
+      for Action of Run_Actions loop Insert_Assessment (Action); end loop;
+      for Action of Alias_Actions loop
+         Require_OK
+           (Entity_Tables.Insert
+              (Tx, Item.DB, Item.Schemas (Events_Table),
+               (Id => Next_Id (Item, Events_Table), Parent_Id => Action.Run_Id,
+                Kind => WW ("alias"), State => WW ("alias"), Payload => WW (To_String (Action.Name)),
+                Active => True)), "insert merged alias");
+      end loop;
+      Require_OK (Database.Transactions.Commit (Tx), "commit atomic database merge");
       Check (Item);
+   exception
+      when others =>
+         if Database.Transactions.Is_Active (Tx) then Database.Transactions.Rollback (Tx); end if;
+         raise;
+   end Merge;
+
+   procedure Merge
+     (Item : in out Store; Source : String;
+      Added_Projects, Added_Assessments : out Natural)
+   is
+      Report : Merge_Report;
+   begin
+      Merge (Item, Source, Dry_Run => False, Report => Report);
+      if not Report.Conflicts.Is_Empty then
+         raise Storage_Error with "merge has alias conflicts";
+      end if;
+      Added_Projects := Report.Added_Projects;
+      Added_Assessments := Report.Added_Assessments;
    end Merge;
 
    function Retention_Candidates
