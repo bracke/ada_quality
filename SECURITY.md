@@ -25,3 +25,8 @@ Keep generated private signing keys outside repositories and shared artifact
 directories. `database keygen` creates private keys with owner-only permissions
 and refuses to overwrite existing key files. Verification is meaningful only
 when the public key was obtained through a trusted channel.
+
+`database trust add` records a public key under its SHA-256-derived Ed25519 identity. `database verify
+--trust-store DIR` resolves the identity embedded in signed metadata and then performs full cryptographic
+verification; inspection alone never establishes trust. Review `database trust list` and revoke obsolete identities
+with `database trust remove`. Release archives additionally carry checksums, an SPDX SBOM, and provenance.

@@ -9,8 +9,8 @@ with "regexp";
 project Coverage is
    Coverage_Root := external ("ADA_QUALITY_COVERAGE_ROOT", ".");
 
-   for Languages use ("Ada");
-   for Source_Dirs use ("src", "../src");
+   for Languages use ("Ada", "C");
+   for Source_Dirs use ("src", "../src", "../config");
    for Object_Dir use Coverage_Root & "/obj";
    for Exec_Dir use Coverage_Root & "/bin";
    for Main use ("ada_quality_tests.adb", "ada_quality_cli.adb", "ada_quality_check_all.adb");
@@ -21,6 +21,8 @@ project Coverage is
    package Compiler is
       for Default_Switches ("Ada") use
         ("-g", "-O0", "-gnat2022", "-gnatyM120", "-gnata") & Coverage_Switches;
+      for Default_Switches ("C") use
+        ("-g", "-O0", "-std=c11", "-Wall", "-Wextra", "-Werror") & Coverage_Switches;
    end Compiler;
 
    package Binder is

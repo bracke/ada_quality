@@ -1,9 +1,16 @@
 PREFIX ?= /usr/local
 DESTDIR ?=
-VERSION := 0.1.0
+VERSION := $(shell sed -n 's/^version = "\([^"]*\)"/\1/p' alire.toml)
 SCHEMAS := $(wildcard docs/*.schema.json)
 
-.PHONY: build test install uninstall package clean-package
+ifeq ($(strip $(VERSION)),)
+$(error Unable to read the release version from alire.toml)
+endif
+
+.PHONY: build test install uninstall package clean-package print-version
+
+print-version:
+	@printf '%s\n' '$(VERSION)'
 
 build:
 	alr -n build

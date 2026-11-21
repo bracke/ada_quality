@@ -30,3 +30,8 @@ AUnit execution; the instrumented suite remains part of the coverage gate. Sourc
 binary caches make unchanged rebuilds incremental without allowing artifacts from a different source or dependency
 revision. The final check rejects tracked mutations. The job has a 45-minute timeout, and a newer run on the same
 branch cancels an older in-progress run.
+
+`.github/workflows/release.yml` runs for version tags (or an explicitly selected existing tag). It repeats the
+validation and test gates, builds the self-contained package, writes SHA-256 checksums, generates an SPDX JSON SBOM,
+attests the archive and SBOM with GitHub's OIDC-backed artifact attestation service, and publishes all assets to the
+tag's GitHub release. The tag must exactly match the version in `alire.toml`.

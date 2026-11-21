@@ -3,6 +3,8 @@ with Ada.Exceptions;
 with Ada.Strings.Fixed;
 with Interfaces;
 with Project_Tools.Files;
+with Ada_Quality.Bounded_Files;
+with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Policy is
    use Ada.Strings.Unbounded;
@@ -13,6 +15,63 @@ package body Ada_Quality.Policy is
    function Trim (Text : String) return String is
      (Ada.Strings.Fixed.Trim (Text, Ada.Strings.Both));
 
+   function Name (Key : Policy_Key) return String is
+     (case Key is
+         when Coverage_Minimum_Key => "coverage_minimum_basis_points",
+         when Source_Lines_Key     => "maximum_source_lines",
+         when Complexity_Key       => "maximum_complexity",
+         when Timeout_Key          => "process_timeout_seconds",
+         when Output_Key           => "maximum_output_bytes",
+         when Clean_Worktree_Key   => "require_clean_worktree");
+
+   function Is_Boolean (Key : Policy_Key) return Boolean is
+     (Key = Clean_Worktree_Key);
+
+   function Natural_Value
+     (Item : Quality_Policy; Key : Policy_Key) return Natural is
+     (case Key is
+         when Coverage_Minimum_Key => Item.Coverage_Minimum_Basis_Points,
+         when Source_Lines_Key     => Item.Maximum_Source_Lines,
+         when Complexity_Key       => Item.Maximum_Complexity,
+         when Timeout_Key          => Item.Process_Timeout_Seconds,
+         when Output_Key           => Item.Maximum_Output_Bytes,
+         when Clean_Worktree_Key   => raise Constraint_Error);
+
+   function Boolean_Value
+     (Item : Quality_Policy; Key : Policy_Key) return Boolean is
+     (case Key is
+         when Clean_Worktree_Key => Item.Require_Clean_Worktree,
+         when others             => raise Constraint_Error);
+
+   function Value_Image (Item : Quality_Policy; Key : Policy_Key) return String is
+     (if Is_Boolean (Key)
+      then (if Boolean_Value (Item, Key) then "true" else "false")
+      else Trim (Natural'Image (Natural_Value (Item, Key))));
+
+   function Changed
+     (Left, Right : Quality_Policy; Key : Policy_Key) return Boolean is
+     (if Is_Boolean (Key)
+      then Boolean_Value (Left, Key) /= Boolean_Value (Right, Key)
+      else Natural_Value (Left, Key) /= Natural_Value (Right, Key));
+
+   function Is_Present (Sources : Key_Presence; Key : Policy_Key) return Boolean is
+     (case Key is
+         when Coverage_Minimum_Key => Sources.Coverage_Minimum_Basis_Points,
+         when Source_Lines_Key     => Sources.Maximum_Source_Lines,
+         when Complexity_Key       => Sources.Maximum_Complexity,
+         when Timeout_Key          => Sources.Process_Timeout_Seconds,
+         when Output_Key           => Sources.Maximum_Output_Bytes,
+         when Clean_Worktree_Key   => Sources.Require_Clean_Worktree);
+
+   function Affected_Indicators (Key : Policy_Key) return String is
+     (case Key is
+         when Coverage_Minimum_Key => "TST-03",
+         when Source_Lines_Key     => "SRC-06",
+         when Complexity_Key       => "SRC-03",
+         when Timeout_Key | Output_Key =>
+           "BLD-01,BLD-02,TST-01,TST-03,TST-04,DOC-02,DEP-01,REL-01,PRF-01",
+         when Clean_Worktree_Key => "REL-04");
+
    function Load_Overlay
      (Path : String; Base : Quality_Policy) return Load_Result is
       Result  : Load_Result :=
@@ -20,8 +79,6 @@ package body Ada_Quality.Policy is
          Error => Null_Unbounded_String);
       Content : Unbounded_String;
       Start   : Positive := 1;
-      type Policy_Key is
-        (Coverage_Key, Source_Lines_Key, Complexity_Key, Timeout_Key, Output_Key, Clean_Key);
       Seen : array (Policy_Key) of Boolean := [others => False];
 
       procedure Mark (Key : Policy_Key) is
@@ -29,32 +86,28 @@ package body Ada_Quality.Policy is
          if Seen (Key) then raise Constraint_Error with "duplicate policy key"; end if;
          Seen (Key) := True;
          case Key is
-            when Coverage_Key => Result.Present.Coverage_Minimum_Basis_Points := True;
+            when Coverage_Minimum_Key => Result.Present.Coverage_Minimum_Basis_Points := True;
             when Source_Lines_Key => Result.Present.Maximum_Source_Lines := True;
             when Complexity_Key => Result.Present.Maximum_Complexity := True;
             when Timeout_Key => Result.Present.Process_Timeout_Seconds := True;
             when Output_Key => Result.Present.Maximum_Output_Bytes := True;
-            when Clean_Key => Result.Present.Require_Clean_Worktree := True;
+            when Clean_Worktree_Key => Result.Present.Require_Clean_Worktree := True;
          end case;
       end Mark;
 
       function Parse_Key (Text : String) return Policy_Key is
       begin
-         if Text = "coverage_minimum_basis_points" then return Coverage_Key;
-         elsif Text = "maximum_source_lines" then return Source_Lines_Key;
-         elsif Text = "maximum_complexity" then return Complexity_Key;
-         elsif Text = "process_timeout_seconds" then return Timeout_Key;
-         elsif Text = "maximum_output_bytes" then return Output_Key;
-         elsif Text = "require_clean_worktree" then return Clean_Key;
-         else raise Constraint_Error with "unknown policy key: " & Text;
-         end if;
+         for Key in Policy_Key loop
+            if Text = Name (Key) then return Key; end if;
+         end loop;
+         raise Constraint_Error with "unknown policy key: " & Text;
       end Parse_Key;
 
       procedure Assign (Key : Policy_Key; Value : String) is
       begin
          Mark (Key);
          case Key is
-            when Coverage_Key =>
+            when Coverage_Minimum_Key =>
                Result.Value.Coverage_Minimum_Basis_Points := Natural'Value (Value);
                if Result.Value.Coverage_Minimum_Basis_Points > 10_000 then raise Constraint_Error; end if;
             when Source_Lines_Key =>
@@ -69,7 +122,7 @@ package body Ada_Quality.Policy is
             when Output_Key =>
                Result.Value.Maximum_Output_Bytes := Positive'Value (Value);
                if Result.Value.Maximum_Output_Bytes > 16 * 1_024 * 1_024 then raise Constraint_Error; end if;
-            when Clean_Key =>
+            when Clean_Worktree_Key =>
                if Value not in "true" | "false" then
                   raise Constraint_Error with "policy booleans must be TOML true or false";
                end if;
@@ -131,7 +184,9 @@ package body Ada_Quality.Policy is
             Error => To_Unbounded_String ("policy file not found: " & Path));
       end if;
 
-      Content := To_Unbounded_String (Project_Tools.Files.Read_Raw_File (Path));
+      Content := To_Unbounded_String
+        (Ada_Quality.Bounded_Files.Read
+           (Path, Ada_Quality.Resource_Limits.Maximum_File_Bytes));
       declare
          Text : constant String := To_String (Content);
       begin
@@ -174,42 +229,28 @@ package body Ada_Quality.Policy is
       (for all C of Name => C in 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '-'));
 
    function Render (Item : Quality_Policy) return String is
-      function Image (Value : Natural) return String is
-        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+      Result : Unbounded_String;
    begin
-      return
-        ("coverage_minimum_basis_points = " & Image (Item.Coverage_Minimum_Basis_Points) & ASCII.LF &
-         "maximum_source_lines = " & Image (Item.Maximum_Source_Lines) & ASCII.LF &
-         "maximum_complexity = " & Image (Item.Maximum_Complexity) & ASCII.LF &
-         "process_timeout_seconds = " & Image (Item.Process_Timeout_Seconds) & ASCII.LF &
-         "maximum_output_bytes = " & Image (Item.Maximum_Output_Bytes) & ASCII.LF &
-         "require_clean_worktree = " &
-           (if Item.Require_Clean_Worktree then "true" else "false") & ASCII.LF);
+      for Key in Policy_Key loop
+         Append (Result, Name (Key) & " = " & Value_Image (Item, Key) & ASCII.LF);
+      end loop;
+      return To_String (Result);
    end Render;
 
    function Explain
      (Item : Quality_Policy; Sources : Key_Presence;
       Base_Source, Overlay_Source : String) return String
    is
-      function Image (Value : Natural) return String is
-        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
       function Source (Overlay : Boolean) return String is
         (if Overlay then Overlay_Source else Base_Source);
+      Result : Unbounded_String;
    begin
-      return
-        "coverage_minimum_basis_points = " & Image (Item.Coverage_Minimum_Basis_Points) &
-          "    # from " & Source (Sources.Coverage_Minimum_Basis_Points) & ASCII.LF &
-        "maximum_source_lines = " & Image (Item.Maximum_Source_Lines) &
-          "    # from " & Source (Sources.Maximum_Source_Lines) & ASCII.LF &
-        "maximum_complexity = " & Image (Item.Maximum_Complexity) &
-          "    # from " & Source (Sources.Maximum_Complexity) & ASCII.LF &
-        "process_timeout_seconds = " & Image (Item.Process_Timeout_Seconds) &
-          "    # from " & Source (Sources.Process_Timeout_Seconds) & ASCII.LF &
-        "maximum_output_bytes = " & Image (Item.Maximum_Output_Bytes) &
-          "    # from " & Source (Sources.Maximum_Output_Bytes) & ASCII.LF &
-        "require_clean_worktree = " &
-          (if Item.Require_Clean_Worktree then "true" else "false") &
-          "    # from " & Source (Sources.Require_Clean_Worktree) & ASCII.LF;
+      for Key in Policy_Key loop
+         Append
+           (Result, Name (Key) & " = " & Value_Image (Item, Key) &
+              "    # from " & Source (Is_Present (Sources, Key)) & ASCII.LF);
+      end loop;
+      return To_String (Result);
    end Explain;
 
    function Diff (Left, Right : Quality_Policy) return String is
@@ -218,42 +259,32 @@ package body Ada_Quality.Policy is
       begin
          Append (Result, Key & ": " & Before & " -> " & After & ASCII.LF);
       end Add;
-      function Image (Value : Natural) return String is
-        (Ada.Strings.Fixed.Trim (Natural'Image (Value), Ada.Strings.Both));
+      function Diff_Image (Item : Quality_Policy; Key : Policy_Key) return String is
+        (if Is_Boolean (Key)
+         then Boolean'Image (Boolean_Value (Item, Key))
+         else Value_Image (Item, Key));
    begin
-      if Left.Coverage_Minimum_Basis_Points /= Right.Coverage_Minimum_Basis_Points then
-         Add ("coverage_minimum_basis_points", Image (Left.Coverage_Minimum_Basis_Points),
-              Image (Right.Coverage_Minimum_Basis_Points));
-      end if;
-      if Left.Maximum_Source_Lines /= Right.Maximum_Source_Lines then
-         Add ("maximum_source_lines", Image (Left.Maximum_Source_Lines), Image (Right.Maximum_Source_Lines));
-      end if;
-      if Left.Maximum_Complexity /= Right.Maximum_Complexity then
-         Add ("maximum_complexity", Image (Left.Maximum_Complexity), Image (Right.Maximum_Complexity));
-      end if;
-      if Left.Process_Timeout_Seconds /= Right.Process_Timeout_Seconds then
-         Add ("process_timeout_seconds", Image (Left.Process_Timeout_Seconds),
-              Image (Right.Process_Timeout_Seconds));
-      end if;
-      if Left.Maximum_Output_Bytes /= Right.Maximum_Output_Bytes then
-         Add ("maximum_output_bytes", Image (Left.Maximum_Output_Bytes), Image (Right.Maximum_Output_Bytes));
-      end if;
-      if Left.Require_Clean_Worktree /= Right.Require_Clean_Worktree then
-         Add ("require_clean_worktree", Boolean'Image (Left.Require_Clean_Worktree),
-              Boolean'Image (Right.Require_Clean_Worktree));
-      end if;
+      for Key in Policy_Key loop
+         if Changed (Left, Right, Key) then
+            Add (Name (Key), Diff_Image (Left, Key), Diff_Image (Right, Key));
+         end if;
+      end loop;
       return (if Length (Result) = 0 then "no policy differences" & ASCII.LF else To_String (Result));
    end Diff;
 
    function Fingerprint (Item : Quality_Policy) return String is
-      Text : constant String :=
-        Natural'Image (Item.Coverage_Minimum_Basis_Points) & ":" &
-        Positive'Image (Item.Maximum_Source_Lines) & ":" & Positive'Image (Item.Maximum_Complexity) & ":" &
-        Positive'Image (Item.Process_Timeout_Seconds) & ":" & Positive'Image (Item.Maximum_Output_Bytes) & ":" &
-        Boolean'Image (Item.Require_Clean_Worktree);
+      Text : Unbounded_String;
       Hash : Interfaces.Unsigned_64 := 16#CBF29CE484222325#;
    begin
-      for C of Text loop
+      for Key in Policy_Key loop
+         if Key /= Policy_Key'First then Append (Text, ":"); end if;
+         Append
+           (Text,
+            (if Is_Boolean (Key)
+             then Boolean'Image (Boolean_Value (Item, Key))
+             else Natural'Image (Natural_Value (Item, Key))));
+      end loop;
+      for C of To_String (Text) loop
          Hash := (Hash xor Interfaces.Unsigned_64 (Character'Pos (C))) * 16#100000001B3#;
       end loop;
       return Interfaces.Unsigned_64'Image (Hash);

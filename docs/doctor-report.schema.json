@@ -1,7 +1,49 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/doctor-report-v1.schema.json",
-  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "passed", "checks"],
-  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "doctor-report" }, "passed": { "type": "boolean" },
-    "checks": { "type": "array", "items": { "type": "object", "additionalProperties": false,
-      "required": ["name", "passed", "detail"], "properties": { "name": { "type": "string" }, "passed": { "type": "boolean" }, "detail": { "type": "string" } } } } }
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/doctor-report.schema.json",
+  "$defs": {
+    "check": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "passed", "detail"],
+      "properties": {
+        "name": { "type": "string" }, "passed": { "type": "boolean" },
+        "detail": { "type": "string" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "kind", "passed", "failure_count", "maximum_failures", "threshold_passed", "checks"],
+      "properties": {
+        "schema_version": { "const": 1 }, "kind": { "const": "doctor-report" },
+        "passed": { "type": "boolean" },
+        "failure_count": { "type": "integer", "minimum": 0 },
+        "maximum_failures": { "type": "integer", "minimum": 0 },
+        "threshold_passed": { "type": "boolean" },
+        "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "kind", "passed", "failure_count", "maximum_failures", "threshold_passed", "checks", "projects"],
+      "properties": {
+        "schema_version": { "const": 2 }, "kind": { "const": "doctor-report" },
+        "passed": { "type": "boolean" },
+        "failure_count": { "type": "integer", "minimum": 0 },
+        "maximum_failures": { "type": "integer", "minimum": 0 },
+        "threshold_passed": { "type": "boolean" },
+        "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } },
+        "projects": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project_id", "path", "passed", "checks"],
+          "properties": {
+            "project_id": { "type": "integer", "minimum": 0 }, "path": { "type": "string" },
+            "passed": { "type": "boolean" },
+            "checks": { "type": "array", "items": { "$ref": "#/$defs/check" } }
+          }
+        } }
+      }
+    }
+  ]
 }

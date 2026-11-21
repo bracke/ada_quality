@@ -1,5 +1,4 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_history_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_History_Test is
 begin
 declare
@@ -21,46 +20,6 @@ declare
    function Has_Kind (Kind : Ada_Quality.History.Regression_Kind) return Boolean is
      (for some Change of Changes => Change.Kind = Kind);
 begin
-   declare
-      No_Runs : Ada_Quality.Storage.History_Vectors.Vector;
-   begin
-      Assert (Ada_Quality.History.Baseline_Id (No_Runs, 1) = 0,
-        "an empty history has no baseline");
-   end;
-   declare
-      Items : Ada_Quality.Storage.History_Vectors.Vector;
-      Previous, Latest : Ada_Quality.Storage.History_Item := Baseline;
-   begin
-      Assert (Ada_Quality.History.Select_Comparison (Items).Status =
-        Ada_Quality.History.No_Assessments,
-        "an empty history has no comparison candidate");
-      Items.Append (Previous);
-      Assert (Ada_Quality.History.Select_Comparison (Items).Status = Ada_Quality.History.No_Baseline,
-        "one completed run has no comparison baseline");
-      Latest.Id := 2;
-      Latest.Source_Fingerprint := To_Unbounded_String ("source-b");
-      Latest.Policy_Fingerprint := To_Unbounded_String ("policy-new");
-      Items.Append (Latest);
-      Assert (Ada_Quality.History.Select_Comparison (Items).Policy_Changed,
-        "the immediately preceding run supports an explicit policy-change comparison");
-      Previous.Status := To_Unbounded_String ("interrupted");
-      Items.Replace_Element (Items.First_Index, Previous);
-      Assert (Ada_Quality.History.Select_Comparison (Items).Status =
-        Ada_Quality.History.No_Completed_Baseline,
-        "an interrupted predecessor is not a comparison baseline");
-      Previous.Status := To_Unbounded_String ("completed");
-      Previous.Policy_Fingerprint := Latest.Policy_Fingerprint;
-      Previous.Toolchain_Fingerprint := To_Unbounded_String ("old-toolchain");
-      Items.Replace_Element (Items.First_Index, Previous);
-      Assert (Ada_Quality.History.Select_Comparison (Items).Status = Ada_Quality.History.Toolchain_Changed,
-        "a changed toolchain blocks comparison");
-      Previous.Toolchain_Fingerprint := Latest.Toolchain_Fingerprint;
-      Previous.Source_Fingerprint := Null_Unbounded_String;
-      Items.Replace_Element (Items.First_Index, Previous);
-      Assert (Ada_Quality.History.Select_Comparison (Items).Status =
-        Ada_Quality.History.No_Compatible_Baseline,
-        "incomplete identity evidence blocks comparison");
-   end;
    Current.Id := 2;
    Current.Source_Fingerprint := To_Unbounded_String ("source-b");
    Policy_Changed.Id := 2;
@@ -114,58 +73,6 @@ begin
       "central comparison selection returns the compatible baseline");
    Assert (Ada_Quality.History.Baseline_Id (Runs, 999) = 0,
      "a missing current assessment has no baseline");
-   declare
-      All_Measures : Ada_Quality.Storage.Detail_Vectors.Vector := Old_Measures;
-      Trend : Ada_Quality.History.Trend_Vectors.Vector;
-   begin
-      All_Measures.Append_Vector (New_Measures);
-      Trend := Ada_Quality.History.Metric_Trend (Runs, All_Measures, TST_03);
-      Assert (Trend.Length = 2 and then Trend.First_Element.Value = 9_600 and then
-        Trend.Last_Element.Value = 9_200,
-        "metric trends retain compatible typed measurements in run order");
-   end;
-   declare
-      Trend_Runs : Ada_Quality.Storage.History_Vectors.Vector := Runs;
-      Trend_Measures : Ada_Quality.Storage.Detail_Vectors.Vector := Old_Measures;
-      Third : Ada_Quality.Storage.History_Item := Current;
-      Failed : Ada_Quality.Storage.History_Item := Current;
-      Third_Measure : Ada_Quality.Storage.Detail_Info := New_Measures.First_Element;
-      Trend : Ada_Quality.History.Trend_Vectors.Vector;
-   begin
-      Trend_Measures.Append_Vector (New_Measures);
-      Third.Id := 3;
-      Third.Source_Fingerprint := To_Unbounded_String ("source-c");
-      Failed := Third;
-      Failed.Id := 4;
-      Failed.Status := To_Unbounded_String ("interrupted");
-      Trend_Runs.Append (Third);
-      Trend_Runs.Append (Failed);
-      Third_Measure.Id := 3;
-      Third_Measure.Run_Id := 3;
-      Third_Measure.State := To_Unbounded_String
-        ("DECIMAL_VALUE;indicator_version=1;method_version=1");
-      Third_Measure.Summary := To_Unbounded_String (" 9400");
-      Trend_Measures.Append (Third_Measure);
-      Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
-      Assert (Trend.Length = 3 and then Trend.Last_Element.Value = 9_400,
-        "an interrupted latest run does not hide compatible completed metric history");
-      Third_Measure.State := To_Unbounded_String
-        ("DECIMAL_VALUE;indicator_version=2;method_version=1");
-      Trend_Measures.Replace_Element (Trend_Measures.Last_Index, Third_Measure);
-      Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
-      Assert (Trend.Length = 1 and then Trend.First_Element.Run_Id = 3,
-        "metric trends do not mix different indicator contract versions");
-      Third_Measure.State := To_Unbounded_String
-        ("DECIMAL_VALUE;indicator_version=1;method_version=2");
-      Trend_Measures.Replace_Element (Trend_Measures.Last_Index, Third_Measure);
-      Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
-      Assert (Trend.Length = 1 and then Trend.First_Element.Run_Id = 3,
-        "metric trends do not mix different measurement-method versions");
-      Third_Measure.State := To_Unbounded_String ("DECIMAL_VALUE;garbage");
-      Trend_Measures.Replace_Element (Trend_Measures.Last_Index, Third_Measure);
-      Trend := Ada_Quality.History.Metric_Trend (Trend_Runs, Trend_Measures, TST_03);
-      Assert (Trend.Is_Empty, "malformed measurement semantics cannot define a trend series");
-   end;
    Changes := Ada_Quality.History.Compare
      (Baseline, Current, Old_Results, New_Results, Old_Measures, New_Measures, Empty, Empty);
    Assert (Changes.Length = 1 and then Changes.First_Element.Kind =

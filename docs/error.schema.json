@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/error-v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "kind", "code", "message", "command", "exit_status"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "error" },
+    "code": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }, "message": { "type": "string" },
+    "command": { "type": "string" }, "exit_status": { "type": "integer", "minimum": 1, "maximum": 4 } }
+}

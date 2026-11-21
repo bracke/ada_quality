@@ -7,9 +7,10 @@
     "schema_version": { "const": 1 },
     "kind": { "const": "findings" },
     "page": { "type": "object", "additionalProperties": false,
-      "required": ["total", "offset", "limit"], "properties": {
+      "required": ["total", "offset", "limit", "snapshot"], "properties": {
         "total": { "type": "integer", "minimum": 0 }, "offset": { "type": "integer", "minimum": 0 },
-        "limit": { "type": "integer", "minimum": 0 }, "next_cursor": { "type": "string", "pattern": "^v1:[0-9]+$" } } },
+        "limit": { "type": "integer", "minimum": 0 }, "snapshot": { "type": "integer", "minimum": 0 },
+        "next_cursor": { "type": "string", "pattern": "^(v1:[0-9]+|v2:[0-9]+:[0-9]+|v3:[0-9]+:[0-9]+:[0-9]+|v4:[0-9]+:[0-9]+:[0-9]+:[0-9]+|v5:[0-9]+:[0-9]+:[0-9]+:[0-9]+:[0-9]+)$" } } },
     "findings": {
       "type": "array",
       "items": {

@@ -2,12 +2,16 @@ with Ada.Command_Line;
 with Ada.Containers;
 with Ada.Directories;
 with Ada.Exceptions;
+with Ada.Strings.Fixed;
 with Ada.Text_IO;
 with GNAT.OS_Lib;
 with Project_Tools.Files;
 with Project_Tools.Release_Checks;
+with Ada_Quality.Bounded_Files;
 with Ada_Quality.Checks;
 with Ada_Quality.Indicators;
+with Ada_Quality.Resource_Limits;
+with Ada_Quality.Schema_Catalog;
 
 procedure Ada_Quality_Check_All is
    --  Release-checker entry point for required files, registry cardinality, and AUnit execution.
@@ -67,27 +71,11 @@ begin
    Check.Require_File ("docs/DATABASE.md");
    Check.Require_File ("docs/CLI.md");
    Check.Require_File ("docs/ASSESSMENT.md");
-   Check.Require_File ("docs/assessment.schema.json");
-   Check.Require_File ("docs/archive.schema.json");
-   Check.Require_File ("docs/assessment-batch.schema.json");
-   Check.Require_File ("docs/assessment-reuse.schema.json");
-   Check.Require_File ("docs/check-plan.schema.json");
-   Check.Require_File ("docs/metric-trend.schema.json");
-   Check.Require_File ("docs/metric-trends.schema.json");
-   Check.Require_File ("docs/assessment-history.schema.json");
-   Check.Require_File ("docs/assessment-comparison.schema.json");
-   Check.Require_File ("docs/portfolio-status.schema.json");
-   Check.Require_File ("docs/indicator-catalog.schema.json");
-   Check.Require_File ("docs/changed-source-scan.schema.json");
-   Check.Require_File ("docs/project-list.schema.json");
-   Check.Require_File ("docs/project-discovery.schema.json");
-   Check.Require_File ("docs/assessment-aliases.schema.json");
-   Check.Require_File ("docs/database-statistics.schema.json");
-   Check.Require_File ("docs/findings.schema.json");
-   Check.Require_File ("docs/doctor-report.schema.json");
-   Check.Require_File ("docs/waiver-audit.schema.json");
-   Check.Require_File ("docs/retention-preview.schema.json");
-   Check.Require_File ("docs/database-merge.schema.json");
+   for Index in Ada_Quality.Schema_Catalog.Schema_Index loop
+      Check.Require_File
+        ("docs/" & Ada_Quality.Schema_Catalog.Name (Index));
+   end loop;
+   Check.Require_File (".github/workflows/release.yml");
    Check.Require_File ("docs/ada-quality.1");
    for Name of Required_Phase_Documents loop
       Check.Require_File ("docs/" & Name.all);
@@ -111,14 +99,25 @@ begin
    if Ada_Quality.Indicators.Count /= 33 then
       Project_Tools.Release_Checks.Fail ("indicator registry must contain exactly 33 entries");
    end if;
+   if Ada.Strings.Fixed.Index
+     (Ada_Quality.Bounded_Files.Read
+        (Root & "/alire.toml", Ada_Quality.Resource_Limits.Maximum_File_Bytes),
+      "version = """ & Ada_Quality.Version & """") = 0
+   then
+      Project_Tools.Release_Checks.Fail
+        ("Ada package version does not match alire.toml");
+   end if;
    declare
       Coverage_Path : constant String := Root & "/coverage/gcov-summary.txt";
       Recorded : constant String :=
         Project_Tools.Files.Value_Of (Coverage_Path, "source_fingerprint");
       Current : constant String := Ada_Quality.Checks.Source_Fingerprint (Root);
    begin
-      if Project_Tools.Files.Read_Raw_File (Coverage_Path) /=
-        Project_Tools.Files.Read_Raw_File (Root & "/coverage/gcov-stability.txt")
+      if Ada_Quality.Bounded_Files.Read
+        (Coverage_Path, Ada_Quality.Resource_Limits.Maximum_File_Bytes) /=
+        Ada_Quality.Bounded_Files.Read
+          (Root & "/coverage/gcov-stability.txt",
+           Ada_Quality.Resource_Limits.Maximum_File_Bytes)
       then
          Project_Tools.Release_Checks.Fail
            ("coverage summary and stability evidence do not match");

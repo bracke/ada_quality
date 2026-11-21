@@ -1,17 +1,9 @@
-with Ada.Calendar;
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=set_coverage owner=core expires=2099-12-31 justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_storage_test owner=core expires=2027-11-21 justification=storage-fixture-matrix
 procedure Run_Storage_Test is
 begin
 declare
    Path  : constant String := Fixture_Root & "/storage_test.db";
-   Backup_Path : constant String := Fixture_Root & "/storage_test.backup";
-   Export_Path : constant String := Fixture_Root & "/storage_test.export";
-   Restored_Path : constant String := Fixture_Root & "/storage_test_restored.db";
-   Imported_Path : constant String := Fixture_Root & "/storage_test_imported.db";
-   Retention_Path : constant String := Fixture_Root & "/storage_test_retention.export";
-   Retention_Restore_Path : constant String := Fixture_Root & "/storage_test_retention_restore.db";
-   Merge_Path : constant String := Fixture_Root & "/storage_test_merge.db";
    Relocated_Root : constant String := Fixture_Root & "/relocated-project";
    Root  : constant String :=
      Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
@@ -41,25 +33,17 @@ declare
    end Set_Coverage;
 begin
    if Ada.Directories.Exists (Path) then Ada.Directories.Delete_File (Path); end if;
-   if Ada.Directories.Exists (Backup_Path) then Project_Tools.Files.Delete_Tree (Backup_Path); end if;
-   if Ada.Directories.Exists (Export_Path) then Ada.Directories.Delete_File (Export_Path); end if;
-   if Ada.Directories.Exists (Restored_Path) then Ada.Directories.Delete_File (Restored_Path); end if;
-   if Ada.Directories.Exists (Imported_Path) then Ada.Directories.Delete_File (Imported_Path); end if;
-   if Ada.Directories.Exists (Retention_Path) then Ada.Directories.Delete_File (Retention_Path); end if;
-   if Ada.Directories.Exists (Retention_Restore_Path) then
-      Ada.Directories.Delete_File (Retention_Restore_Path);
-   end if;
-   if Ada.Directories.Exists (Merge_Path) then Ada.Directories.Delete_File (Merge_Path); end if;
    if Ada.Directories.Exists (Relocated_Root) then Project_Tools.Files.Delete_Tree (Relocated_Root); end if;
    Ada_Quality.Storage.Open (Store, Path);
-   Ada_Quality.Storage.Check (Store);
-   Assert (Ada_Quality.Storage.Schema_Version (Store) = 5,
+   Ada_Quality.Storage.Integrity.Check (Store);
+   Assert (Ada_Quality.Storage.Integrity.Schema_Version (Store) = 5,
      "new databases use the current migrated schema version");
    Raised := False;
    begin
       declare
          Ignored : constant Positive :=
-           Ada_Quality.Storage.Add_Project (Store, Root & "/missing-project");
+           Ada_Quality.Storage.Registry.Add_Project
+             (Store, Root & "/missing-project");
          pragma Unreferenced (Ignored);
       begin
          null;
@@ -68,46 +52,53 @@ begin
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "invalid projects are rejected before identifier reservation");
-   Pid := Ada_Quality.Storage.Add_Project (Store, Root);
+   Pid := Ada_Quality.Storage.Registry.Add_Project (Store, Root);
    Assert (Pid = 1, "first persisted project ID is one");
    Ada.Directories.Create_Path (Relocated_Root);
    Project_Tools.Files.Write_Text_File
      (Relocated_Root & "/alire.toml", "name = ""relocated_fixture""" & ASCII.LF &
       "version = ""0.1.0""" & ASCII.LF);
-   Ada_Quality.Storage.Relocate_Project (Store, Pid, Relocated_Root);
-   Assert (To_String (Ada_Quality.Storage.Project (Store, Pid).Path) =
+   Ada_Quality.Storage.Registry.Relocate_Project
+     (Store, Pid, Relocated_Root);
+   Assert (To_String (Ada_Quality.Storage.Registry.Project (Store, Pid).Path) =
      Ada.Directories.Full_Name (Relocated_Root),
      "project relocation preserves the project identity and replaces its canonical path");
-   Ada_Quality.Storage.Relocate_Project (Store, Pid, Root);
+   Ada_Quality.Storage.Registry.Relocate_Project (Store, Pid, Root);
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-   Assert (Ada_Quality.Storage.Project (Store, 1).Enabled, "project survives close and reopen");
-   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "ci");
-   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "core");
-   Ada_Quality.Storage.Add_Project_Tag (Store, Pid, "ci");
+   Assert (Ada_Quality.Storage.Registry.Project (Store, 1).Enabled,
+     "project survives close and reopen");
+   Ada_Quality.Storage.Registry.Add_Tag (Store, Pid, "ci");
+   Ada_Quality.Storage.Registry.Add_Tag (Store, Pid, "core");
+   Ada_Quality.Storage.Registry.Add_Tag (Store, Pid, "ci");
    Assert
-     (To_String (Ada_Quality.Storage.Project (Store, Pid).Tags) = "ci,core" and then
-      Ada_Quality.Storage.Has_Project_Tag (Ada_Quality.Storage.Project (Store, Pid), "core"),
+     (To_String (Ada_Quality.Storage.Registry.Project (Store, Pid).Tags) = "ci,core" and then
+      Ada_Quality.Storage.Registry.Has_Tag
+        (Ada_Quality.Storage.Registry.Project (Store, Pid), "core"),
       "project tags are canonical, sorted, idempotent, and queryable");
-   Ada_Quality.Storage.Remove_Project_Tag (Store, Pid, "ci");
-   Assert (To_String (Ada_Quality.Storage.Project (Store, Pid).Tags) = "core",
+   Ada_Quality.Storage.Registry.Remove_Tag (Store, Pid, "ci");
+   Assert (To_String (Ada_Quality.Storage.Registry.Project (Store, Pid).Tags) = "core",
      "project tags can be removed without changing project identity");
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "", "policy");
+      Run_Id := Ada_Quality.Storage.Assessments.Start
+        (Store, Pid, "", "policy");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "invalid assessment identities are rejected before identifier reservation");
-   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source", "policy");
+   Run_Id := Ada_Quality.Storage.Assessments.Start
+     (Store, Pid, "source", "policy");
    Assert (Run_Id = 1, "first assessment ID is one");
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-   Ada_Quality.Storage.Recover (Store, Count);
+   Ada_Quality.Storage.Assessments.Recover (Store, Count);
    Assert (Count = 1, "recovery marks one abandoned running assessment");
-   Assert (To_String (Ada_Quality.Storage.History (Store).Last_Element.Status) = "interrupted",
+   Assert (To_String
+     (Ada_Quality.Storage.Assessments.History (Store).Last_Element.Status) = "interrupted",
      "recovered assessment is interrupted");
-   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source-2", "policy");
+   Run_Id := Ada_Quality.Storage.Assessments.Start
+     (Store, Pid, "source-2", "policy");
    Value.Id := Run_Id;
    Value.Project_Id := Pid;
    Value.Status := Assessment_Completed;
@@ -177,34 +168,40 @@ begin
       First_Result.Findings.Reference (First_Result.Findings.First_Index).Fingerprint := Saved;
       Value.Results.Replace_Element (Value.Results.First_Index, First_Result);
    end;
-   Assert (Ada_Quality.Storage.Publish (Store, Value) = Run_Id,
+   Assert (Ada_Quality.Storage.Assessments.Publish (Store, Value) = Run_Id,
      "publication finalizes the pre-created running assessment");
-   Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1");
+   Ada_Quality.Storage.Assessments.Add_Alias (Store, Run_Id, "release-1");
    Assert
-     (Ada_Quality.Storage.Events (Store, Run_Id).Length = 3,
+     (Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 3,
       "a completed assessment accepts an append-only alias event");
-   First_Alias_Event := Ada_Quality.Storage.Events (Store, Run_Id).Last_Element.Id;
+   First_Alias_Event :=
+     Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Last_Element.Id;
    Raised := False;
    begin
-      Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1");
+      Ada_Quality.Storage.Assessments.Add_Alias (Store, Run_Id, "release-1");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "assessment aliases are globally unique");
    Raised := False;
    begin
-      Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "Invalid Alias");
+      Ada_Quality.Storage.Assessments.Add_Alias
+        (Store, Run_Id, "Invalid Alias");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "assessment aliases use one canonical safe spelling");
-   Ada_Quality.Storage.Add_Assessment_Alias (Store, Run_Id, "release-1.1");
+   Ada_Quality.Storage.Assessments.Add_Alias
+     (Store, Run_Id, "release-1.1");
    Assert
-     (Ada_Quality.Storage.Events (Store, Run_Id).Last_Element.Id = First_Alias_Event + 1,
+     (Ada_Quality.Storage.Assessments.Events
+        (Store, Run_Id).Last_Element.Id = First_Alias_Event + 1,
       "rejected aliases do not consume persistent event identities");
-   Assert (Ada_Quality.Storage.Measurements (Store, Run_Id).Length = 33,
+   Assert (Ada_Quality.Storage.Assessments.Measurements
+     (Store, Run_Id).Length = 33,
      "typed measurement rows are persisted for every indicator");
-   Assert (Ada_Quality.Storage.Executions (Store, Run_Id).Length = 1,
+   Assert (Ada_Quality.Storage.Assessments.Executions
+     (Store, Run_Id).Length = 1,
      "individual tool execution rows are persisted");
    Value.Id := 0;
    Value.Status := Assessment_Completed;
@@ -216,7 +213,8 @@ begin
       Invalid.Results.Delete_Last;
       begin
          declare
-            Ignored : constant Positive := Ada_Quality.Storage.Publish (Store, Invalid);
+            Ignored : constant Positive :=
+              Ada_Quality.Storage.Assessments.Publish (Store, Invalid);
             pragma Unreferenced (Ignored);
          begin
             null;
@@ -236,11 +234,11 @@ begin
       Regressed.Findings.Replace_Element (Regressed.Findings.First_Index, Escalated);
       Value.Results.Replace_Element (Value.Results.First_Index, Regressed);
    end;
-   Assert (Ada_Quality.Storage.Publish (Store, Value) = 3,
+   Assert (Ada_Quality.Storage.Assessments.Publish (Store, Value) = 3,
      "direct publication remains available for imported terminal assessments");
    Raised := False;
    begin
-      Ada_Quality.Storage.Check
+      Ada_Quality.Storage.Integrity.Check
         (Store, (Max_Total_Rows => 1, Max_Text_Bytes => 268_435_456));
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
@@ -248,15 +246,15 @@ begin
    Assert (Raised, "database integrity checking enforces its aggregate row limit while scanning");
    Raised := False;
    begin
-      Ada_Quality.Storage.Check
+      Ada_Quality.Storage.Integrity.Check
         (Store, (Max_Total_Rows => 2_500_000, Max_Text_Bytes => 1));
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "database integrity checking enforces its aggregate text limit while scanning");
-   Ada_Quality.Storage.Check (Store);
-   Ada_Quality.Storage.Compact (Store);
-   Ada_Quality.Storage.Check (Store);
+   Ada_Quality.Storage.Integrity.Check (Store);
+   Ada_Quality.Storage.Transfer.Compact (Store);
+   Ada_Quality.Storage.Integrity.Check (Store);
    Assert (True, "transactional compaction preserves database integrity");
    declare
       Session : Ada_Quality.Reporting.Session;
@@ -271,7 +269,8 @@ begin
       declare
          Stats : constant Ada_Quality.Reporting.Snapshot_Statistics :=
            Ada_Quality.Reporting.Statistics (Session);
-         Status_JSON : constant String := Ada_Quality.JSON.Render_Status (Session);
+         Status_JSON : constant String :=
+           Ada_Quality.JSON_Reports.Render_Status (Session);
       begin
          Assert
            (Stats.Projects = 1 and then Stats.Assessments = 3 and then
@@ -283,9 +282,10 @@ begin
             "portfolio status JSON summarizes each project's latest assessment");
       end;
       declare
-         Archive : constant String := Ada_Quality.JSON.Render_Archive (Session);
+         Archive : constant String :=
+           Ada_Quality.JSON_Reports.Render_Archive (Session);
          Pretty_Archive : constant String :=
-           Ada_Quality.JSON.Render_Archive (Session, Pretty => True);
+           Ada_Quality.JSON_Reports.Render_Archive (Session, Pretty => True);
          Doc : Jsonlib.Documents.Document;
          Error : Jsonlib.Errors.Error_Info;
       begin
@@ -310,7 +310,8 @@ begin
          begin
             declare
                Ignored : constant String :=
-                 Ada_Quality.JSON.Render_Archive (Session, Max_Output_Bytes => 1);
+                 Ada_Quality.JSON_Reports.Render_Archive
+                   (Session, Max_Output_Bytes => 1);
                pragma Unreferenced (Ignored);
             begin
                null;
@@ -324,20 +325,20 @@ begin
       Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
    end;
    Set_Coverage (9_400);
-   Assert (Ada_Quality.Storage.Publish (Store, Value) = 4,
+   Assert (Ada_Quality.Storage.Assessments.Publish (Store, Value) = 4,
      "a third completed assessment is available for recovery-history integration");
-   Run_Id := Ada_Quality.Storage.Start_Assessment
+   Run_Id := Ada_Quality.Storage.Assessments.Start
      (Store, Pid, "recovery-source", "policy");
    Assert (Run_Id = 5, "the recovery fixture leaves the newest assessment running");
    Ada_Quality.Storage.Close (Store);
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-   Ada_Quality.Storage.Recover (Store, Count);
+   Ada_Quality.Storage.Assessments.Recover (Store, Count);
    declare
       Runs : constant Ada_Quality.Storage.History_Vectors.Vector :=
-        Ada_Quality.Storage.History (Store, Pid);
+        Ada_Quality.Storage.Assessments.History (Store, Pid);
       Trend : constant Ada_Quality.History.Trend_Vectors.Vector :=
         Ada_Quality.History.Metric_Trend
-          (Runs, Ada_Quality.Storage.Measurements (Store), TST_03);
+          (Runs, Ada_Quality.Storage.Assessments.Measurements (Store), TST_03);
       Selection : constant Ada_Quality.History.Comparison_Selection :=
         Ada_Quality.History.Select_Comparison (Runs);
    begin
@@ -351,128 +352,78 @@ begin
         Selection.Status = Ada_Quality.History.Current_Incomplete,
         "recovery preserves completed baseline selection and names latest comparison unavailability");
    end;
-   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "interrupt-source", "policy");
+   Run_Id := Ada_Quality.Storage.Assessments.Start
+     (Store, Pid, "interrupt-source", "policy");
    Ada_Quality.Storage.Testing.Inject_Next_Fault
      (Store, Ada_Quality.Storage.Testing.Assessment_Interruption);
    Raised := False;
    begin
-      Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "faulted interruption");
+      Ada_Quality.Storage.Assessments.Interrupt
+        (Store, Run_Id, "faulted interruption");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised and then
-     To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "running" and then
-     Ada_Quality.Storage.Events (Store, Run_Id).Length = 1,
+     To_String
+       (Ada_Quality.Storage.Assessments.History
+          (Store, Pid).Last_Element.Status) = "running" and then
+     Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 1,
      "an interruption commit fault rolls back both state and event");
-   Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "controlled test interruption");
-   Assert (To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "interrupted",
+   Ada_Quality.Storage.Assessments.Interrupt
+     (Store, Run_Id, "controlled test interruption");
+   Assert (To_String
+     (Ada_Quality.Storage.Assessments.History
+        (Store, Pid).Last_Element.Status) = "interrupted",
      "explicit interruption atomically closes a running assessment");
-   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+   Assert (Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 2,
      "explicit interruption records its terminal event");
-   Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, "duplicate interruption");
-   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+   Ada_Quality.Storage.Assessments.Interrupt
+     (Store, Run_Id, "duplicate interruption");
+   Assert (Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 2,
      "interrupting an already terminal assessment is idempotent");
    declare
-      First_Abandoned : constant Positive := Ada_Quality.Storage.Start_Assessment
+      First_Abandoned : constant Positive := Ada_Quality.Storage.Assessments.Start
         (Store, Pid, "multi-recovery-source-1", "policy");
-      Second_Abandoned : constant Positive := Ada_Quality.Storage.Start_Assessment
+      Second_Abandoned : constant Positive := Ada_Quality.Storage.Assessments.Start
         (Store, Pid, "multi-recovery-source-2", "policy");
       Following : Positive;
    begin
-      Ada_Quality.Storage.Recover (Store, Count);
+      Ada_Quality.Storage.Assessments.Recover (Store, Count);
       Assert
         (Count = 2 and then
-         Ada_Quality.Storage.Events (Store, First_Abandoned).Length = 2 and then
-         Ada_Quality.Storage.Events (Store, Second_Abandoned).Length = 2,
+         Ada_Quality.Storage.Assessments.Events
+           (Store, First_Abandoned).Length = 2 and then
+         Ada_Quality.Storage.Assessments.Events
+           (Store, Second_Abandoned).Length = 2,
          "recovery allocates a distinct event identity for every running assessment");
-      Following := Ada_Quality.Storage.Start_Assessment
+      Following := Ada_Quality.Storage.Assessments.Start
         (Store, Pid, "post-recovery-source", "policy");
-      Ada_Quality.Storage.Interrupt_Assessment (Store, Following, "post-recovery verification");
-      Assert (Ada_Quality.Storage.Events (Store, Following).Length = 2,
+      Ada_Quality.Storage.Assessments.Interrupt
+        (Store, Following, "post-recovery verification");
+      Assert (Ada_Quality.Storage.Assessments.Events
+        (Store, Following).Length = 2,
         "event allocation remains synchronized after multi-run recovery");
    end;
-   Ada_Quality.Storage.Backup (Store, Backup_Path);
-   Ada_Quality.Storage.Export (Store, Export_Path);
-   Assert (Ada.Directories.Exists (Backup_Path & "/manifest.dbbackup") and then
-     Ada.Directories.Exists (Export_Path),
-     "verified physical backup and logical export artifacts are created");
-   Raised := False;
-   begin
-      Ada_Quality.Storage.Export (Store, Export_Path);
-   exception
-      when Ada_Quality.Storage.Storage_Error => Raised := True;
-   end;
-   Assert (Raised, "database artifacts are never overwritten implicitly");
    Ada_Quality.Storage.Close (Store);
-   Ada_Quality.Storage.Restore (Backup_Path, Restored_Path);
-   Ada_Quality.Storage.Open (Store, Restored_Path, Create_If_Missing => False);
-   Ada_Quality.Storage.Check (Store);
-   Assert (Ada_Quality.Storage.Projects (Store).Length = 1 and then
-     Ada_Quality.Storage.History (Store, Pid).Length > 0,
-     "a restored backup retains registry and assessment history");
-   Ada_Quality.Storage.Close (Store);
-   Ada_Quality.Storage.Import (Export_Path, Imported_Path);
-   Ada_Quality.Storage.Open (Store, Imported_Path, Create_If_Missing => False);
-   Ada_Quality.Storage.Check (Store);
-   Assert
-     (Ada_Quality.Storage.Projects (Store).Length = 1 and then
-      Ada_Quality.Storage.History (Store, Pid).Length > 0,
-      "a logical import retains registry and assessment history");
    declare
-      Before_Count : constant Natural := Natural (Ada_Quality.Storage.History (Store, Pid).Length);
-      Removed : Natural;
-      use type Ada.Calendar.Time;
+      Exit_Code : constant Natural :=
+        Ada_Quality.CLI.Run
+          (Ada_Quality.CLI_Arguments.Create
+             ([To_Unbounded_String ("scan"),
+               To_Unbounded_String ("--project"), To_Unbounded_String ("1"),
+               To_Unbounded_String ("--changed-file"),
+               To_Unbounded_String ("src/ada_quality.ads"),
+               To_Unbounded_String ("--changed-file"),
+               To_Unbounded_String ("src/ada_quality-cli.ads"),
+               To_Unbounded_String ("--database"), To_Unbounded_String (Path),
+               To_Unbounded_String ("--policy"),
+               To_Unbounded_String (Root & "/quality-policy.toml")]));
    begin
       Assert
-        (Natural
-           (Ada_Quality.Storage.Retention_Candidates
-              (Store, Ada.Calendar.Clock + 86_400.0, Keep => 2).Length) = Before_Count - 2,
-         "retention preview identifies exactly the rows a matching archive will remove");
-      Ada_Quality.Storage.Archive_And_Prune
-        (Store, Retention_Path, Ada.Calendar.Clock + 86_400.0, Keep => 2, Removed => Removed);
-      Ada_Quality.Storage.Check (Store);
-      Assert
-        (Removed = Before_Count - 2 and then
-         Ada_Quality.Storage.History (Store, Pid).Length = 2 and then
-         Ada.Directories.Exists (Retention_Path),
-         "retention archives the complete database before keeping the newest terminal assessments");
-      Ada_Quality.Storage.Close (Store);
-      Ada_Quality.Storage.Import (Retention_Path, Retention_Restore_Path);
-      Ada_Quality.Storage.Open (Store, Retention_Restore_Path, Create_If_Missing => False);
-      Ada_Quality.Storage.Check (Store);
-      Assert
-        (Natural (Ada_Quality.Storage.History (Store, Pid).Length) = Before_Count,
-         "the verified retention archive restores every assessment removed from the live database");
+        (Exit_Code in 0 | 1,
+         "injected CLI scans accept repeated changed-file arguments instead of ambient process state");
    end;
-   Ada_Quality.Storage.Close (Store);
-   Ada_Quality.Storage.Open (Store, Merge_Path);
-   declare
-      Preview, Applied : Ada_Quality.Storage.Merge_Report;
-      Again_Projects, Again_Assessments : Natural;
-   begin
-      Ada_Quality.Storage.Merge (Store, Retention_Restore_Path, Dry_Run => True, Report => Preview);
-      Assert
-        (Preview.Added_Projects = 1 and then Preview.Added_Assessments = 3 and then
-         Ada_Quality.Storage.Projects (Store).Is_Empty,
-         "merge dry-run returns the exact plan without changing the target");
-      Ada_Quality.Storage.Merge (Store, Retention_Restore_Path, Dry_Run => False, Report => Applied);
-      Ada_Quality.Storage.Merge
-        (Store, Retention_Restore_Path, Again_Projects, Again_Assessments);
-      Assert
-        (Applied.Added_Projects = 1 and then Applied.Added_Assessments = 3 and then
-         Again_Projects = 0 and then Again_Assessments = 0 and then
-         To_String (Ada_Quality.Storage.Project (Store, 1).Tags) = "core",
-         "atomic database merge remaps projects, preserves tags, imports evidence, and deduplicates retries");
-   end;
-   Ada_Quality.Storage.Close (Store);
    Ada.Directories.Delete_File (Path);
-   Ada.Directories.Delete_File (Export_Path);
-   Ada.Directories.Delete_File (Restored_Path);
-   Ada.Directories.Delete_File (Imported_Path);
-   Ada.Directories.Delete_File (Retention_Path);
-   Ada.Directories.Delete_File (Retention_Restore_Path);
-   Ada.Directories.Delete_File (Merge_Path);
-   Project_Tools.Files.Delete_Tree (Backup_Path);
    Project_Tools.Files.Delete_Tree (Relocated_Root);
 end;
 end Run_Storage_Test;

@@ -1,5 +1,12 @@
+with Ada.Unchecked_Deallocation;
+with Ada_Quality.Checks;
+with Ada_Quality.JSON_Assessments;
+with Ada_Quality.Policy;
+with Ada_Quality.Storage.Assessments;
+with Ada_Quality.Storage.Registry;
+
 separate (Ada_Quality.CLI)
---  AQ-WAIVER: SRC-03 target=project_id owner=core expires=2099-12-31 justification=parallel-check-coordination-boundary
+--  AQ-WAIVER: SRC-03 target=run_check owner=core expires=2027-11-21 justification=parallel-check-orchestration
 function Run_Check
   (Store : in out Ada_Quality.Storage.Store;
    Policy_Path : String) return Natural
@@ -18,12 +25,13 @@ is
    Exit_Code : Natural := 0;
    JSON_Mode : constant Boolean := Has_Flag ("--json");
    All_Mode : constant Boolean := Has_Flag ("--all");
-   Batch_Mode : constant Boolean := JSON_Mode and then All_Mode;
+   Batch_Mode : constant Boolean :=
+     JSON_Mode and then (All_Mode or else Option ("--tag", "") /= "");
    Reuse_Unchanged : constant Boolean := Has_Flag ("--reuse-unchanged");
    Dry_Run : constant Boolean := Has_Flag ("--dry-run");
    Selected_Tag : constant String := Option ("--tag", "");
    Use_Project_Policy : constant Boolean := Has_Flag ("--project-policy");
-   Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
+   Outcomes : Ada_Quality.Command_Models.Batch_Outcome_Vectors.Vector;
    Selected : Ada_Quality.Storage.Project_Vectors.Vector;
    Jobs : Positive := 1;
 
@@ -41,6 +49,9 @@ is
       entry Collect (Result : out Job_Result);
    end Worker;
    type Worker_Access is access Worker;
+
+   procedure Free is new Ada.Unchecked_Deallocation
+     (Object => Worker, Name => Worker_Access);
 
    task body Worker is
       Current_Project : Ada_Quality.Storage.Project_Info :=
@@ -100,15 +111,15 @@ is
    is
       Reason : constant String := "project assessment failed: " & Message;
    begin
-      Ada_Quality.Storage.Interrupt_Assessment (Store, Run_Id, Reason);
-      Ada.Text_IO.Put_Line
-        (Ada.Text_IO.Standard_Error,
-         "project" & Positive'Image (Project.Id) & " assessment interrupted: " & Message);
+      Ada_Quality.Storage.Assessments.Interrupt (Store, Run_Id, Reason);
+      Emit_Error
+        ("assessment_error",
+         "project" & Positive'Image (Project.Id) & " assessment interrupted: " & Message, 3);
       if Batch_Mode then
          Outcomes.Append
-           (Ada_Quality.JSON.Batch_Outcome'
+           (Ada_Quality.Command_Models.Batch_Outcome'
               (Project_Id => Project.Id, Assessment_Id => Run_Id,
-               Status => Ada_Quality.JSON.Batch_Interrupted,
+               Status => Ada_Quality.Command_Models.Batch_Interrupted,
                Diagnostic => To_Unbounded_String (Reason), Value => <>));
       end if;
       Exit_Code := Natural'Max (Exit_Code, 3);
@@ -122,21 +133,22 @@ is
       if not Result.Success then
          Interrupt (Project, Run_Id, To_String (Result.Diagnostic));
       else
-         if Ada_Quality.Storage.Publish (Store, Result.Value) /= Run_Id then
+         if Ada_Quality.Storage.Assessments.Publish (Store, Result.Value) /= Run_Id then
             raise Ada_Quality.Storage.Storage_Error with
               "assessment publication changed its identifier";
          end if;
          Exit_Code := Natural'Max (Exit_Code, Result_Exit (Result.Value));
          if Batch_Mode then
             Outcomes.Append
-              (Ada_Quality.JSON.Batch_Outcome'
+              (Ada_Quality.Command_Models.Batch_Outcome'
                  (Project_Id => Project.Id, Assessment_Id => Run_Id,
-                  Status => Ada_Quality.JSON.Batch_Completed,
+                  Status => Ada_Quality.Command_Models.Batch_Completed,
                   Diagnostic => Null_Unbounded_String, Value => Result.Value));
          elsif JSON_Mode then
-            Emit_Document (Ada_Quality.JSON.Render (Result.Value, Pretty => True));
+            Emit_Document
+              (Ada_Quality.JSON_Assessments.Render (Result.Value, Pretty => True));
          else
-            Print_Assessment (Result.Value);
+            Emit_Document (Assessment_Text (Result.Value));
          end if;
       end if;
    end Publish_Result;
@@ -148,7 +160,7 @@ is
       Result : Natural := 0;
    begin
       if Toolchain_Id = "" then return 0; end if;
-      for Run of Ada_Quality.Storage.History (Store, Project.Id) loop
+      for Run of Ada_Quality.Storage.Assessments.History (Store, Project.Id) loop
          if To_String (Run.Status) = "completed" and then
            To_String (Run.Source_Fingerprint) = Source and then
            To_String (Run.Policy_Fingerprint) = Policy_Id and then
@@ -163,7 +175,7 @@ is
    procedure Reuse (Project : Ada_Quality.Storage.Project_Info; Run_Id : Positive) is
       Project_Exit : Natural := 0;
    begin
-      for Row of Ada_Quality.Storage.Results (Store, Run_Id) loop
+      for Row of Ada_Quality.Storage.Assessments.Results (Store, Run_Id) loop
          if Ada.Strings.Fixed.Index (To_String (Row.State), "/violation") > 0 then
             Project_Exit := Natural'Max (Project_Exit, 1);
          elsif Ada.Strings.Fixed.Index (To_String (Row.State), "succeeded/") /= 1 and then
@@ -175,16 +187,18 @@ is
       Exit_Code := Natural'Max (Exit_Code, Project_Exit);
       if Batch_Mode then
          Outcomes.Append
-           (Ada_Quality.JSON.Batch_Outcome'
+           (Ada_Quality.Command_Models.Batch_Outcome'
               (Project_Id => Project.Id, Assessment_Id => Run_Id,
-               Status => Ada_Quality.JSON.Batch_Reused,
+               Status => Ada_Quality.Command_Models.Batch_Reused,
                Diagnostic => Null_Unbounded_String, Value => <>));
       elsif JSON_Mode then
-         Emit_Document (Ada_Quality.JSON.Render_Reuse (Project.Id, Run_Id, Pretty => True));
+         Emit_Document
+           (Ada_Quality.JSON_Assessments.Render_Reuse
+              (Project.Id, Run_Id, Pretty => True));
       else
-         Ada.Text_IO.Put_Line
+         Emit_Document
            ("project" & Positive'Image (Project.Id) & " unchanged; reused assessment" &
-            Positive'Image (Run_Id));
+            Positive'Image (Run_Id) & ASCII.LF);
       end if;
    end Reuse;
 
@@ -196,8 +210,7 @@ is
    end Project_Id;
 begin
    if not Loaded.Success then
-      Ada.Text_IO.Put_Line (Ada.Text_IO.Standard_Error, To_String (Loaded.Error));
-      return 2;
+      raise Usage_Error with To_String (Loaded.Error);
    elsif Option ("--jobs", "") /= "" then
       begin
          Jobs := Positive'Value (Option ("--jobs", ""));
@@ -209,13 +222,15 @@ begin
    if Option ("--output", "") /= "" and then not JSON_Mode and then not Dry_Run then
       raise Usage_Error with "check --output requires --json";
    end if;
-   if Selected_Tag /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Selected_Tag) then
+   if Selected_Tag /= "" and then
+     not Ada_Quality.Storage.Registry.Is_Tag_Name (Selected_Tag)
+   then
       raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
    end if;
    if Option ("--project", "") /= "" then
       declare
          Project : constant Ada_Quality.Storage.Project_Info :=
-           Ada_Quality.Storage.Project (Store, Project_Id);
+           Ada_Quality.Storage.Registry.Project (Store, Project_Id);
       begin
          if Project.Removed or else not Project.Enabled then
             raise Usage_Error with "project is not enabled";
@@ -223,13 +238,13 @@ begin
          Selected.Append (Project);
       end;
    elsif All_Mode then
-      for Project of Ada_Quality.Storage.Projects (Store) loop
+      for Project of Ada_Quality.Storage.Registry.Projects (Store) loop
          if Project.Enabled and then not Project.Removed then Selected.Append (Project); end if;
       end loop;
    elsif Selected_Tag /= "" then
-      for Project of Ada_Quality.Storage.Projects (Store) loop
+      for Project of Ada_Quality.Storage.Registry.Projects (Store) loop
          if Project.Enabled and then not Project.Removed and then
-           Ada_Quality.Storage.Has_Project_Tag (Project, Selected_Tag)
+           Ada_Quality.Storage.Registry.Has_Tag (Project, Selected_Tag)
          then
             Selected.Append (Project);
          end if;
@@ -242,14 +257,54 @@ begin
       type Worker_Array is array (Positive range <>) of Worker_Access;
       type Project_Array is array (Positive range <>) of Ada_Quality.Storage.Project_Info;
       type Run_Array is array (Positive range <>) of Natural;
+      type Pending_Array is array (Positive range <>) of Boolean;
       type Policy_Array is array (Natural range <>) of Ada_Quality.Policy.Quality_Policy;
+      type Result_Array is array (Positive range <>) of Job_Result;
       Workers : Worker_Array (1 .. Jobs) := [others => null];
       Projects : Project_Array (1 .. Jobs) :=
         [others => (Id => 1, Path => Null_Unbounded_String, Tags => Null_Unbounded_String,
                     Enabled => True, Removed => False)];
       Run_Ids : Run_Array (1 .. Jobs) := [others => 0];
+      Pending : Pending_Array (1 .. Jobs) := [others => False];
+      Results : Result_Array (1 .. Jobs);
       Policies : Policy_Array (1 .. Natural (Selected.Length));
       Next : Positive := (if Selected.Is_Empty then 1 else Selected.First_Index);
+
+      procedure Collect_All is
+      begin
+         for Slot in Workers'Range loop
+            if Workers (Slot) /= null then
+               begin
+                  Workers (Slot).Collect (Results (Slot));
+               exception
+                  when Error : others =>
+                     Results (Slot) :=
+                       (Value => <>, Success => False,
+                        Diagnostic => To_Unbounded_String
+                          ("worker collection failed: " &
+                           Ada.Exceptions.Exception_Message (Error)));
+               end;
+               abort Workers (Slot).all;
+               Free (Workers (Slot));
+            end if;
+         end loop;
+      end Collect_All;
+
+      procedure Interrupt_Pending is
+      begin
+         for Slot in Pending'Range loop
+            if Pending (Slot) and then Run_Ids (Slot) > 0 then
+               begin
+                  Ada_Quality.Storage.Assessments.Interrupt
+                    (Store, Positive (Run_Ids (Slot)), "assessment batch aborted before publication");
+                  Pending (Slot) := False;
+               exception
+                  when others =>  --  Preserve the original batch failure.
+                     null;
+               end;
+            end if;
+         end loop;
+      end Interrupt_Pending;
    begin
       for Index in Policies'Range loop
          declare
@@ -261,7 +316,7 @@ begin
       end loop;
       if Dry_Run then
          declare
-            Plan : Ada_Quality.JSON.Check_Plan_Vectors.Vector;
+            Plan : Ada_Quality.Command_Models.Check_Plan_Vectors.Vector;
             Text : Ada.Strings.Unbounded.Unbounded_String;
          begin
             for Index in Policies'Range loop
@@ -275,7 +330,7 @@ begin
                   Cached : constant Natural := Cached_Run (Project, Source, Policy_Id, Toolchain);
                begin
                   Plan.Append
-                    (Ada_Quality.JSON.Check_Plan_Item'
+                    (Ada_Quality.Command_Models.Check_Plan_Item'
                        (Project_Id => Project.Id, Path => Project.Path,
                         Source_Fingerprint => To_Unbounded_String (Source),
                         Policy_Fingerprint => To_Unbounded_String (Policy_Id),
@@ -290,7 +345,9 @@ begin
                end;
             end loop;
             if JSON_Mode then
-               Emit_Document (Ada_Quality.JSON.Render_Check_Plan (Plan, Pretty => True));
+               Emit_Document
+                 (Ada_Quality.JSON_Assessments.Render_Check_Plan
+                    (Plan, Pretty => True));
             else
                Emit_Document (To_String (Text));
             end if;
@@ -300,60 +357,84 @@ begin
       while not Selected.Is_Empty and then Next <= Selected.Last_Index loop
          Workers := [others => null];
          Run_Ids := [others => 0];
-         for Slot in Workers'Range loop
-            exit when Next > Selected.Last_Index;
-            Projects (Slot) := Selected (Next);
-            declare
-               Current_Policy : constant Ada_Quality.Policy.Quality_Policy := Policies (Next);
-               Source : Ada.Strings.Unbounded.Unbounded_String;
-            begin
+         Pending := [others => False];
+         Results :=
+           [others =>
+              (Value => <>, Success => False,
+               Diagnostic => Null_Unbounded_String)];
+         begin
+            for Slot in Workers'Range loop
+               exit when Next > Selected.Last_Index;
+               Projects (Slot) := Selected (Next);
+               declare
+                  Current_Policy : constant Ada_Quality.Policy.Quality_Policy := Policies (Next);
+                  Source : Ada.Strings.Unbounded.Unbounded_String;
                begin
-                  Source := To_Unbounded_String
-                    (Ada_Quality.Checks.Source_Fingerprint (To_String (Projects (Slot).Path)));
-               exception
-                  when Error : others =>
-                     Run_Ids (Slot) := Ada_Quality.Storage.Start_Assessment
-                       (Store, Projects (Slot).Id, "source-fingerprint-unavailable",
-                        Ada_Quality.Policy.Fingerprint (Current_Policy));
-                     Interrupt
-                       (Projects (Slot), Positive (Run_Ids (Slot)),
-                        Ada.Exceptions.Exception_Message (Error));
-               end;
-               if Run_Ids (Slot) = 0 and then Reuse_Unchanged then
-                  declare
-                     Cached : constant Natural := Cached_Run
-                       (Projects (Slot), To_String (Source),
-                        Ada_Quality.Policy.Fingerprint (Current_Policy),
-                        Ada_Quality.Checks.Current_Toolchain_Fingerprint
-                          (To_String (Projects (Slot).Path)));
                   begin
-                     if Cached > 0 then Reuse (Projects (Slot), Positive (Cached)); end if;
-                     Run_Ids (Slot) := Cached;
+                     Source := To_Unbounded_String
+                       (Ada_Quality.Checks.Source_Fingerprint (To_String (Projects (Slot).Path)));
+                  exception
+                     when Error : others =>
+                        Run_Ids (Slot) := Ada_Quality.Storage.Assessments.Start
+                          (Store, Projects (Slot).Id, "source-fingerprint-unavailable",
+                           Ada_Quality.Policy.Fingerprint (Current_Policy));
+                        Pending (Slot) := True;
+                        Interrupt
+                          (Projects (Slot), Positive (Run_Ids (Slot)),
+                           Ada.Exceptions.Exception_Message (Error));
+                        Pending (Slot) := False;
                   end;
-               end if;
-               if Run_Ids (Slot) = 0 then
-                  Run_Ids (Slot) := Ada_Quality.Storage.Start_Assessment
-                    (Store, Projects (Slot).Id, To_String (Source),
-                     Ada_Quality.Policy.Fingerprint (Current_Policy));
-                  Workers (Slot) := new Worker;
-                  Workers (Slot).Start
-                    (Projects (Slot), Positive (Run_Ids (Slot)), Current_Policy);
-               end if;
-            end;
-            Next := Next + 1;
-         end loop;
-         for Slot in Workers'Range loop
-            if Workers (Slot) /= null then
-               declare Result : Job_Result; begin
-                  Workers (Slot).Collect (Result);
-                  Publish_Result (Projects (Slot), Positive (Run_Ids (Slot)), Result);
+                  if Run_Ids (Slot) = 0 and then Reuse_Unchanged then
+                     declare
+                        Cached : constant Natural := Cached_Run
+                          (Projects (Slot), To_String (Source),
+                           Ada_Quality.Policy.Fingerprint (Current_Policy),
+                           Ada_Quality.Checks.Current_Toolchain_Fingerprint
+                             (To_String (Projects (Slot).Path)));
+                     begin
+                        if Cached > 0 then Reuse (Projects (Slot), Positive (Cached)); end if;
+                        Run_Ids (Slot) := Cached;
+                     end;
+                  end if;
+                  if Run_Ids (Slot) = 0 then
+                     Run_Ids (Slot) := Ada_Quality.Storage.Assessments.Start
+                       (Store, Projects (Slot).Id, To_String (Source),
+                        Ada_Quality.Policy.Fingerprint (Current_Policy));
+                     Pending (Slot) := True;
+                     Workers (Slot) := new Worker;
+                     Workers (Slot).Start
+                       (Projects (Slot), Positive (Run_Ids (Slot)), Current_Policy);
+                  end if;
                end;
+               Next := Next + 1;
+            end loop;
+         exception
+            when others =>
+               Collect_All;
+               raise;
+         end;
+         Collect_All;
+         for Slot in Workers'Range loop
+            if Run_Ids (Slot) > 0 and then Results (Slot).Success then
+               Publish_Result
+                 (Projects (Slot), Positive (Run_Ids (Slot)), Results (Slot));
+               Pending (Slot) := False;
+            elsif Run_Ids (Slot) > 0 and then Length (Results (Slot).Diagnostic) > 0 then
+               Publish_Result
+                 (Projects (Slot), Positive (Run_Ids (Slot)), Results (Slot));
+               Pending (Slot) := False;
             end if;
          end loop;
       end loop;
+   exception
+      when others =>
+         Collect_All;
+         Interrupt_Pending;
+         raise;
    end;
    if Batch_Mode then
-      Emit_Document (Ada_Quality.JSON.Render_Batch (Outcomes, Pretty => True));
+      Emit_Document
+        (Ada_Quality.JSON_Assessments.Render_Batch (Outcomes, Pretty => True));
    end if;
    return Exit_Code;
 end Run_Check;

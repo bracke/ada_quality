@@ -10,6 +10,9 @@ with Ada_Quality.Finding_Identity;
 with Ada_Quality.Indicators;
 with Ada_Quality.Reporting;
 with Ada_Quality.Storage;
+with Ada_Quality.Storage.Assessments;
+with Ada_Quality.Storage.Integrity;
+with Ada_Quality.Storage.Registry;
 with Ada_Quality.Storage.Testing;
 with Ada_Quality.Temporary_Directories;
 with Ada_Quality.Types;
@@ -26,6 +29,9 @@ package body Ada_Quality_Reporting_Tests is
 
    package Reporting renames Ada_Quality.Reporting;
    package Storage renames Ada_Quality.Storage;
+   package Assessments renames Ada_Quality.Storage.Assessments;
+   package Integrity renames Ada_Quality.Storage.Integrity;
+   package Registry renames Ada_Quality.Storage.Registry;
    package Storage_Testing renames Ada_Quality.Storage.Testing;
    use type Storage_Testing.Corruption;
 
@@ -215,7 +221,8 @@ package body Ada_Quality_Reporting_Tests is
       Id    : Positive;
    begin
       Storage.Open (Store, Database_Path);
-      Id := Storage.Add_Project (Store, Make_Crate (Directory & "/" & Crate, Crate));
+      Id := Registry.Add_Project
+        (Store, Make_Crate (Directory & "/" & Crate, Crate));
       Storage.Close (Store);
       return Id;
    end Seed;
@@ -228,7 +235,7 @@ package body Ada_Quality_Reporting_Tests is
    begin
       Storage.Open (Store, Database_Path, Create_If_Missing => False);
       Storage_Testing.Use_Legacy_Evidence (Store, Legacy);
-      Id := Storage.Publish (Store, Value);
+      Id := Assessments.Publish (Store, Value);
       Storage.Close (Store);
       return Id;
    end Publish;
@@ -340,6 +347,51 @@ package body Ada_Quality_Reporting_Tests is
       Run_Id    : Positive;
       Original  : constant Assessment := Sample (1);
       Session   : Reporting.Session;
+
+      procedure Assert_Visitors
+        (Open_Session : Reporting.Session;
+         Project_Id   : Positive;
+         Expected_Run : Positive)
+      is
+         Project_Count : Natural := 0;
+         Run_Count     : Natural := 0;
+         Last_Project  : Natural := 0;
+         Last_Run      : Natural := 0;
+
+         procedure Count_Project (Value : Reporting.Project_Record) is
+         begin
+            Project_Count := Project_Count + 1;
+            Last_Project := Value.Id;
+         end Count_Project;
+
+         procedure Count_Run (Value : Reporting.Run_Record) is
+         begin
+            Run_Count := Run_Count + 1;
+            Last_Run := Value.Id;
+         end Count_Run;
+      begin
+         Reporting.Visit_Projects
+           (Open_Session, Process => Count_Project'Access);
+         Reporting.Visit_Projects
+           (Open_Session, Include_Removed => True,
+            Process => Count_Project'Access);
+         Assert
+           (Project_Count = 2 and then Last_Project = Project_Id,
+            "project visitors stream active and complete registry views");
+
+         Reporting.Visit_Runs
+           (Open_Session, Project_Id, Process => Count_Run'Access);
+         Reporting.Visit_Runs
+           (Open_Session, Project_Id => Positive'Last,
+            Process => Count_Run'Access);
+         Reporting.Visit_Runs
+           (Open_Session, Descending => True, Process => Count_Run'Access);
+         Reporting.Visit_Runs
+           (Open_Session, Process => Count_Run'Access);
+         Assert
+           (Run_Count = 3 and then Last_Run = Expected_Run,
+            "run visitors stream indexed, absent, ascending, and descending views");
+      end Assert_Visitors;
    begin
       Fresh (Directory);
       Ada.Directories.Create_Path (Directory & "/db");
@@ -352,6 +404,7 @@ package body Ada_Quality_Reporting_Tests is
          Assert (Reporting.Supported_Schema_Version (Session) = 5, "reporting reads schema version 5");
          Assert (Reporting.Projects (Session).Length = 1, "one project is visible");
          Assert (Reporting.Projects (Session).First_Element.Enabled, "the project is enabled");
+         Assert_Visitors (Session, Project, Run_Id);
          declare
             Runs : constant Reporting.Run_Vectors.Vector := Reporting.Runs (Session);
             Run  : constant Reporting.Run_Record := Runs.First_Element;
@@ -417,11 +470,12 @@ package body Ada_Quality_Reporting_Tests is
          Ignored : Positive;
       begin
          Storage.Open (Alias_Store, Alias_DB);
-         Ignored := Storage.Add_Project (Alias_Store, Make_Crate (Alias_Path, "alias"));
+         Ignored := Registry.Add_Project
+           (Alias_Store, Make_Crate (Alias_Path, "alias"));
          Storage.Close (Alias_Store);
          Storage.Open (Pair_Store, Pair_DB);
-         Ignored := Storage.Add_Project (Pair_Store, First_Path);
-         Ignored := Storage.Add_Project (Pair_Store, Second_Path);
+         Ignored := Registry.Add_Project (Pair_Store, First_Path);
+         Ignored := Registry.Add_Project (Pair_Store, Second_Path);
          Storage.Close (Pair_Store);
          Reporting.Open (Alias_Session, Alias_DB);
          Reporting.Open (Pair_Session, Pair_DB);
@@ -445,9 +499,11 @@ package body Ada_Quality_Reporting_Tests is
       Project := Seed (Directory, Path);
       Completed := Publish (Path, Sample (Project));
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Interrupted := Storage.Start_Assessment (Store, Project, "source-2", "policy-a");
-      Storage.Interrupt_Assessment (Store, Interrupted, "operator stopped");
-      Running := Storage.Start_Assessment (Store, Project, "source-3", "policy-a");
+      Interrupted := Assessments.Start
+        (Store, Project, "source-2", "policy-a");
+      Assessments.Interrupt (Store, Interrupted, "operator stopped");
+      Running := Assessments.Start
+        (Store, Project, "source-3", "policy-a");
       Storage.Close (Store);
 
       Reporting.Open (Session, Path);
@@ -471,7 +527,7 @@ package body Ada_Quality_Reporting_Tests is
       Expect_Read_Error (Path, 999, "reporting", "an unknown assessment is rejected");
 
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Storage.Remove_Project (Store, Project);
+      Registry.Remove_Project (Store, Project);
       Storage.Close (Store);
       Reporting.Open (Session, Path);
       Assert (Reporting.Projects (Session).Is_Empty, "tombstones are excluded by default");
@@ -499,7 +555,8 @@ package body Ada_Quality_Reporting_Tests is
          Assert (Same (Before, Capture (Directory)), "an older schema is not migrated by reporting");
       end;
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Assert (Storage.Schema_Version (Store) = 5, "normal storage migrates version 2 to 5");
+      Assert (Integrity.Schema_Version (Store) = 5,
+        "normal storage migrates version 2 to 5");
       Storage_Testing.Set_Schema_Version (Store, 99);
       Storage.Close (Store);
       declare
@@ -524,8 +581,9 @@ package body Ada_Quality_Reporting_Tests is
       Storage.Close (Store);
       Reporting.Open (Session, Path);
       Storage.Open (Store, Path, Create_If_Missing => False);
-      Assert (Storage.Project (Store, Project).Enabled, "a loaded snapshot does not hold the writer lock");
-      Storage.Set_Enabled (Store, Project, False);
+      Assert (Registry.Project (Store, Project).Enabled,
+        "a loaded snapshot does not hold the writer lock");
+      Registry.Set_Enabled (Store, Project, False);
       Storage.Close (Store);
       Assert (Reporting.Projects (Session).First_Element.Enabled, "a loaded snapshot is immutable");
       Reporting.Close (Session);
@@ -593,7 +651,7 @@ package body Ada_Quality_Reporting_Tests is
             Rejected : Boolean := False;
          begin
             begin
-               Storage.Check (Store);
+               Integrity.Check (Store);
             exception
                when Storage.Storage_Error => Rejected := True;
             end;

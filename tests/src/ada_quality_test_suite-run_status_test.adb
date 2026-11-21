@@ -1,5 +1,4 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_status_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Status_Test is
 begin
 Assert

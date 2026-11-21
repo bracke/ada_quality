@@ -1,7 +1,231 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_coverage_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_coverage_test owner=core expires=2027-11-21 justification=one-component-fixture-matrix
 procedure Run_Coverage_Test is
 begin
+Assert
+  (Ada.Strings.Fixed.Index
+     (Ada_Quality.CLI_Metadata.Completion_Words ("policy", "profiles"), "--database") = 0 and then
+   Ada.Strings.Fixed.Index
+     (Ada_Quality.CLI_Metadata.Completion_Words ("policy", "effective"), "--database") > 0 and then
+   Ada.Strings.Fixed.Index
+     (Ada_Quality.CLI_Metadata.Completion_Words ("database", "trust"), "add") > 0,
+   "completion metadata exposes only options accepted by each command and subcommand");
+Assert
+  (Ada_Quality.CLI_Metadata.Classify_Option ("--database") =
+     Ada_Quality.CLI_Metadata.Value_Option and then
+   Ada_Quality.CLI_Metadata.Classify_Option ("--dry-run") =
+     Ada_Quality.CLI_Metadata.Flag_Option and then
+   Ada_Quality.CLI_Metadata.Classify_Option ("--unknown") =
+     Ada_Quality.CLI_Metadata.Not_An_Option,
+   "option classification and command validation share the centralized CLI metadata");
+Assert
+  (Ada_Quality.CLI_Metadata.Repeatable ("--changed-file") and then
+   not Ada_Quality.CLI_Metadata.Repeatable ("--project"),
+   "option metadata distinguishes repeatable inputs from accidental duplicates");
+Assert
+  (Ada_Quality.CLI_Metadata.Maximum_Positional_Count
+     (Ada_Quality.CLI_Metadata.Version_Command,
+      Ada_Quality.CLI_Metadata.No_Subcommand) = 1 and then
+   Ada_Quality.CLI_Metadata.Maximum_Positional_Count
+     (Ada_Quality.CLI_Metadata.Database_Command,
+      Ada_Quality.CLI_Metadata.Database_Merge) = Natural'Last,
+   "command metadata defines bounded positional arity and explicit variadic commands");
+Assert
+  (Ada_Quality.CLI_Metadata.Is_Command ("report") and then
+   not Ada_Quality.CLI_Metadata.Is_Command ("unknown") and then
+   Ada_Quality.CLI_Metadata.Is_Subcommand ("database", "merge") and then
+   not Ada_Quality.CLI_Metadata.Is_Subcommand ("database", "unknown"),
+   "command dispatch validates names through centralized CLI metadata");
+Assert
+  (Ada_Quality.CLI_Metadata.Identify ("report") =
+     Ada_Quality.CLI_Metadata.Report_Command and then
+   Ada_Quality.CLI_Metadata.Identify ("unknown") =
+     Ada_Quality.CLI_Metadata.Unknown_Command and then
+   Ada_Quality.CLI_Metadata.Requires_Store
+     (Ada_Quality.CLI_Metadata.Check_Command,
+      Ada_Quality.CLI_Metadata.No_Subcommand) and then
+   Ada_Quality.CLI_Metadata.Requires_Store
+     (Ada_Quality.CLI_Metadata.Project_Command,
+      Ada_Quality.CLI_Metadata.Project_Add) and then
+   not Ada_Quality.CLI_Metadata.Requires_Store
+     (Ada_Quality.CLI_Metadata.Project_Command,
+      Ada_Quality.CLI_Metadata.Project_List) and then
+   not Ada_Quality.CLI_Metadata.Requires_Store
+     (Ada_Quality.CLI_Metadata.Report_Command,
+      Ada_Quality.CLI_Metadata.No_Subcommand),
+   "typed command metadata drives both dispatch and store ownership");
+for Index in 1 .. Ada_Quality.CLI_Metadata.Command_Count loop
+   Assert
+     (Ada.Strings.Fixed.Index
+        (Ada_Quality.CLI_Metadata.Help_Text,
+         Ada_Quality.CLI_Metadata.Command_Name (Index)) > 0,
+      "every registered command is represented in centralized help metadata");
+   declare
+      Command : constant String :=
+        Ada_Quality.CLI_Metadata.Command_Name (Index);
+      Command_Id : constant Ada_Quality.CLI_Metadata.Command_Id :=
+        Ada_Quality.CLI_Metadata.Identify (Command);
+   begin
+      for Subcommand_Index in
+        1 .. Ada_Quality.CLI_Metadata.Subcommand_Count (Command)
+      loop
+         declare
+            Name : constant String :=
+              Ada_Quality.CLI_Metadata.Subcommand_Name
+                (Command, Subcommand_Index);
+            Id : constant Ada_Quality.CLI_Metadata.Subcommand_Id :=
+              Ada_Quality.CLI_Metadata.Identify_Subcommand (Command_Id, Name);
+         begin
+            Assert
+              (Id /= Ada_Quality.CLI_Metadata.Unknown_Subcommand and then
+               Ada_Quality.CLI_Metadata.Command_Of (Id) = Command_Id and then
+               Ada_Quality.CLI_Metadata.Image (Id) = Name,
+               "every registered subcommand has one command-owned typed identity");
+         end;
+      end loop;
+   end;
+end loop;
+Assert
+  (Ada.Strings.Fixed.Index
+     (Ada_Quality.CLI_Metadata.Help_Text,
+      "report --format json|html [--project ID | --tag NAME]") > 0,
+   "generated help documents the report tag selector accepted by metadata");
+declare
+   Saved : constant Terminal_Styles.Color_Policy :=
+     Terminal_Styles.Current_Color_Policy;
+   Exit_Code : Natural;
+begin
+   Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Always);
+   Exit_Code := Ada_Quality.CLI.Run
+     (Ada_Quality.CLI_Arguments.Create
+        ([To_Unbounded_String ("version"),
+          To_Unbounded_String ("--color"),
+          To_Unbounded_String ("never")]));
+   Assert
+     (Exit_Code = 0 and then
+      Terminal_Styles.Current_Color_Policy = Terminal_Styles.Color_Always,
+      "embedded CLI requests restore process-global presentation state");
+   Exit_Code := Ada_Quality.CLI.Run
+     (Ada_Quality.CLI_Arguments.Create
+        ([To_Unbounded_String ("version"),
+          To_Unbounded_String ("unexpected")]));
+   Assert (Exit_Code = 2, "commands reject unexpected positional arguments");
+   Terminal_Styles.Set_Color_Policy (Saved);
+exception
+   when others =>
+      Terminal_Styles.Set_Color_Policy (Saved);
+      raise;
+end;
+declare
+   List_Path : constant String := Fixture_Root & "/changed-files.txt";
+   Arguments : constant Ada_Quality.CLI_Arguments.Argument_Set :=
+     Ada_Quality.CLI_Arguments.Create
+       ([To_Unbounded_String ("--changed-file"),
+         To_Unbounded_String ("src/direct.adb"),
+         To_Unbounded_String ("--files-from"),
+         To_Unbounded_String (List_Path)]);
+begin
+   Project_Tools.Files.Write_Text_File
+     (List_Path, ASCII.LF & "src/listed.ads" & ASCII.LF &
+      "src/second.adb" & ASCII.LF);
+   declare
+      Files : constant Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+        Ada_Quality.CLI_Changed_Files.Read (Arguments);
+   begin
+      Assert
+        (Files.Length = 3 and then
+         To_String (Files.First_Element) = "src/direct.adb" and then
+         To_String (Files.Last_Element) = "src/second.adb",
+         "changed-file parsing combines direct and bounded list inputs");
+   end;
+   declare
+      Rejected : Boolean := False;
+   begin
+      begin
+         declare
+            Ignored : constant
+              Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+                Ada_Quality.CLI_Changed_Files.Read
+                  (Ada_Quality.CLI_Arguments.Create
+                     ([To_Unbounded_String ("--changed-file"),
+                       To_Unbounded_String ("")]));
+         begin
+            Rejected := not Ignored.Is_Empty;
+         end;
+      exception
+         when Ada_Quality.CLI_Changed_Files.Input_Error => Rejected := True;
+      end;
+      Assert (Rejected, "changed-file parsing rejects empty direct paths");
+   end;
+   declare
+      Rejected : Boolean := False;
+      Long_Path : constant String
+        (1 .. Ada_Quality.Resource_Limits.Maximum_Path_Input_Bytes + 1) :=
+          [others => 'x'];
+   begin
+      begin
+         declare
+            Ignored : constant
+              Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+                Ada_Quality.CLI_Changed_Files.Read
+                  (Ada_Quality.CLI_Arguments.Create
+                     ([To_Unbounded_String ("--changed-file"),
+                       To_Unbounded_String (Long_Path)]));
+         begin
+            Rejected := not Ignored.Is_Empty;
+         end;
+      exception
+         when Ada_Quality.CLI_Changed_Files.Input_Error => Rejected := True;
+      end;
+      Assert (Rejected, "changed-file parsing rejects overlong direct paths");
+   end;
+   declare
+      Empty : constant Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+        Ada_Quality.CLI_Changed_Files.Read
+          (Ada_Quality.CLI_Arguments.Create
+             ([To_Unbounded_String ("scan")]));
+   begin
+      Assert (Empty.Is_Empty, "changed-file parsing accepts an omitted list");
+   end;
+   declare
+      Rejected : Boolean := False;
+   begin
+      begin
+         declare
+            Ignored : constant
+              Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+                Ada_Quality.CLI_Changed_Files.Read
+                  (Ada_Quality.CLI_Arguments.Create
+                     ([To_Unbounded_String ("--files-from"),
+                       To_Unbounded_String
+                         (Fixture_Root & "/missing-changed-files.txt")]));
+         begin
+            Rejected := not Ignored.Is_Empty;
+         end;
+      exception
+         when Ada_Quality.CLI_Changed_Files.Input_Error => Rejected := True;
+      end;
+      Assert (Rejected, "changed-file parsing maps missing lists to input errors");
+   end;
+   Project_Tools.Files.Write_Text_File
+     (List_Path,
+      [1 .. Ada_Quality.Resource_Limits.Maximum_Path_Input_Bytes => 'x'] &
+      ASCII.LF);
+   declare
+      Files : constant Ada_Quality.CLI_Changed_Files.String_Vectors.Vector :=
+        Ada_Quality.CLI_Changed_Files.Read
+          (Ada_Quality.CLI_Arguments.Create
+             ([To_Unbounded_String ("--files-from"),
+               To_Unbounded_String (List_Path)]));
+   begin
+      Assert
+        (Files.Length = 1 and then
+         Length (Files.First_Element) =
+           Ada_Quality.Resource_Limits.Maximum_Path_Input_Bytes,
+         "changed-file parsing accepts a path exactly at the input limit");
+   end;
+   Ada.Directories.Delete_File (List_Path);
+end;
 Assert (not Coverage_Passes (8_999, 10_000), "89.99 percent fails");
 Assert (Coverage_Passes (9_000, 10_000), "90 percent passes");
 Assert (Coverage_Passes (9_001, 10_000), "above 90 percent passes");
@@ -63,6 +287,10 @@ begin
      (Root & "/src/ada_quality_coverage-helper.adb",
       "separate (Ada_Quality_Coverage)" & ASCII.LF &
       "procedure Helper is begin null; end Helper;" & ASCII.LF);
+   Project_Tools.Files.Write_Text_File
+     (Root & "/src/ada_quality_coverage-helper-nested.adb",
+      "separate (Ada_Quality_Coverage.Helper)" & ASCII.LF &
+      "procedure Nested is begin null; end Nested;" & ASCII.LF);
    Project_Tools.Files.Write_Text_File (Objects & "/alpha.gcno", "fixture");
    Project_Tools.Files.Write_Text_File (Objects & "/alpha-child.gcno", "fixture");
    declare
@@ -75,7 +303,8 @@ begin
         Units (Units.First_Index + 1).Subunit_Paths.Length = 1 and then
         Missing.Length = 1 and then
         To_String (Missing.First_Element.Stem) = "beta",
-        "coverage inventory parses Ada subunit syntax and detects missing instrumentation");
+        "coverage inventory parses Ada subunit syntax, excludes nested driver subunits, " &
+        "and detects missing instrumentation");
       Project_Tools.Files.Write_Text_File (Objects & "/beta.gcno", "fixture");
       Assert (Ada_Quality.Coverage.Missing_Objects (Units, Objects).Is_Empty,
         "coverage inventory is complete only when every production unit has instrumentation");

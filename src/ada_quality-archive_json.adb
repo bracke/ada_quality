@@ -5,7 +5,7 @@ with Ada_Quality.History;
 with Ada_Quality.History_Data;
 with Ada_Quality.Types;
 
---  AQ-WAIVER: SRC-03 target=project_selected owner=aq expires=2099-12-31 justification=streamed-archive-render
+--  AQ-WAIVER: SRC-03 target=walk owner=aq expires=2027-11-21 justification=streamed-archive-tree-walk
 package body Ada_Quality.Archive_JSON is
    use Ada.Strings.Unbounded;
 

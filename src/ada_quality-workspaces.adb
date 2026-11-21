@@ -5,10 +5,11 @@ with Ada.Strings.Fixed;
 with Project_Tools.Files;
 with Project_Tools.Links;
 with Ada_Quality.Project_Inventory;
+with Ada_Quality.Bounded_Files;
 with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Workspaces is
-   --  AQ-WAIVER: SRC-03 target=copy_tree owner=aq expires=2099-12-31 justification=copy-budget-boundary
+   --  AQ-WAIVER: SRC-03 target=copy_tree owner=aq expires=2027-11-21 justification=copy-budget-boundary
    use Ada.Strings.Unbounded;
    use type Ada.Directories.File_Kind;
    use type Ada.Directories.File_Size;
@@ -140,7 +141,8 @@ package body Ada_Quality.Workspaces is
         (Canonical, Into, Manifest : String;
          Pin_Depth : Positive)
       is
-         Data : constant String := Project_Tools.Files.Read_Raw_File (Manifest);
+         Data : constant String := Ada_Quality.Bounded_Files.Read
+           (Manifest, Ada_Quality.Resource_Limits.Maximum_File_Bytes);
          type Section_Kind is (Other_Section, Pins_Section, Solution_Link_Section);
          Section         : Section_Kind := Other_Section;
          Multiline_Quote : Character := Character'Val (0);

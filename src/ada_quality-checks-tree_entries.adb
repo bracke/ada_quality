@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=walk owner=core expires=2099-12-31 justification=bounded-recursive-project-tree-walk
+--  AQ-WAIVER: SRC-03 target=walk owner=core expires=2027-11-21 justification=bounded-recursive-project-tree-walk
    function Tree_Entries (Root : String; Links : Boolean) return Text_Vectors.Vector is
       Result : Text_Vectors.Vector;
 

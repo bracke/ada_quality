@@ -44,8 +44,9 @@ never overwritten. Transactional compaction is likewise checked before and after
 
 Physical backups and logical exports may be authenticated with Ed25519. A physical-backup signature covers its
 verified checksum manifest; a logical-export signature covers a domain-separated streaming SHA-256 digest of every
-export byte. Verification always requires an explicitly supplied trusted public key, and restore/import can require
-verification before creating their destination database.
+export byte. Verification requires either an explicitly supplied public key or a local trust store populated with
+`database trust add`; restore/import can require either form before creating their destination database. Signature
+inspection reports the algorithm, digest, artifact kind, and stable key identity without claiming verification.
 
 `database archive DEST --before UTC [--keep N]` first creates and verifies a complete logical export. It then
 transactionally removes terminal assessments older than UTC, retaining at least the newest N terminal assessments
@@ -53,8 +54,8 @@ per project and every running assessment. Owned evidence and aliases are removed
 the resulting live database is checked and compacted, and the archive remains importable.
 
 `database archive --dry-run --before UTC [--keep N] [--json]` lists the exact assessments that would be removed without
-creating an archive or changing the database. `database merge SOURCE` accepts another database or native export,
+creating an archive or changing the database. `database merge SOURCE...` accepts one or more databases or native exports,
 matches projects by canonical path, deduplicates completed runs by fingerprints, remaps identities, and preserves
 nonconflicting assessment aliases. `--dry-run` reports additions, reuse, aliases, and conflicts without changing
 allocator or database state. A real merge applies projects, tags, assessments, evidence, events, and aliases in one
-write transaction, so any insertion failure rolls back the complete merge.
+write transaction across every source, so any conflict or insertion failure rolls back the complete merge.

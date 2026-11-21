@@ -23,6 +23,26 @@ package Ada_Quality.Policy is
       Maximum_Output_Bytes          : Boolean := False;
       Require_Clean_Worktree        : Boolean := False;
    end record;
+
+   type Policy_Key is
+     (Coverage_Minimum_Key, Source_Lines_Key, Complexity_Key,
+      Timeout_Key, Output_Key, Clean_Worktree_Key);
+   --  Stable iteration order for every supported policy field.
+
+   function Name (Key : Policy_Key) return String;
+   function Is_Boolean (Key : Policy_Key) return Boolean;
+   function Natural_Value
+     (Item : Quality_Policy; Key : Policy_Key) return Natural
+     with Pre => not Is_Boolean (Key);
+   function Boolean_Value
+     (Item : Quality_Policy; Key : Policy_Key) return Boolean
+     with Pre => Is_Boolean (Key);
+   function Value_Image (Item : Quality_Policy; Key : Policy_Key) return String;
+   function Changed
+     (Left, Right : Quality_Policy; Key : Policy_Key) return Boolean;
+   function Is_Present (Sources : Key_Presence; Key : Policy_Key) return Boolean;
+   function Affected_Indicators (Key : Policy_Key) return String;
+   --  Canonical policy metadata shared by parsing, reporting, and impact analysis.
    --  Keys explicitly selected by one policy document.
    --  Resource limits and release requirements applied to one assessment.
    --  @field Coverage_Minimum_Basis_Points Minimum acceptable production coverage in hundredths of a percent.

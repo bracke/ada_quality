@@ -124,6 +124,16 @@ private package Ada_Quality.Persistence is
    function Project_Tag_Is_Valid (Name : String) return Boolean;
    --  Validate one canonical project tag.
 
+   function Project_Tags_Contain (Tags, Name : String) return Boolean;
+   --  Test membership in a canonical sorted tag list.
+
+   function Update_Project_Tags
+     (Tags, Name : String; Add : Boolean) return String;
+   --  Add or remove one name while retaining canonical ordering.
+
+   function Merge_Project_Tags (Left, Right : String) return String;
+   --  Return the canonical union of two canonical tag lists.
+
    function Project_Payload (Path, Tags : String) return String;
    --  Encode a project path and sorted comma-separated tags.
 

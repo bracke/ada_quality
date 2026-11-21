@@ -2,7 +2,9 @@ with Ada.Characters.Handling;
 with Ada.Directories;
 with Ada.Strings.Fixed;
 with Project_Tools.Files;
+with Ada_Quality.Bounded_Files;
 with Ada_Quality.Project_Inventory;
+with Ada_Quality.Resource_Limits;
 
 package body Ada_Quality.Coverage is
    function Decimal_Digits (Text : String) return Boolean is
@@ -63,7 +65,8 @@ package body Ada_Quality.Coverage is
       Result : Production_Unit_Vectors.Vector;
 
       function Subunit_Parent_Stem (Path : String) return String is
-         Text   : constant String := Project_Tools.Files.Read_Raw_File (Path);
+         Text   : constant String := Ada_Quality.Bounded_Files.Read
+           (Path, Ada_Quality.Resource_Limits.Maximum_File_Bytes);
          Cursor : Natural := Text'First;
 
          function Identifier_Start (Value : Character) return Boolean is

@@ -1,17 +1,90 @@
+with Ada_Quality.CI_Formats;
+with Ada_Quality.JSON_Reports;
+with Ada_Quality.Storage.Registry;
+
 separate (Ada_Quality.CLI)
---  AQ-WAIVER: SRC-03 target=put_line owner=aq expires=2099-12-31 justification=one-reporting-snapshot
+--  AQ-WAIVER: SRC-03 target=print_findings owner=aq expires=2027-11-21 justification=one-reporting-snapshot
 procedure Print_Findings (DB_Path : String) is
+   type Findings_Request is record
+      Format           : Ada.Strings.Unbounded.Unbounded_String;
+      Structured       : Boolean := False;
+      Project_Id       : Natural := 0;
+      Indicator        : Indicator_Id := Indicator_Id'First;
+      Filter_Indicator : Boolean := False;
+      Indicator_Text   : Ada.Strings.Unbounded.Unbounded_String;
+      Minimum          : Severity := Severity'First;
+      Severity_Text    : Ada.Strings.Unbounded.Unbounded_String;
+      Path_Filter      : Ada.Strings.Unbounded.Unbounded_String;
+      Tag_Filter       : Ada.Strings.Unbounded.Unbounded_String;
+      Since_Text       : Ada.Strings.Unbounded.Unbounded_String;
+      Until_Text       : Ada.Strings.Unbounded.Unbounded_String;
+      Since_Time       : Ada_Quality.Reporting.Optional_Timestamp;
+      Until_Time       : Ada_Quality.Reporting.Optional_Timestamp;
+      Page             : Ada_Quality.Pagination.Page_Request;
+   end record;
+
+   function Parse_Request return Findings_Request is
+      Result : Findings_Request;
+   begin
+      Result.Format := To_Unbounded_String
+        (Selected_Output_Format
+           ("text", "text|json|sarif",
+            "findings format requires text, json, or sarif"));
+      Result.Structured :=
+        Option ("--format", "") /= "" or else Has_Flag ("--json") or else
+        Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
+        Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
+        Option ("--tag", "") /= "" or else Option ("--since", "") /= "" or else
+        Option ("--until", "") /= "" or else Option ("--limit", "") /= "" or else
+        Option ("--offset", "") /= "" or else Option ("--cursor", "") /= "";
+      if Option ("--project", "") /= "" then
+         Result.Project_Id := Positive_Option ("--project", "project");
+      end if;
+      Result.Indicator_Text := To_Unbounded_String (Option ("--indicator", ""));
+      Result.Filter_Indicator := Length (Result.Indicator_Text) > 0;
+      if Result.Filter_Indicator and then
+        not Ada_Quality.Indicators.Parse_Canonical
+          (To_String (Result.Indicator_Text), Result.Indicator)
+      then
+         raise Usage_Error with "--indicator requires a canonical indicator ID";
+      end if;
+      Result.Severity_Text := To_Unbounded_String (Option ("--severity", "info"));
+      if Option ("--severity", "") /= "" then
+         begin
+            Result.Minimum := Severity'Value (Option ("--severity", ""));
+         exception
+            when Constraint_Error =>
+               raise Usage_Error with
+                 "--severity requires info, low, medium, high, or critical";
+         end;
+      end if;
+      Result.Path_Filter := To_Unbounded_String (Option ("--path", ""));
+      Result.Tag_Filter := To_Unbounded_String (Option ("--tag", ""));
+      Result.Since_Text := To_Unbounded_String (Option ("--since", ""));
+      Result.Until_Text := To_Unbounded_String (Option ("--until", ""));
+      Result.Since_Time := Timestamp_Option ("--since");
+      Result.Until_Time := Timestamp_Option ("--until");
+      Result.Page := Requested_Page;
+      if Result.Since_Time.Present and then Result.Until_Time.Present and then
+        Ada.Calendar.">" (Result.Since_Time.Value, Result.Until_Time.Value)
+      then
+         raise Usage_Error with "--since must not be later than --until";
+      elsif Length (Result.Tag_Filter) > 0 and then
+        not Ada_Quality.Storage.Registry.Is_Tag_Name
+          (To_String (Result.Tag_Filter))
+      then
+         raise Usage_Error with
+           "--tag requires lowercase letters, digits, hyphens, or underscores";
+      end if;
+      return Result;
+   end Parse_Request;
+
+   package Finding_Pages is new Ada_Quality.Pagination.Stream_Pages
+     (Ada_Quality.Types.Finding_Vectors);
+
+   Request : constant Findings_Request := Parse_Request;
    Session : Ada_Quality.Reporting.Session;
-   Requested : constant String := Option ("--format", "");
-   JSON_Mode : constant Boolean := Has_Flag ("--json");
-   Format : constant String :=
-     (if JSON_Mode then "json" elsif Requested = "" then "text" else Requested);
-   Structured : constant Boolean := Requested /= "" or else JSON_Mode or else
-     Option ("--project", "") /= "" or else Option ("--indicator", "") /= "" or else
-     Option ("--severity", "") /= "" or else Option ("--path", "") /= "" or else
-     Option ("--tag", "") /= "" or else
-     Option ("--since", "") /= "" or else Option ("--until", "") /= "" or else
-     Option ("--limit", "") /= "" or else Option ("--offset", "") /= "";
+   Format : constant String := To_String (Request.Format);
    Output : Ada.Strings.Unbounded.Unbounded_String;
 
    procedure Put_Line (Text : String) is
@@ -20,51 +93,39 @@ procedure Print_Findings (DB_Path : String) is
    end Put_Line;
 begin
    Ada_Quality.Reporting.Open (Session, DB_Path);
-   if Structured then
+   if Request.Structured then
       declare
-         Project_Id : Natural := 0;
-         Indicator : Indicator_Id := Indicator_Id'First;
-         Filter_Indicator : constant Boolean := Option ("--indicator", "") /= "";
-         Minimum : Severity := Severity'First;
-         Path_Filter : constant String := Option ("--path", "");
-         Tag_Filter : constant String := Option ("--tag", "");
-         Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--since");
-         Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Timestamp_Option ("--until");
+         Project_Id : constant Natural := Request.Project_Id;
+         Indicator : constant Indicator_Id := Request.Indicator;
+         Filter_Indicator : constant Boolean := Request.Filter_Indicator;
+         Minimum : constant Severity := Request.Minimum;
+         Path_Filter : constant String := To_String (Request.Path_Filter);
+         Tag_Filter : constant String := To_String (Request.Tag_Filter);
+         Since_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Request.Since_Time;
+         Until_Time : constant Ada_Quality.Reporting.Optional_Timestamp := Request.Until_Time;
          Items : Finding_Vectors.Vector;
-         Offset : Natural := 0;
-         Limit : Natural := 0;
          Total : Natural := 0;
-         use type Ada.Calendar.Time;
+         Snapshot : Natural := 0;
+         Project_Boundary : Natural := 0;
+         Project_Revision_Value : Natural := 0;
+         Binding : Natural := 0;
       begin
-         if Format not in "text" | "json" | "sarif" then
-            raise Usage_Error with "findings format requires text, json, or sarif";
-         elsif JSON_Mode and then Requested not in "" | "json" then
-            raise Usage_Error with "--json conflicts with non-JSON --format";
-         elsif Since_Time.Present and then Until_Time.Present and then
-           Since_Time.Value > Until_Time.Value
-         then
-            raise Usage_Error with "--since must not be later than --until";
-         elsif Tag_Filter /= "" and then not Ada_Quality.Storage.Is_Project_Tag_Name (Tag_Filter) then
-            raise Usage_Error with "--tag requires lowercase letters, digits, hyphens, or underscores";
-         end if;
-         if Option ("--project", "") /= "" then
-            Project_Id := Positive_Option ("--project", "project");
-         end if;
-         if Filter_Indicator and then
-           not Ada_Quality.Indicators.Parse_Canonical (Option ("--indicator", ""), Indicator)
-         then
-            raise Usage_Error with "--indicator requires a canonical indicator ID";
-         end if;
-         if Option ("--severity", "") /= "" then
-            begin
-               Minimum := Severity'Value (Option ("--severity", ""));
-            exception
-               when Constraint_Error =>
-                  raise Usage_Error with "--severity requires info, low, medium, high, or critical";
-            end;
+         Binding := Query_Binding
+           ("findings|project=" & Natural'Image (Project_Id) &
+            "|indicator=" & To_String (Request.Indicator_Text) &
+            "|severity=" & To_String (Request.Severity_Text) & "|path=" & Path_Filter &
+            "|tag=" & Tag_Filter & "|since=" & To_String (Request.Since_Text) &
+            "|until=" & To_String (Request.Until_Text));
+         Require_Query_Binding (Binding);
+         Snapshot := Cursor_Snapshot (Assessment_Snapshot (Session));
+         Project_Boundary := Cursor_Secondary_Snapshot (Project_Snapshot (Session));
+         Project_Revision_Value := Cursor_Tertiary_Snapshot
+           (Project_Revision (Session, Project_Boundary));
+         if Cursor_Version in 4 | 5 then
+            Require_Project_Revision (Session, Project_Boundary, Project_Revision_Value);
          end if;
          for Run of Ada_Quality.Reporting.Runs (Session, Project_Id) loop
-            if Run.State = Assessment_Completed and then
+            if Run.Id <= Snapshot and then Run.State = Assessment_Completed and then
               (Tag_Filter = "" or else Has_Tag
                  (To_String (Ada_Quality.Reporting.Project (Session, Run.Project_Id).Tags), Tag_Filter)) and then
               In_Time_Range (Run.Started_At, Since_Time, Until_Time)
@@ -80,37 +141,22 @@ begin
                           (Path_Filter = "" or else Ada.Strings.Fixed.Index
                              (To_String (Finding.Relative_Path), Path_Filter) > 0)
                         then
-                           Items.Append (Finding);
+                           Finding_Pages.Consider
+                             (Items, Finding, Total, Request.Page);
                         end if;
                      end loop;
                   end loop;
                end;
             end if;
          end loop;
-         Total := Natural (Items.Length);
-         declare begin
-            begin
-               Offset := Page_Offset;
-               if Option ("--limit", "") /= "" then
-                  Limit := Positive'Value (Option ("--limit", ""));
-               end if;
-            exception
-               when Constraint_Error =>
-                  raise Usage_Error with "--offset and --limit require nonnegative and positive counts";
-            end;
-            if Offset > 0 then
-               Items.Delete_First
-                 (Ada.Containers.Count_Type'Min (Items.Length, Ada.Containers.Count_Type (Offset)));
-            end if;
-            if Limit > 0 and then Items.Length > Ada.Containers.Count_Type (Limit) then
-               Items.Delete_Last (Items.Length - Ada.Containers.Count_Type (Limit));
-            end if;
-         end;
          if Format = "json" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);
             Emit_Document
-              (Ada_Quality.JSON.Render_Findings
-                 (Items, Page_Metadata (Total, Offset, Natural (Items.Length), Limit),
+              (Ada_Quality.JSON_Reports.Render_Findings
+                 (Items, Page_Metadata
+                    (Total, Request.Page.Offset, Natural (Items.Length),
+                     Request.Page.Limit, Snapshot,
+                     Project_Boundary, Project_Revision_Value, Binding),
                   Pretty => True));
          elsif Format = "sarif" then
             Terminal_Styles.Set_Color_Policy (Terminal_Styles.Color_Never);

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/trusted-keys-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "keys"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "trusted-keys" }, "keys": { "type": "array", "items": {
+    "type": "object", "additionalProperties": false, "required": ["id", "path"], "properties": {
+      "id": { "type": "string", "pattern": "^ed25519-[0-9a-f]{16}$" }, "path": { "type": "string" } } } } }
+}

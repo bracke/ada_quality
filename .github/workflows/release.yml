@@ -1,0 +1,157 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish
+        required: true
+
+permissions:
+  actions: read
+  attestations: write
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: Verify, package, and attest
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+    steps:
+      - name: Check out Ada Quality
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: ada_quality
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Check out database
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/database
+          ref: 27842fcc1e92b4e275f36ab98ce2c6dd5aa32e0d
+          path: database
+
+      - name: Check out project_tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/project_tools
+          ref: 4f5357c7c7e8e175054e6f2cb72c302409f371c8
+          path: project_tools
+
+      - name: Check out jsonlib
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/jsonlib
+          ref: 24a1b18a7be19bb65725d8114c4f069658ced614
+          path: jsonlib
+
+      - name: Check out terminal_styles
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/terminal_styles
+          ref: da097e330169ea5d3030efd0207f313ae6262a65
+          path: terminal_styles
+
+      - name: Check out messages
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/messages
+          ref: 6d092f9590c6b0cb0d7704ce20c33b3ac76b8d14
+          path: messages
+
+      - name: Check out regexp
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/regexp
+          ref: f660333a314f3c610bb255478ac86656e2fd0c4c
+          path: regexp
+
+      - name: Check out i18n
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/i18n
+          ref: 21d4d191f1d90a16248b71dfc54b4384502cf658
+          path: i18n
+
+      - name: Check out cryptolib
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: bracke/cryptolib
+          ref: 2e5c415f65fd49c2a496c97813740fa9b83e02fa
+          path: cryptolib
+
+      - name: Set up Alire
+        uses: alire-project/setup-alire@1ff7d9224297858cc9ecce29b08bc6109f93e49a # v6
+        with:
+          version: 2.1.0
+
+      - name: Validate tag and resolve sibling crates
+        working-directory: ada_quality
+        shell: bash
+        run: |
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' alire.toml)
+          test "${RELEASE_TAG}" = "v${version}"
+          cp alire.toml "${RUNNER_TEMP}/ada_quality-alire.toml"
+          cp tests/alire.toml "${RUNNER_TEMP}/ada_quality-tests-alire.toml"
+          restore_manifests() {
+            cp "${RUNNER_TEMP}/ada_quality-alire.toml" alire.toml
+            cp "${RUNNER_TEMP}/ada_quality-tests-alire.toml" tests/alire.toml
+          }
+          trap restore_manifests EXIT
+          printf '\n[[pins]]\ndatabase = { path = "../database" }\ncryptolib = { path = "../cryptolib" }\nproject_tools = { path = "../project_tools" }\njsonlib = { path = "../jsonlib" }\nterminal_styles = { path = "../terminal_styles" }\nmessages = { path = "../messages" }\nregexp = { path = "../regexp" }\ni18n = { path = "../i18n" }\n' >> alire.toml
+          alr -n update
+          printf '\n[[pins]]\ndatabase = { path = "../../database" }\ncryptolib = { path = "../../cryptolib" }\nproject_tools = { path = "../../project_tools" }\njsonlib = { path = "../../jsonlib" }\nterminal_styles = { path = "../../terminal_styles" }\nmessages = { path = "../../messages" }\nregexp = { path = "../../regexp" }\ni18n = { path = "../../i18n" }\n' >> tests/alire.toml
+          alr -n -C tests update
+          restore_manifests
+          trap - EXIT
+
+      - name: Validate release
+        working-directory: ada_quality
+        run: |
+          alr -n build --validation
+          alr -n -C tests build
+          alr -n exec -- ./bin/check_all
+
+      - name: Build package and checksums
+        working-directory: ada_quality
+        run: |
+          make package
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          archive=$(find . -maxdepth 1 -type f -name '*.tar.gz' -print -quit)
+          package_root=$(find . -mindepth 1 -maxdepth 1 -type d -name 'ada-quality-*' -print -quit)
+          test -n "${archive}" -a -n "${package_root}"
+          echo "PACKAGE_PATH=${GITHUB_WORKSPACE}/ada_quality/dist/${archive#./}" >> "${GITHUB_ENV}"
+          echo "PACKAGE_ROOT=${GITHUB_WORKSPACE}/ada_quality/dist/${package_root#./}" >> "${GITHUB_ENV}"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: ${{ env.PACKAGE_ROOT }}
+          artifact-name: ada-quality-${{ env.RELEASE_TAG }}.spdx.json
+          output-file: ada_quality/dist/ada-quality-${{ env.RELEASE_TAG }}.spdx.json
+          format: spdx-json
+          upload-release-assets: false
+
+      - name: Attest package provenance and SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: ${{ env.PACKAGE_PATH }}
+          sbom-path: ada_quality/dist/ada-quality-${{ env.RELEASE_TAG }}.spdx.json
+
+      - name: Publish GitHub release
+        working-directory: ada_quality
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${RELEASE_TAG}" \
+            "${PACKAGE_PATH}" \
+            dist/ada-quality-${RELEASE_TAG}.spdx.json \
+            dist/SHA256SUMS \
+            --verify-tag --generate-notes --title "Ada Quality ${RELEASE_TAG}"

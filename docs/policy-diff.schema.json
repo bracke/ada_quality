@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/policy-diff-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "before", "after", "changes"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "policy-diff" }, "before": { "type": "string" },
+    "after": { "type": "string" }, "changes": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["key", "before", "after"], "properties": { "key": { "type": "string" }, "before": { "type": "string" }, "after": { "type": "string" } } } } }
+}

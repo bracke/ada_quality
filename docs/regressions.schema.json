@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/regressions-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "projects"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "regressions" }, "projects": { "type": "array",
+    "items": { "type": "object", "additionalProperties": false, "required": ["project_id", "status", "baseline_id", "current_id", "changes"],
+      "properties": { "project_id": { "type": "integer", "minimum": 1 }, "status": { "type": "string" },
+        "baseline_id": { "type": "integer", "minimum": 0 }, "current_id": { "type": "integer", "minimum": 0 },
+        "changes": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+          "required": ["indicator", "change", "before", "after"], "properties": { "indicator": { "type": "string" },
+            "change": { "type": "string" }, "before": { "type": "string" }, "after": { "type": "string" } } } } } } } }
+}

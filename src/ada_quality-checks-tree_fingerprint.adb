@@ -50,7 +50,8 @@ separate (Ada_Quality.Checks)
                      Total_Bytes := Total_Bytes + Natural (Size);
                      if Ignore_Generated then
                         declare
-                           Data : constant String := Project_Tools.Files.Read_Raw_File (To_String (Path));
+                           Data : constant String :=
+                             Ada_Quality.Bounded_Files.Read (To_String (Path), Maximum_File_Bytes);
                         begin
                            Add_Record ("source-file", Name, Data);
                         end;

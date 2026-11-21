@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_json_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_json_test owner=core expires=2027-11-21 justification=one-component-fixture-matrix
 procedure Run_JSON_Test is
 begin
 declare
@@ -56,7 +56,10 @@ begin
          Value.Results.Append (Result);
       end;
    end loop;
-   Text := To_Unbounded_String (Ada_Quality.JSON.Render (Value));
+   Text := To_Unbounded_String (Ada_Quality.JSON_Assessments.Render (Value));
+   Assert
+     (Ada_Quality.JSON.Render (Value) = To_String (Text),
+      "legacy JSON facade delegates without changing the domain contract");
    Assert (Ada.Strings.Fixed.Index (To_String (Text), """schema_version"":1") > 0,
      "JSON has a schema version");
    Assert (Value.Results.Length = 33, "JSON fixture represents every indicator");
@@ -70,64 +73,79 @@ begin
      "JSON output never contains ANSI styling");
    Jsonlib.Parsers.Parse (To_String (Text), Doc, Error);
    Assert (not Jsonlib.Errors.Failed (Error), "rendered report is strict RFC 8259 JSON");
+   Assert_JSON_Contract
+     (To_String (Text), "assessment.schema.json",
+      "assessment report conforms to its schema");
    Assert
      (Jsonlib.Documents.Length
         (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "results")) = 33,
       "parsed JSON contains every result");
    declare
-      Outcomes : Ada_Quality.JSON.Batch_Outcome_Vectors.Vector;
+      Outcomes : Ada_Quality.Command_Models.Batch_Outcome_Vectors.Vector;
       Batch    : Ada.Strings.Unbounded.Unbounded_String;
    begin
       Outcomes.Append
-        (Ada_Quality.JSON.Batch_Outcome'
+        (Ada_Quality.Command_Models.Batch_Outcome'
            (Project_Id => 1, Assessment_Id => 1,
-            Status => Ada_Quality.JSON.Batch_Completed,
+            Status => Ada_Quality.Command_Models.Batch_Completed,
             Diagnostic => Null_Unbounded_String, Value => Value));
       Outcomes.Append
-        (Ada_Quality.JSON.Batch_Outcome'
+        (Ada_Quality.Command_Models.Batch_Outcome'
            (Project_Id => 2, Assessment_Id => 2,
-            Status => Ada_Quality.JSON.Batch_Interrupted,
+            Status => Ada_Quality.Command_Models.Batch_Interrupted,
             Diagnostic => To_Unbounded_String ("fixture interruption"), Value => <>));
       Outcomes.Append
-        (Ada_Quality.JSON.Batch_Outcome'
+        (Ada_Quality.Command_Models.Batch_Outcome'
            (Project_Id => 3, Assessment_Id => 3,
-            Status => Ada_Quality.JSON.Batch_Reused,
+            Status => Ada_Quality.Command_Models.Batch_Reused,
             Diagnostic => Null_Unbounded_String, Value => <>));
       Outcomes.Append
-        (Ada_Quality.JSON.Batch_Outcome'
+        (Ada_Quality.Command_Models.Batch_Outcome'
            (Project_Id => 4, Assessment_Id => 4,
-            Status => Ada_Quality.JSON.Batch_Completed,
+            Status => Ada_Quality.Command_Models.Batch_Completed,
             Diagnostic => Null_Unbounded_String, Value => Value));
-      Batch := To_Unbounded_String (Ada_Quality.JSON.Render_Batch (Outcomes));
+      Batch := To_Unbounded_String
+        (Ada_Quality.JSON_Assessments.Render_Batch (Outcomes));
       Jsonlib.Parsers.Parse (To_String (Batch), Doc, Error);
       Assert (not Jsonlib.Errors.Failed (Error),
         "a multi-project assessment is one strict JSON document");
+      Assert_JSON_Contract
+        (To_String (Batch), "assessment-batch.schema.json",
+         "assessment batch conforms to its schema");
       Assert
         (Jsonlib.Documents.Length
            (Doc, Jsonlib.Documents.Member (Doc, Jsonlib.Documents.Root (Doc), "outcomes")) = 4 and then
          Ada.Strings.Fixed.Index (To_String (Batch), """status"":""reused""") > 0,
          "batch JSON retains completed, reused, and interrupted project outcomes");
       declare
-         Reuse : constant String := Ada_Quality.JSON.Render_Reuse (3, 3);
+         Reuse : constant String :=
+           Ada_Quality.JSON_Assessments.Render_Reuse (3, 3);
       begin
          Jsonlib.Parsers.Parse (Reuse, Doc, Error);
+         Assert_JSON_Contract
+           (Reuse, "assessment-reuse.schema.json",
+            "assessment reuse conforms to its schema");
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (Reuse, """kind"":""assessment-reuse""") > 0,
             "single-project unchanged reuse has strict versioned JSON output");
       end;
       declare
-         Plan : Ada_Quality.JSON.Check_Plan_Vectors.Vector;
+         Plan : Ada_Quality.Command_Models.Check_Plan_Vectors.Vector;
       begin
          Plan.Append
-           (Ada_Quality.JSON.Check_Plan_Item'
+           (Ada_Quality.Command_Models.Check_Plan_Item'
               (Project_Id => 3, Path => To_Unbounded_String ("/tmp/project"),
                Source_Fingerprint => To_Unbounded_String ("source"),
                Policy_Fingerprint => To_Unbounded_String ("policy"),
                Toolchain_Fingerprint => To_Unbounded_String ("toolchain"),
                Reusable_Assessment => 3, Will_Reuse => True));
-         declare Text : constant String := Ada_Quality.JSON.Render_Check_Plan (Plan); begin
+         declare Text : constant String :=
+           Ada_Quality.JSON_Assessments.Render_Check_Plan (Plan); begin
             Jsonlib.Parsers.Parse (Text, Doc, Error);
+            Assert_JSON_Contract
+              (Text, "check-plan.schema.json",
+               "check plan conforms to its schema");
             Assert
               (not Jsonlib.Errors.Failed (Error) and then
                Ada.Strings.Fixed.Index (Text, """kind"":""check-plan""") > 0,
@@ -138,7 +156,7 @@ begin
    declare
       SARIF : constant String := Ada_Quality.CI_Formats.Render_SARIF (Value);
       JUnit : constant String := Ada_Quality.CI_Formats.Render_JUnit (Value);
-      Catalog : constant String := Ada_Quality.JSON.Render_Indicators;
+      Catalog : constant String := Ada_Quality.JSON_Reports.Render_Indicators;
       Points : Ada_Quality.History.Trend_Vectors.Vector;
       Trend  : Ada.Strings.Unbounded.Unbounded_String;
    begin
@@ -160,21 +178,28 @@ begin
          Metrics.Long_Lines := 1;
          Metrics.Findings.Append
            (Value.Results.First_Element.Findings.First_Element);
-         Scan_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_Scan (1, Metrics));
+         Scan_JSON := To_Unbounded_String
+           (Ada_Quality.JSON_Reports.Render_Scan (1, Metrics));
          Scan_SARIF := To_Unbounded_String
            (Ada_Quality.CI_Formats.Render_SARIF (Metrics.Findings));
          Findings_JSON := To_Unbounded_String
-           (Ada_Quality.JSON.Render_Findings (Metrics.Findings));
+           (Ada_Quality.JSON_Reports.Render_Findings (Metrics.Findings));
          Jsonlib.Parsers.Parse (To_String (Scan_JSON), Doc, Error);
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (To_String (Scan_JSON),
               """kind"":""changed-source-scan""") > 0,
             "changed-source scans have versioned strict JSON output");
+         Assert_JSON_Contract
+           (To_String (Scan_JSON), "changed-source-scan.schema.json",
+            "changed-source scan conforms to its schema");
          Jsonlib.Parsers.Parse (To_String (Scan_SARIF), Doc, Error);
          Assert (not Jsonlib.Errors.Failed (Error),
            "arbitrary changed-source findings have strict SARIF output");
          Jsonlib.Parsers.Parse (To_String (Findings_JSON), Doc, Error);
+         Assert_JSON_Contract
+           (To_String (Findings_JSON), "findings.schema.json",
+            "findings conform to their schema");
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (To_String (Findings_JSON), """kind"":""findings""") > 0,
@@ -191,6 +216,9 @@ begin
          Ada.Strings.Fixed.Index (JUnit, "failed &lt;gate&gt; &amp; check") > 0,
          "JUnit maps every indicator and escapes failure diagnostics");
       Jsonlib.Parsers.Parse (Catalog, Doc, Error);
+      Assert_JSON_Contract
+        (Catalog, "indicator-catalog.schema.json",
+         "indicator catalog conforms to its schema");
       Assert
         (not Jsonlib.Errors.Failed (Error) and then
          Ada.Strings.Fixed.Index (Catalog, """kind"":""indicator-catalog""") > 0 and then
@@ -200,15 +228,19 @@ begin
       Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 7, Value => 9_000));
       Points.Append (Ada_Quality.History.Trend_Point'(Run_Id => 9, Value => 9_250));
       Trend := To_Unbounded_String
-        (Ada_Quality.JSON.Render_Trend (1, TST_03, "basis_points", Points));
+        (Ada_Quality.JSON_Reports.Render_Trend
+           (1, TST_03, "basis_points", Points));
       Jsonlib.Parsers.Parse (To_String (Trend), Doc, Error);
+      Assert_JSON_Contract
+        (To_String (Trend), "metric-trend.schema.json",
+         "metric trend conforms to its schema");
       Assert
         (not Jsonlib.Errors.Failed (Error) and then
          Ada.Strings.Fixed.Index (To_String (Trend), """kind"":""metric-trend""") > 0 and then
          Ada.Strings.Fixed.Index (To_String (Trend), """run_id"":9") > 0,
          "metric trends have a versioned deterministic JSON representation");
       declare
-         Series : Ada_Quality.JSON.Metric_Series_Vectors.Vector;
+         Series : Ada_Quality.Command_Models.Metric_Series_Vectors.Vector;
          Runs   : Ada_Quality.Reporting.Run_Vectors.Vector;
          Comparison : Ada_Quality.Reporting.Project_Comparison :=
            (Project_Id => 1,
@@ -219,13 +251,17 @@ begin
          Multi, History_JSON, Comparison_JSON : Ada.Strings.Unbounded.Unbounded_String;
       begin
          Series.Append
-           (Ada_Quality.JSON.Metric_Series'
+           (Ada_Quality.Command_Models.Metric_Series'
               (Indicator => TST_03, Unit_Name => To_Unbounded_String ("basis_points"), Points => Points));
          Series.Append
-           (Ada_Quality.JSON.Metric_Series'
+           (Ada_Quality.Command_Models.Metric_Series'
               (Indicator => SRC_03, Unit_Name => To_Unbounded_String ("decision_points"), Points => <>));
-         Multi := To_Unbounded_String (Ada_Quality.JSON.Render_Trends (1, Series));
+         Multi := To_Unbounded_String
+           (Ada_Quality.JSON_Reports.Render_Trends (1, Series));
          Jsonlib.Parsers.Parse (To_String (Multi), Doc, Error);
+         Assert_JSON_Contract
+           (To_String (Multi), "metric-trends.schema.json",
+            "metric trends conform to their schema");
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
             Ada.Strings.Fixed.Index (To_String (Multi), """kind"":""metric-trends""") > 0 and then
@@ -240,10 +276,10 @@ begin
                Started_At => (Present => False), Finished_At => (Present => False),
                Format => Ada_Quality.Reporting.Lossless_Evidence));
          History_JSON := To_Unbounded_String
-           (Ada_Quality.JSON.Render_History
+           (Ada_Quality.JSON_Reports.Render_History
               (Runs,
                (Present => True, Total => 2, Offset => 0, Limit => 1,
-                Next_Cursor => To_Unbounded_String ("v1:1"))));
+                Next_Cursor => To_Unbounded_String ("v1:1"), Snapshot => 0)));
          Jsonlib.Parsers.Parse (To_String (History_JSON), Doc, Error);
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
@@ -251,12 +287,16 @@ begin
             Ada.Strings.Fixed.Index (To_String (History_JSON), """assessment_id"":9") > 0 and then
             Ada.Strings.Fixed.Index (To_String (History_JSON), """next_cursor"":""v1:1""") > 0,
             "filtered history has deterministic cursor and total-count metadata");
+         Assert_JSON_Contract
+           (To_String (History_JSON), "assessment-history.schema.json",
+            "assessment history conforms to its schema");
 
          Comparison.Changes.Append
            (Ada_Quality.History.Regression'
               (Indicator => TST_03, Kind => Ada_Quality.History.Worsened_Metric,
                Before => To_Unbounded_String ("9250"), After => To_Unbounded_String ("9000")));
-         Comparison_JSON := To_Unbounded_String (Ada_Quality.JSON.Render_Comparison (Comparison));
+         Comparison_JSON := To_Unbounded_String
+           (Ada_Quality.JSON_Assessments.Render_Comparison (Comparison));
          Jsonlib.Parsers.Parse (To_String (Comparison_JSON), Doc, Error);
          Assert
            (not Jsonlib.Errors.Failed (Error) and then
@@ -264,117 +304,61 @@ begin
               (To_String (Comparison_JSON), """kind"":""assessment-comparison""") > 0 and then
             Ada.Strings.Fixed.Index (To_String (Comparison_JSON), """baseline_id"":7") > 0,
             "explicit comparisons have a versioned deterministic JSON representation");
+         Assert_JSON_Contract
+           (To_String (Comparison_JSON), "assessment-comparison.schema.json",
+            "assessment comparison conforms to its schema");
       end;
    end;
    declare
-      Diagnostics : Ada_Quality.JSON.Diagnostic_Vectors.Vector;
-      Waivers : Ada_Quality.Checks.Waiver_Audit_Vectors.Vector;
-      Retention : Ada_Quality.Storage.History_Vectors.Vector;
-      Administrative : Ada.Strings.Unbounded.Unbounded_String;
+      Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
+      Discoveries : Ada_Quality.Command_Models.Discovery_Vectors.Vector;
+      Aliases : Ada_Quality.Reporting.Alias_Vectors.Vector;
+      Stats : Ada_Quality.Reporting.Snapshot_Statistics;
+      DB_Path : constant String := Fixture_Root & "/json-contract.db";
+      Store : Ada_Quality.Storage.Store;
+      Session : Ada_Quality.Reporting.Session;
    begin
-      Diagnostics.Append
-        (Ada_Quality.JSON.Diagnostic_Item'
-           (Name => To_Unbounded_String ("fixture"), Passed => False,
-            Detail => To_Unbounded_String ("conflict")));
-      Administrative := To_Unbounded_String
-        (Ada_Quality.JSON.Render_Doctor (Diagnostics));
-      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "doctor-report") > 0,
-        "doctor diagnostics have versioned JSON");
-      for Status in Ada_Quality.Checks.Waiver_Status loop
-         Waivers.Append
-           (Ada_Quality.Checks.Waiver_Audit_Item'
-              (Rule => To_Unbounded_String ("src-03"), Target => To_Unbounded_String ("fixture"),
-               Owner => To_Unbounded_String ("team"), Expires => To_Unbounded_String ("2099-12-31"),
-               Justification => To_Unbounded_String ("fixture"),
-               Relative_Path => To_Unbounded_String ("src/fixture.adb"), Line => 1,
-               Status => Status, Expiring => Status = Ada_Quality.Checks.Waiver_Active));
-      end loop;
-      Administrative := To_Unbounded_String (Ada_Quality.JSON.Render_Waivers (Waivers));
-      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "waiver-audit") > 0,
-        "complete waiver inventory has versioned JSON");
-      Retention.Append
-        (Ada_Quality.Storage.History_Item'
-           (Id => 7, Project_Id => 2, Status => To_Unbounded_String ("completed"),
-            Summary => Null_Unbounded_String, Source_Fingerprint => Null_Unbounded_String,
-            Policy_Fingerprint => Null_Unbounded_String, Toolchain_Fingerprint => Null_Unbounded_String));
-      Administrative := To_Unbounded_String
-        (Ada_Quality.JSON.Render_Retention (Retention, "2026-01-01T00:00:00Z", 3));
-      Assert (Ada.Strings.Fixed.Index (To_String (Administrative), "retention-preview") > 0,
-        "retention previews have versioned JSON");
-      Administrative := To_Unbounded_String
-        (Ada_Quality.JSON.Render_Merge ("source.db", True, 1, 2, 3, 4, Diagnostics));
-      Assert
-        (Ada.Strings.Fixed.Index (To_String (Administrative), "database-merge") > 0 and then
-         Ada.Strings.Fixed.Index (To_String (Administrative), "conflict") > 0,
-         "merge plans and conflicts have versioned JSON");
-   end;
-   declare
-      Root : constant String :=
-        Project_Tools.Files.Find_Root_Upward (Ada.Directories.Current_Directory, "ada_quality.gpr");
-   begin
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "assessment JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/archive.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "archive JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-batch.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "batch assessment JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-reuse.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "assessment reuse JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/check-plan.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "check plan JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trend.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "metric trend JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/metric-trends.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "multi-metric trend JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-history.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "assessment history JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-comparison.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "assessment comparison JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/portfolio-status.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "portfolio status JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/indicator-catalog.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "indicator catalog JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/changed-source-scan.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "changed-source scan JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/project-list.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "project list JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/project-discovery.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "project discovery JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/assessment-aliases.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "assessment alias JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/database-statistics.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "database statistics JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/findings.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "filtered findings JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/doctor-report.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "doctor report JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/waiver-audit.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "waiver audit JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/retention-preview.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "retention preview JSON schema is valid JSON");
-      Jsonlib.Parsers.Parse
-        (Project_Tools.Files.Read_Raw_File (Root & "/docs/database-merge.schema.json"), Doc, Error);
-      Assert (not Jsonlib.Errors.Failed (Error), "database merge JSON schema is valid JSON");
+      Projects.Append
+        (Ada_Quality.Reporting.Project_Record'
+           (Id => 1, Path => To_Unbounded_String ("/fixture"),
+            Tags => To_Unbounded_String ("core,release"), Enabled => True, Removed => False));
+      Discoveries.Append
+        (Ada_Quality.Command_Models.Discovery_Item'
+           (Path => To_Unbounded_String ("/fixture"), Project_Id => 1,
+            Status => Ada_Quality.Command_Models.Discovered));
+      Aliases.Append
+        (Ada_Quality.Reporting.Assessment_Alias'
+           (Name => To_Unbounded_String ("release"), Run_Id => 1, Event_Id => 1));
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Reports.Render_Projects (Projects), "project-list.schema.json",
+         "project list conforms to its schema");
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Reports.Render_Discovery
+           (Discoveries), "project-discovery.schema.json",
+         "project discovery conforms to its schema");
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Assessments.Render_Aliases
+           (Aliases), "assessment-aliases.schema.json",
+         "assessment aliases conform to their schema");
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Reports.Render_Statistics
+           (Stats), "database-statistics.schema.json",
+         "database statistics conform to their schema");
+
+      Project_Tools.Files.Delete_File_If_Present (DB_Path);
+      Project_Tools.Files.Delete_File_If_Present (DB_Path & ".wal");
+      Project_Tools.Files.Delete_File_If_Present (DB_Path & ".lock");
+      Ada_Quality.Storage.Open (Store, DB_Path);
+      Ada_Quality.Storage.Integrity.Check (Store);
+      Ada_Quality.Storage.Close (Store);
+      Ada_Quality.Reporting.Open (Session, DB_Path);
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Reports.Render_Status
+           (Session), "portfolio-status.schema.json",
+         "portfolio status conforms to its schema");
+      Assert_JSON_Contract
+        (Ada_Quality.JSON_Reports.Render_Archive (Session), "archive.schema.json",
+         "archive conforms to its schema");
    end;
 end;
 end Run_JSON_Test;

@@ -1,5 +1,4 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=state_after_run owner=aq expires=2099-12-31 justification=evidence-boundary
 function Assess
   (Project_Id : Natural;
    Root       : String;
@@ -11,7 +10,7 @@ is
    Manifest     : constant String := Project_Tools.Files.Join (Root, "alire.toml");
    Manifest_Data : constant String :=
      (if Project_Tools.Files.File_Exists (Manifest)
-      then Project_Tools.Files.Read_Raw_File (Manifest) else "");
+      then Ada_Quality.Bounded_Files.Read (Manifest, Maximum_File_Bytes) else "");
    GPR           : constant String :=
      Project_Tools.Files.Find_File (Root, Ada.Directories.Simple_Name (Root) & ".gpr");
    Any_GPR       : constant Project_Tools.Files.Path_List :=
@@ -334,7 +333,7 @@ is
            Project_Tools.Files.Value_Of (Coverage_File, "inventory");
          Summary : constant Project_Tools.Gcov.Coverage_Summary :=
            Project_Tools.Gcov.Parse_Lines_Executed_Output
-             (Project_Tools.Files.Read_Raw_File (Coverage_File));
+             (Ada_Quality.Bounded_Files.Read (Coverage_File, Maximum_File_Bytes));
          Covered : constant Natural :=
            (if Covered_Text'Length > 0 then Natural'Value (Covered_Text)
             else Project_Tools.Gcov.Covered_Lines (Summary));
@@ -478,7 +477,8 @@ is
            (To_String (Execution_Root), "alire/alire.lock");
          Status : constant Dependency_Evidence_Status :=
            (if Project_Tools.Files.File_Exists (Lock_Path)
-            then Dependency_Consistency (Manifest_Data, Project_Tools.Files.Read_Raw_File (Lock_Path))
+            then Dependency_Consistency
+              (Manifest_Data, Ada_Quality.Bounded_Files.Read (Lock_Path, Maximum_File_Bytes))
             else Dependency_Unavailable);
       begin
          case Status is

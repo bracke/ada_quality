@@ -20,3 +20,8 @@ of trend-enabled indicators. `assessment-history.schema.json` defines filtered v
 contracts instead of project-local schemas. Changed-source scans, project list/discovery, assessment aliases, and
 database statistics are constrained by their correspondingly named v1 schema files.
 `findings.schema.json` constrains structured finding queries independently of a complete assessment.
+Administrative schemas additionally cover errors, command results, policies, policy diffs and impact, regression
+sets, signature metadata, trusted keys, batch doctor/waiver reports, and multi-source merge results. Paged schemas
+require snapshot metadata and accept legacy v1, snapshot-bound v2, project-revision v3,
+assessment/project/revision-bound v4, and query-bound v5 cursor syntax. Doctor and waiver contracts expose observed counts, configured
+thresholds, and the exact threshold decision represented by the command exit status.

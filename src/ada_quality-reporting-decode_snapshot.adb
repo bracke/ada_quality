@@ -1,5 +1,5 @@
 separate (Ada_Quality.Reporting)
---  AQ-WAIVER: SRC-03 target=decode_details owner=core expires=2099-12-31 justification=single-snapshot-table-dispatch
+--  AQ-WAIVER: SRC-03 target=decode_details owner=core expires=2027-11-21 justification=single-snapshot-table-dispatch
    procedure Decode_Snapshot (Item : in out Session; Rows : in out Entity_Table_Array) is
       Digest : Interfaces.Unsigned_64 := 16#CBF2_9CE4_8422_2325#;
       Known_Projects : Run_Index_Maps.Map;
@@ -37,6 +37,7 @@ separate (Ada_Quality.Reporting)
                Item.All_Projects.Append
                  (Project_Record'(Id => Row.Id, Path => Path, Tags => Tags,
                    Enabled => Row.Active, Removed => State = "removed"));
+               Item.Project_Index.Insert (Row.Id, Item.All_Projects.Last_Index);
                Known_Projects.Insert (Row.Id, Item.All_Projects.Last_Index);
             end;
          end loop;
@@ -72,6 +73,12 @@ separate (Ada_Quality.Reporting)
                       else (Present => False)),
                    Format => (if Decoded.Lossless then Lossless_Evidence else Legacy_Evidence)));
                Item.Run_Index.Insert (Row.Id, Item.All_Runs.Last_Index);
+               if not Item.Project_Runs.Contains (Row.Parent_Id) then
+                  Item.Project_Runs.Insert
+                    (Row.Parent_Id, History_Position_Vectors.Empty_Vector);
+               end if;
+               Item.Project_Runs.Reference (Row.Parent_Id).Append
+                 (Item.All_Runs.Last_Index);
                declare
                   History_Row : constant Ada_Quality.History_Data.History_Item :=
                     (Id => Row.Id, Project_Id => Row.Parent_Id, Status => To_Unbounded_String (S (Row.State)),

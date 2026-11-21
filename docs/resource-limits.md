@@ -11,6 +11,9 @@
 | Project discovery entries/depth | 100,000 / 128 | discovery skips links/generated trees and fails closed |
 | Individual source input | 64 MiB | rejected before reading file content |
 | Aggregate source input | 1 GiB | cumulative pre-read accounting |
+| Whole-file textual metadata | 64 MiB | streaming bounded reader rejects excess before allocation |
+| Key/signature metadata | 64 KiB | no-follow descriptor reader rejects excess |
+| Changed-file path / list | 4 KiB per path / 64 MiB aggregate | bounded line input and cumulative accounting |
 | Individual staged dependency input | 256 MiB | rejected before copying file content |
 | Aggregate staged dependency input | 4 GiB | cumulative pre-copy accounting across the local-pin graph |
 | Reporting projects/runs | 10,000 / 100,000 | snapshot scan limits |

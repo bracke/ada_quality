@@ -3,7 +3,7 @@ with Ada.Strings.Fixed;
 with Project_Tools.TOML;
 
 package body Ada_Quality.Manifests is
-   --  AQ-WAIVER: SRC-03 target=begin_value owner=aq expires=2099-12-31 justification=toml-state-machine
+   --  AQ-WAIVER: SRC-03 target=is_valid owner=aq expires=2027-11-21 justification=manifest-validation-matrix
    use Ada.Strings.Unbounded;
    use type Project_Tools.TOML.String_Parse_Status;
 

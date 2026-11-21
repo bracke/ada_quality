@@ -88,5 +88,10 @@ package body Ada_Quality.Project_Inventory is
    end Is_Generated_File;
 
    function Is_Coverage_Driver_Stem (Stem : String) return Boolean is
-     (Stem = "ada_quality_coverage");
+      Prefix : constant String := "ada_quality_coverage-";
+   begin
+      return Stem = "ada_quality_coverage" or else
+        (Stem'Length > Prefix'Length and then
+         Stem (Stem'First .. Stem'First + Prefix'Length - 1) = Prefix);
+   end Is_Coverage_Driver_Stem;
 end Ada_Quality.Project_Inventory;

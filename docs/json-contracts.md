@@ -10,6 +10,10 @@ filtered history exports validated run metadata. Metric trends export one or eve
 series for a project. Archive project/time filters retain only selected assessment evidence and emit comparisons only
 when every referenced assessment is present. Changed-source scans and the project list/discovery, alias-list, and
 database-statistics administration commands also have deterministic versioned JSON forms.
+Policy show/diff/impact, regression collections, command results, artifact signatures, and trusted-key inventories
+also have dedicated contracts. `--error-format json` emits one stable error document on standard error. Its `code`
+distinguishes `usage_error`, `execution_error`, `database_error`, `reporting_error`, and `signing_error`; artifact
+key, signature, and trust failures therefore do not masquerade as database failures.
 No-write JSON checks emit `check-plan-v1`, including source, policy, and toolchain identities and any reusable run.
 Schemas are `assessment.schema.json`, `assessment-batch.schema.json`, `assessment-reuse.schema.json`,
 `check-plan.schema.json`, `archive.schema.json`,
@@ -19,3 +23,9 @@ latest-project summary and registry-discovery surfaces. SARIF uses the external 
 as XML rather than JSON. The additional contracts are `changed-source-scan.schema.json`, `project-list.schema.json`,
 `project-discovery.schema.json`, `assessment-aliases.schema.json`, and `database-statistics.schema.json`.
 Filtered finding collections use `findings.schema.json`; SARIF remains available for the same selected records.
+Paged contracts include a snapshot identity; v2 cursors bind single-identity collections, v3 cursors add a project
+boundary or revision, and v4 cursors bind project state plus project and assessment boundaries. Current v5 cursors
+also carry a command-and-filter fingerprint and are rejected when reused with a different collection or query. A v4
+or v5 continuation fails explicitly if mutable project metadata changed, preventing silent skips or duplicates.
+Legacy v1 through v4 cursors remain accepted for compatibility.
+Doctor and waiver v2 documents group results by project.

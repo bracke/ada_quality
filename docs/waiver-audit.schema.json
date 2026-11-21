@@ -1,11 +1,53 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/waiver-audit-v1.schema.json",
-  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "waivers"],
-  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "waiver-audit" }, "waivers": { "type": "array",
-    "items": { "type": "object", "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/ada-quality/waiver-audit.schema.json",
+  "$defs": {
+    "waiver": {
+      "type": "object", "additionalProperties": false,
       "required": ["rule", "target", "owner", "expires", "justification", "path", "line", "status", "expiring"],
-      "properties": { "rule": { "type": "string" }, "target": { "type": "string" }, "owner": { "type": "string" },
-        "expires": { "type": "string" }, "justification": { "type": "string" }, "path": { "type": "string" },
-        "line": { "type": "integer", "minimum": 1 }, "status": { "enum": ["active", "unused", "expired", "invalid"] },
-        "expiring": { "type": "boolean" } } } } }
+      "properties": {
+        "rule": { "type": "string" }, "target": { "type": "string" },
+        "owner": { "type": "string" }, "expires": { "type": "string" },
+        "justification": { "type": "string" }, "path": { "type": "string" },
+        "line": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["active", "unused", "expired", "invalid"] },
+        "expiring": { "type": "boolean" }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "kind", "invalid_count", "maximum_invalid", "expiring_count", "maximum_expiring", "threshold_passed", "waivers"],
+      "properties": {
+        "schema_version": { "const": 1 }, "kind": { "const": "waiver-audit" },
+        "invalid_count": { "type": "integer", "minimum": 0 },
+        "maximum_invalid": { "type": "integer", "minimum": 0 },
+        "expiring_count": { "type": "integer", "minimum": 0 },
+        "maximum_expiring": { "type": "integer", "minimum": 0 },
+        "threshold_passed": { "type": "boolean" },
+        "waivers": { "type": "array", "items": { "$ref": "#/$defs/waiver" } }
+      }
+    },
+    {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "kind", "invalid_count", "maximum_invalid", "expiring_count", "maximum_expiring", "threshold_passed", "projects"],
+      "properties": {
+        "schema_version": { "const": 2 }, "kind": { "const": "waiver-audit" },
+        "invalid_count": { "type": "integer", "minimum": 0 },
+        "maximum_invalid": { "type": "integer", "minimum": 0 },
+        "expiring_count": { "type": "integer", "minimum": 0 },
+        "maximum_expiring": { "type": "integer", "minimum": 0 },
+        "threshold_passed": { "type": "boolean" },
+        "projects": { "type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["project_id", "path", "waivers"],
+          "properties": {
+            "project_id": { "type": "integer", "minimum": 1 }, "path": { "type": "string" },
+            "waivers": { "type": "array", "items": { "$ref": "#/$defs/waiver" } }
+          }
+        } }
+      }
+    }
+  ]
 }

@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_registry_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_registry_test owner=core expires=2027-11-21 justification=one-component-fixture-matrix
 procedure Run_Registry_Test is
    Id : Indicator_Id;
 begin

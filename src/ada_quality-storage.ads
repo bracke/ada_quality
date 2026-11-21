@@ -1,11 +1,12 @@
-with Ada.Calendar;
 with Ada.Containers.Vectors;
 with Ada.Finalization;
 with Ada.Strings.Unbounded;
 with Ada_Quality.History_Data;
+with Ada_Quality.Resource_Limits;
 with Ada_Quality.Types;
 with Database;
 with Database.Schema;
+with Database.Status;
 
 --  Transactional project registry and immutable assessment persistence.
 package Ada_Quality.Storage is
@@ -61,83 +62,15 @@ package Ada_Quality.Storage is
    --  @param Item Store handle to inspect.
    --  @return True while the database handle is open.
 
-   function Add_Project (Item : in out Store; Path : String) return Positive;
-   --  Register one existing nonsymlink Alire crate by canonical path.
-   --  @param Item Open store.
-   --  @param Path Project root to validate and register.
-   --  @return New project identity.
-
-   function Projects (Item : in out Store; Include_Removed : Boolean := False) return Project_Vectors.Vector;
-   --  Load project registry rows in deterministic identity order.
-   --  @param Item Open store.
-   --  @param Include_Removed Whether tombstoned rows are included.
-   --  @return Matching project rows.
-
-   function Project (Item : in out Store; Id : Positive) return Project_Info;
-   --  Load one project registry row.
-   --  @param Item Open store.
-   --  @param Id Project identity.
-   --  @return Matching project row.
-
-   procedure Set_Enabled (Item : in out Store; Id : Positive; Enabled : Boolean);
-   --  Change whether a registered project participates in bulk assessment.
-   --  @param Item Open store.
-   --  @param Id Project identity.
-   --  @param Enabled New enabled state.
-
-   procedure Remove_Project (Item : in out Store; Id : Positive);
-   --  Tombstone a project while retaining immutable assessment history.
-   --  @param Item Open store.
-   --  @param Id Project identity.
-
-   procedure Relocate_Project (Item : in out Store; Id : Positive; Path : String);
-   --  Change a registered project's root without changing its identity or history.
-   --  The replacement path is validated with the same rules as a newly added project.
-   --  @param Item Open store.
-   --  @param Id Project identity.
-   --  @param Path New project root.
-
-   procedure Add_Project_Tag (Item : in out Store; Id : Positive; Name : String);
-   --  Add one canonical tag to a registered project; an existing tag is accepted.
-
-   procedure Remove_Project_Tag (Item : in out Store; Id : Positive; Name : String);
-   --  Remove one tag from a registered project; an absent tag is accepted.
-
-   function Has_Project_Tag (Project : Project_Info; Name : String) return Boolean;
-   --  Return whether Project has the exact canonical tag.
-
-   function Is_Project_Tag_Name (Name : String) return Boolean;
-   --  Return whether Name is a canonical project tag.
-
-   procedure Backup (Item : in out Store; Destination : String);
-   --  Create and verify a physical backup directory for the open store.
-   --  @param Item Open store.
-   --  @param Destination New backup directory.
-
-   procedure Export (Item : in out Store; Destination : String);
-   --  Create and verify a database-native logical export file.
-   --  @param Item Open store.
-   --  @param Destination New logical export file.
-
-   procedure Restore (Source, Destination : String);
-   --  Restore and verify a physical backup into a new database file.
-   --  @param Source Existing physical backup directory.
-   --  @param Destination New database file.
-
-   procedure Import (Source, Destination : String);
-   --  Import a database-native logical export into a new database file.
-
-   procedure Merge
-     (Item : in out Store; Source : String;
-      Added_Projects, Added_Assessments : out Natural);
-   --  Merge completed evidence from another database or native logical export.
-
    type Merge_Conflict is record
       Name   : Unbounded_String;
       Detail : Unbounded_String;
    end record;
    package Merge_Conflict_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Merge_Conflict);
+   package Source_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Unbounded_String,
+      "=" => Ada.Strings.Unbounded."=");
    type Merge_Report is record
       Added_Projects     : Natural := 0;
       Added_Assessments  : Natural := 0;
@@ -146,118 +79,15 @@ package Ada_Quality.Storage is
       Conflicts          : Merge_Conflict_Vectors.Vector;
    end record;
 
-   procedure Merge
-     (Item : in out Store; Source : String; Dry_Run : Boolean;
-      Report : out Merge_Report);
-   --  Preflight a merge and, unless Dry_Run, commit every planned row atomically.
-
-   procedure Archive_And_Prune
-     (Item        : in out Store;
-      Destination : String;
-      Before      : Ada.Calendar.Time;
-      Keep        : Natural;
-      Removed     : out Natural);
-   --  Verify a full logical archive, then transactionally remove old terminal assessments.
-
-   function Retention_Candidates
-     (Item : in out Store; Before : Ada.Calendar.Time; Keep : Natural)
-      return History_Vectors.Vector;
-   --  Return the exact old terminal assessments an archive operation would prune.
-
-   procedure Compact (Item : in out Store);
-   --  Reclaim unused database pages inside one exclusive transaction.
-   --  @param Item Open store.
-
-   function Start_Assessment
-     (Item               : in out Store;
-      Project_Id         : Positive;
-      Source_Fingerprint : String;
-      Policy_Fingerprint : String) return Positive;
-   --  Atomically create a running assessment and its start event before external tools run.
-   --  @param Item Open store.
-   --  @param Project_Id Owning project identity.
-   --  @param Source_Fingerprint Initial source identity.
-   --  @param Policy_Fingerprint Applied policy identity.
-   --  @return New assessment identity.
-
-   function Publish (Item : in out Store; Value : Ada_Quality.Types.Assessment) return Positive;
-   --  Validate and atomically publish all terminal assessment evidence.
-   --  @param Item Open store.
-   --  @param Value Complete publishable assessment.
-   --  @return Published assessment identity.
-
-   function History (Item : in out Store; Project_Id : Natural := 0) return History_Vectors.Vector;
-   --  Load immutable assessment metadata.
-   --  @param Item Open store.
-   --  @param Project_Id Optional project filter; zero selects every project.
-   --  @return Matching history in deterministic order.
-
-   function Results (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector;
-   --  Load persisted indicator result rows.
-   --  @param Item Open store.
-   --  @param Run_Id Optional assessment filter; zero selects every assessment.
-   --  @return Matching result rows.
-
-   function Measurements (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector;
-   --  Load persisted typed measurement rows.
-   --  @param Item Open store.
-   --  @param Run_Id Optional assessment filter; zero selects every assessment.
-   --  @return Matching measurement rows.
-
-   function Findings (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector;
-   --  Load persisted finding rows.
-   --  @param Item Open store.
-   --  @param Run_Id Optional assessment filter; zero selects every assessment.
-   --  @return Matching finding rows.
-
-   function Executions (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector;
-   --  Load persisted external-execution rows.
-   --  @param Item Open store.
-   --  @param Run_Id Optional assessment filter; zero selects every assessment.
-   --  @return Matching execution rows.
-
-   function Events (Item : in out Store; Run_Id : Natural := 0) return Detail_Vectors.Vector;
-   --  Load persisted assessment lifecycle events.
-   --  @param Item Open store.
-   --  @param Run_Id Optional assessment filter; zero selects every assessment.
-   --  @return Matching event rows.
-
-   procedure Add_Assessment_Alias (Item : in out Store; Run_Id : Positive; Name : String);
-   --  Assign one globally unique, append-only alias to a completed assessment.
-   --  @param Item Open store.
-   --  @param Run_Id Completed assessment identity.
-   --  @param Name Canonical lowercase alias.
-
-   procedure Interrupt_Assessment (Item : in out Store; Run_Id : Positive; Reason : String);
-   --  Atomically mark a running assessment interrupted and record its reason.
-   --  @param Item Open store.
-   --  @param Run_Id Running assessment identity.
-   --  @param Reason Human-readable interruption reason.
-
-   procedure Recover (Item : in out Store; Count : out Natural);
-   --  Atomically interrupt every stale running assessment.
-   --  @param Item Open store.
-   --  @param Count Number of assessments recovered.
-
-   function Schema_Version (Item : in out Store) return Positive;
-   --  Read the persisted logical schema version.
-   --  @param Item Open store.
-   --  @return Supported positive schema version.
-
    type Integrity_Limits is record
-      Max_Total_Rows : Positive := 2_500_000;
-      Max_Text_Bytes : Positive := 268_435_456;
+      Max_Total_Rows : Positive := Ada_Quality.Resource_Limits.Maximum_Database_Rows;
+      Max_Text_Bytes : Positive :=
+        Ada_Quality.Resource_Limits.Maximum_Database_Text_Bytes;
    end record;
    --  Resource bounds for a full database integrity audit.
-   --  @field Max_Total_Rows Maximum rows across all logical tables.
-   --  @field Max_Text_Bytes Maximum aggregate UTF-8 bytes in persisted text fields.
-
-   procedure Check (Item : in out Store; Limits : Integrity_Limits := (others => <>));
-   --  Validate schema, row ownership, lifecycle, cardinality, and immutable evidence invariants.
-   --  @param Item Open store to check.
-   --  @param Limits Resource bounds applied before rows enter the audit snapshot.
 
 private
+
    type Testing_Fault_Point is
      (No_Testing_Fault, Schema_Creation_Commit, Schema_Migration_Commit,
       Assessment_Start_Commit, Assessment_Publication_Commit,
@@ -312,4 +142,27 @@ private
    overriding procedure Finalize (Item : in out Store);
    --  Close the database and release its lock during controlled finalization.
    --  @param Item Store being finalized.
+
+   procedure Require_OK
+     (Status : Database.Status.Result; Context : String);
+   --  Raise Storage_Error with Context unless Status is successful.
+
+   function Next_Id
+     (Item : in out Store; Table : Positive) return Positive;
+   --  Reserve one identity from the open store's exclusive high-water mark.
+
+   function Reserve_Ids
+     (Item : in out Store; Table : Positive; Count : Natural)
+      return Positive;
+   --  Reserve Count consecutive identities from the exclusive high-water mark.
+
+   function Measurement_State
+     (Id : Ada_Quality.Types.Indicator_Id;
+      Kind : Ada_Quality.Types.Value_Kind) return String;
+   function Assessment_Status_Image
+     (Value : Ada_Quality.Types.Assessment_Status) return String;
+
+   procedure Trigger_Testing_Fault
+     (Item : in out Store; Point : Testing_Fault_Point);
+   --  Raise the configured deterministic test fault at Point, if any.
 end Ada_Quality.Storage;

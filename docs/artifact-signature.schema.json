@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/artifact-signature-v1.schema.json",
+  "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "kind", "path", "artifact_kind", "algorithm", "digest", "key_id", "verified"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "artifact-signature" }, "path": { "type": "string" },
+    "artifact_kind": { "enum": ["physical-backup", "logical-export"] }, "algorithm": { "const": "ed25519-sha256" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "key_id": { "type": "string", "pattern": "^ed25519-[0-9a-f]{16}$" },
+    "verified": { "type": "boolean" } }
+}

@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_source_analysis_test owner=aq expires=2099-12-31 justification=fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_source_analysis_test owner=aq expires=2027-11-21 justification=fixture-matrix
 procedure Run_Source_Analysis_Test is
 begin
 declare
@@ -34,6 +34,23 @@ begin
    Ada.Directories.Create_Path (Root & "/src");
    Ada.Directories.Create_Path (Root & "/tests/src");
    Ada.Directories.Create_Path (Root & "/config");
+   Project_Tools.Files.Write_Text_File (Root & "/bounded.txt", "12345");
+   declare
+      Raised : Boolean := False;
+   begin
+      begin
+         declare
+            Ignored : constant String := Ada_Quality.Bounded_Files.Read
+              (Root & "/bounded.txt", 4);
+            pragma Unreferenced (Ignored);
+         begin
+            null;
+         end;
+      exception
+         when Constraint_Error => Raised := True;
+      end;
+      Assert (Raised, "bounded file input rejects content beyond its byte limit");
+   end;
    Policy.Maximum_Source_Lines := 5;
    Policy.Maximum_Complexity := 4;
    Project_Tools.Files.Write_Text_File
@@ -48,17 +65,17 @@ begin
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
       "--  AQ: complexity-reviewed" & ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2099-12-31 justification=wrong-target" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2027-11-21 justification=wrong-target" & ASCII.LF &
       Example_Body);
    Project_Tools.Files.Write_Text_File
      (Root & "/tests/src/example_tests.adb",
       "procedure Example_Tests is begin Register_Routine; end Example_Tests;" & ASCII.LF);
    Project_Tools.Files.Write_Text_File
      (Root & "/src/nested.adb",
-      "--  AQ-WAIVER: SRC-06 target=file owner=aq expires=2099-12-31 justification=size-review" & ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2099-12-31 justification=wrong-target" &
+      "--  AQ-WAIVER: SRC-06 target=file owner=aq expires=2027-11-21 justification=size-review" & ASCII.LF &
+      "--  AQ-WAIVER: SRC-03 target=wrong owner=aq expires=2027-11-21 justification=wrong-target" &
       ASCII.LF &
-      "--  AQ-WAIVER: SRC-03 target=inner owner=aq expires=2099-12-31 justification=nested-review" &
+      "--  AQ-WAIVER: SRC-03 target=inner owner=aq expires=2027-11-21 justification=nested-review" &
       ASCII.LF &
       "procedure Nested is" & ASCII.LF &
       "   function Expression (Flag : Boolean) return Boolean is (Flag and then Ready);" & ASCII.LF &
@@ -102,8 +119,8 @@ begin
      "a standalone package documentation comment is required");
    Assert (Metrics.Maximum_Complexity = 5,
      "defined complexity covers conditionals, short circuits, alternatives, loops, " &
-     "nested declarations, and expression functions");
-   Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 2,
+     "nested declarations, and expression functions without merging enclosing scopes");
+   Assert (Metrics.Complexity_Violations > 0 and then Metrics.Review_Waivers = 1,
      "legacy and mismatched complexity markers do not waive a measured occurrence");
    declare
       Inventory : constant Ada_Quality.Checks.Waiver_Audit_Vectors.Vector :=
@@ -116,7 +133,7 @@ begin
          end if;
       end loop;
       Assert
-        (Natural (Inventory.Length) = 4 and then Active = 2 and then Unused = 2,
+        (Natural (Inventory.Length) = 4 and then Active = 1 and then Unused = 3,
          "waiver inventory includes both applicable and unused structured markers; total" &
          Natural'Image (Natural (Inventory.Length)) & " active" & Natural'Image (Active) &
          " unused" & Natural'Image (Unused));
@@ -212,10 +229,10 @@ begin
    end;
    Project_Tools.Files.Write_Text_File
      (Root & "/src/example.adb",
-      "--  AQ-WAIVER: SRC-03 target=example owner=aq expires=2099-12-31 justification=subprogram-review" &
+      "--  AQ-WAIVER: SRC-03 target=example owner=aq expires=2027-11-21 justification=subprogram-review" &
       ASCII.LF & Example_Body);
    Metrics := Ada_Quality.Checks.Analyze_Source (Root, Policy);
-   Assert (Metrics.Complexity_Violations = 0 and then Metrics.Review_Waivers = 3,
+   Assert (Metrics.Complexity_Violations = 0 and then Metrics.Review_Waivers = 2,
      "matching rule, target, and justification waive only the reviewed occurrence; violations" &
      Natural'Image (Metrics.Complexity_Violations) & ", waivers" &
      Natural'Image (Metrics.Review_Waivers));
@@ -227,7 +244,7 @@ begin
             Visible_Waivers := Visible_Waivers + 1;
          end if;
       end loop;
-      Assert (Visible_Waivers = 3,
+      Assert (Visible_Waivers = 2,
         "accepted source-size and complexity waivers remain visible as low-severity evidence");
    end;
    Policy.Require_Clean_Worktree := False;

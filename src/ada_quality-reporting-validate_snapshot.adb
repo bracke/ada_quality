@@ -1,5 +1,4 @@
 separate (Ada_Quality.Reporting)
---  AQ-WAIVER: SRC-03 target=validate_lifecycle owner=aq expires=2099-12-31 justification=lifecycle-matrix
    procedure Validate_Snapshot (Item : in out Session) is
       Assessment_Aliases : Finding_Key_Sets.Set;
       procedure Validate_Lifecycle (Run : Run_Record; Group : Detail_Group) is

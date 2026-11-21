@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "https://example.invalid/ada-quality/policy-impact-v1.schema.json",
+  "type": "object", "additionalProperties": false, "required": ["schema_version", "kind", "before", "after", "projects"],
+  "properties": { "schema_version": { "const": 1 }, "kind": { "const": "policy-impact" }, "before": { "type": "string" }, "after": { "type": "string" },
+    "projects": { "type": "array", "items": { "type": "object", "additionalProperties": false,
+      "required": ["project_id", "path", "before_fingerprint", "after_fingerprint", "keys", "indicators"],
+      "properties": { "project_id": { "type": "integer", "minimum": 1 }, "path": { "type": "string" },
+        "before_fingerprint": { "type": "string" }, "after_fingerprint": { "type": "string" },
+        "keys": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+        "indicators": { "type": "array", "items": { "type": "string", "pattern": "^[A-Z]{3}-[0-9]{2}$" }, "uniqueItems": true } } } } }
+}

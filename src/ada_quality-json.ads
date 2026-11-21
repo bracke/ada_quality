@@ -1,21 +1,16 @@
-with Ada.Containers.Vectors;
-with Ada.Strings.Unbounded;
 with Ada_Quality.Reporting;
 with Ada_Quality.History;
 with Ada_Quality.Indicators;
 with Ada_Quality.Checks;
 with Ada_Quality.Types;
 with Ada_Quality.Storage;
+with Ada_Quality.Policy;
+with Ada_Quality.Artifact_Signing;
+with Ada_Quality.Command_Models;
+with Ada_Quality.Resource_Limits;
 
 --  Deterministic JSON serialization for assessments and persistent archives.
 package Ada_Quality.JSON is
-   type Page_Info is record
-      Present     : Boolean := False;
-      Total       : Natural := 0;
-      Offset      : Natural := 0;
-      Limit       : Natural := 0;
-      Next_Cursor : Ada.Strings.Unbounded.Unbounded_String;
-   end record;
    --  Deterministic JSON serialization for assessments and persistent archives.
    function Render (Item : Ada_Quality.Types.Assessment; Pretty : Boolean := False) return String;
    --  Serialize one assessment using the versioned deterministic JSON contract.
@@ -23,49 +18,25 @@ package Ada_Quality.JSON is
    --  @param Pretty Whether to indent the resulting document.
    --  @return Complete JSON document.
 
-   type Batch_Outcome_Status is (Batch_Completed, Batch_Reused, Batch_Interrupted);
-   --  Terminal outcome of one project in a multi-project assessment.
-
-   type Batch_Outcome is record
-      Project_Id    : Natural := 0;
-      Assessment_Id : Natural := 0;
-      Status        : Batch_Outcome_Status := Batch_Interrupted;
-      Diagnostic    : Ada.Strings.Unbounded.Unbounded_String;
-      Value         : Ada_Quality.Types.Assessment;
-   end record;
-   --  One completed assessment or interrupted project-local outcome.
-
-   package Batch_Outcome_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Batch_Outcome);
-
    function Render_Batch
-     (Items : Batch_Outcome_Vectors.Vector; Pretty : Boolean := False) return String;
+     (Items : Ada_Quality.Command_Models.Batch_Outcome_Vectors.Vector;
+      Pretty : Boolean := False) return String;
    --  Serialize a multi-project run as one versioned JSON document.
 
    function Render_Reuse
      (Project_Id, Assessment_Id : Positive; Pretty : Boolean := False) return String;
    --  Serialize one exact unchanged-assessment reuse reference.
 
-   type Check_Plan_Item is record
-      Project_Id : Positive;
-      Path       : Ada.Strings.Unbounded.Unbounded_String;
-      Source_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
-      Policy_Fingerprint    : Ada.Strings.Unbounded.Unbounded_String;
-      Toolchain_Fingerprint : Ada.Strings.Unbounded.Unbounded_String;
-      Reusable_Assessment   : Natural := 0;
-      Will_Reuse            : Boolean := False;
-   end record;
-   package Check_Plan_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Check_Plan_Item);
-
    function Render_Check_Plan
-     (Items : Check_Plan_Vectors.Vector; Pretty : Boolean := False) return String;
+     (Items : Ada_Quality.Command_Models.Check_Plan_Vectors.Vector;
+      Pretty : Boolean := False) return String;
    --  Serialize a no-write assessment execution plan.
 
    function Render_Archive
      (Item             : Ada_Quality.Reporting.Session;
       Pretty           : Boolean := False;
-      Max_Output_Bytes : Positive := 268_435_456;
+      Max_Output_Bytes : Positive :=
+        Ada_Quality.Resource_Limits.Maximum_Archive_Output_Bytes;
       Project_Id       : Natural := 0;
       Project_Tag      : String := "";
       Since_Time       : Ada_Quality.Reporting.Optional_Timestamp := (Present => False);
@@ -85,25 +56,15 @@ package Ada_Quality.JSON is
       Pretty     : Boolean := False) return String;
    --  Serialize one compatible metric series as a versioned JSON document.
 
-   type Metric_Series is record
-      Indicator : Ada_Quality.Types.Indicator_Id := Ada_Quality.Types.STR_01;
-      Unit_Name : Ada.Strings.Unbounded.Unbounded_String;
-      Points    : Ada_Quality.History.Trend_Vectors.Vector;
-   end record;
-   --  One named numeric series for multi-metric export.
-
-   package Metric_Series_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Metric_Series);
-
    function Render_Trends
      (Project_Id : Positive;
-      Series     : Metric_Series_Vectors.Vector;
+      Series     : Ada_Quality.Command_Models.Metric_Series_Vectors.Vector;
       Pretty     : Boolean := False) return String;
    --  Serialize multiple compatible metric series as metric-trends-v1.
 
    function Render_History
      (Items : Ada_Quality.Reporting.Run_Vectors.Vector;
-      Page : Page_Info := (others => <>);
+      Page : Ada_Quality.Command_Models.Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    --  Serialize a filtered assessment history as assessment-history-v1.
 
@@ -114,13 +75,14 @@ package Ada_Quality.JSON is
 
    function Render_Status
      (Item : Ada_Quality.Reporting.Session;
-      Page : Page_Info := (others => <>); Pretty : Boolean := False) return String;
+      Page : Ada_Quality.Command_Models.Page_Info := (others => <>);
+      Pretty : Boolean := False) return String;
    --  Serialize the latest portfolio state as portfolio-status-v1.
 
    function Render_Status
      (Item     : Ada_Quality.Reporting.Session;
       Projects : Ada_Quality.Reporting.Project_Vectors.Vector;
-      Page     : Page_Info := (others => <>);
+      Page     : Ada_Quality.Command_Models.Page_Info := (others => <>);
       Pretty   : Boolean := False) return String;
    --  Serialize the latest portfolio state for a selected project set.
 
@@ -132,28 +94,20 @@ package Ada_Quality.JSON is
 
    function Render_Findings
      (Items : Ada_Quality.Types.Finding_Vectors.Vector;
-      Page : Page_Info := (others => <>);
+      Page : Ada_Quality.Command_Models.Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    --  Serialize a filtered finding collection as findings-v1.
 
-   type Discovery_Status is (Already_Registered, Discovered, Added, Missing, Removed);
-   type Discovery_Item is record
-      Path       : Ada.Strings.Unbounded.Unbounded_String;
-      Project_Id : Natural := 0;
-      Status     : Discovery_Status := Discovered;
-   end record;
-   package Discovery_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Discovery_Item);
-
    function Render_Projects
      (Items : Ada_Quality.Reporting.Project_Vectors.Vector;
-      Page : Page_Info := (others => <>);
+      Page : Ada_Quality.Command_Models.Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    function Render_Discovery
-     (Items : Discovery_Vectors.Vector; Pretty : Boolean := False) return String;
+     (Items : Ada_Quality.Command_Models.Discovery_Vectors.Vector;
+      Pretty : Boolean := False) return String;
    function Render_Aliases
      (Items : Ada_Quality.Reporting.Alias_Vectors.Vector;
-      Page : Page_Info := (others => <>);
+      Page : Ada_Quality.Command_Models.Page_Info := (others => <>);
       Pretty : Boolean := False) return String;
    function Render_Statistics
      (Item : Ada_Quality.Reporting.Snapshot_Statistics;
@@ -165,25 +119,63 @@ package Ada_Quality.JSON is
       Pretty          : Boolean := False) return String;
    --  Serialize the complete or category-filtered indicator registry as indicator-catalog-v1.
 
-   type Diagnostic_Item is record
-      Name   : Ada.Strings.Unbounded.Unbounded_String;
-      Passed : Boolean := False;
-      Detail : Ada.Strings.Unbounded.Unbounded_String;
-   end record;
-   package Diagnostic_Vectors is new Ada.Containers.Vectors
-     (Index_Type => Positive, Element_Type => Diagnostic_Item);
-
    function Render_Doctor
-     (Items : Diagnostic_Vectors.Vector; Pretty : Boolean := False) return String;
+     (Items : Ada_Quality.Command_Models.Diagnostic_Vectors.Vector;
+      Maximum_Failures : Natural := 0;
+      Failure_Count : Natural := Natural'Last; Pretty : Boolean := False) return String;
    function Render_Waivers
      (Items : Ada_Quality.Checks.Waiver_Audit_Vectors.Vector;
+      Maximum_Invalid : Natural := 0; Maximum_Expiring : Natural := Natural'Last;
+      Invalid_Count : Natural := Natural'Last; Expiring_Count : Natural := Natural'Last;
+      Pretty : Boolean := False) return String;
+   function Render_Doctor_Batch
+     (Items : Ada_Quality.Command_Models.Diagnostic_Report_Vectors.Vector;
+      Global_Checks : Ada_Quality.Command_Models.Diagnostic_Vectors.Vector :=
+        Ada_Quality.Command_Models.Diagnostic_Vectors.Empty_Vector;
+      Maximum_Failures : Natural := 0; Pretty : Boolean := False) return String;
+   function Render_Waiver_Batch
+     (Items : Ada_Quality.Command_Models.Waiver_Report_Vectors.Vector;
+      Maximum_Invalid : Natural := 0; Maximum_Expiring : Natural := Natural'Last;
+      Invalid_Count : Natural := Natural'Last; Expiring_Count : Natural := Natural'Last;
+      Pretty : Boolean := False) return String;
+   function Render_Error
+     (Code, Message, Command : String; Exit_Status : Natural;
+      Pretty : Boolean := False) return String;
+   function Render_Command_Result
+     (Command, Detail : String; Success : Boolean; Pretty : Boolean := False) return String;
+   function Render_String_List
+     (Kind, Member : String; Items : Ada_Quality.Command_Models.String_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Policy
+     (Item : Ada_Quality.Policy.Quality_Policy; Source : String := "";
+      Pretty : Boolean := False) return String;
+   function Render_Policy_Diff
+     (Left_Name, Right_Name : String; Left, Right : Ada_Quality.Policy.Quality_Policy;
+      Pretty : Boolean := False) return String;
+   function Render_Policy_Impact
+     (Before_Name, After_Name : String;
+      Items : Ada_Quality.Command_Models.Policy_Impact_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Comparisons
+     (Items : Ada_Quality.Command_Models.Comparison_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Signature
+     (Item : Ada_Quality.Artifact_Signing.Signature_Info; Verified : Boolean;
+      Pretty : Boolean := False) return String;
+   function Render_Trusted_Keys
+     (Items : Ada_Quality.Artifact_Signing.Trusted_Key_Vectors.Vector;
       Pretty : Boolean := False) return String;
    function Render_Retention
      (Items : Ada_Quality.Storage.History_Vectors.Vector;
       Before : String; Keep : Natural; Pretty : Boolean := False) return String;
    function Render_Merge
+     (Sources : Ada_Quality.Storage.Source_Vectors.Vector; Dry_Run : Boolean;
+      Added_Projects, Added_Assessments, Reused_Assessments, Added_Aliases : Natural;
+      Conflicts : Ada_Quality.Command_Models.Diagnostic_Vectors.Vector;
+      Pretty : Boolean := False) return String;
+   function Render_Merge
      (Source : String; Dry_Run : Boolean;
       Added_Projects, Added_Assessments, Reused_Assessments, Added_Aliases : Natural;
-      Conflicts : Diagnostic_Vectors.Vector;
+      Conflicts : Ada_Quality.Command_Models.Diagnostic_Vectors.Vector;
       Pretty : Boolean := False) return String;
 end Ada_Quality.JSON;

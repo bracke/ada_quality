@@ -20,16 +20,16 @@ execution plan, --tag NAME, --profile NAME, and --project-policy. Scans accept -
 .TP
 .B assessment, history, findings, status, regressions, trend
 Inspect assessments, aliases, portfolio state, comparisons, findings, and metric history. Project tags filter all
-portfolio query surfaces; collection JSON includes total counts and an opaque next cursor accepted by --cursor.
+portfolio query surfaces; collection JSON includes a stable snapshot and an opaque next cursor accepted by --cursor.
 .TP
 .B report --format json
-Export the archive. Use --project, --since, and --until to select a self-contained subset.
+Export the archive. Use --project or --tag together with --since and --until to select a self-contained subset.
 .TP
 .B report --format html
 Write a self-contained portfolio report, optionally with --output FILE.
 .TP
 .B policy
-Initialize, validate, show, discover profiles, diff two profiles, or render a project's effective policy. The
+Initialize, validate, show, discover profiles, diff/impact two profiles, or render a project's effective policy. The
 effective command accepts --explain to identify the document selecting every value.
 .TP
 .B database
@@ -39,16 +39,17 @@ database archive DEST --before UTC [--keep N] verifies a complete logical archiv
 terminal assessments. Running assessments and the newest N terminal assessments per project are retained.
 With --dry-run and no destination, the exact removal set is printed without changing the database.
 .PP
-database merge SOURCE --dry-run reports additions, reuse, aliases, and conflicts without writes. Applied merges
-commit all registry, evidence, event, and alias changes in one transaction.
+database merge SOURCE... --dry-run reports the combined additions, reuse, aliases, and conflicts without writes.
+Applied merges commit every source's registry, evidence, event, and alias changes in one transaction.
 .PP
 database keygen PRIVATE PUBLIC creates an Ed25519 keypair. backup and export accept --sign-key PRIVATE.
-database verify ARTIFACT --public-key PUBLIC verifies a signature; restore and import accept --public-key to require
-verification before consuming the artifact.
+database verify accepts --public-key PUBLIC or --trust-store DIR. database inspect reads signature metadata, while
+database trust add/list/remove manages stable key identities. restore and import accept either verification mode.
 .TP
 .B doctor, waiver audit
 Diagnose policy, database, project, and tool availability, or inventory active, unused, expiring, expired, and
-malformed source waivers. Both commands support versioned JSON.
+malformed source waivers. Portfolio selectors and configurable failure/expiry thresholds support CI use. Both
+commands support versioned JSON.
 .TP
 .B completion bash|zsh|fish
 Write a shell completion definition to standard output.
@@ -62,6 +63,9 @@ Select the policy file (default quality-policy.toml).
 .TP
 .B --format FORMAT, --json
 Select machine-readable output where supported.
+.TP
+.B --error-format text|json
+Select human-readable or structured standard-error diagnostics.
 .TP
 .B --output FILE
 Write read-command output to a file. Collection views also accept --limit N, --offset N, and --cursor TOKEN.

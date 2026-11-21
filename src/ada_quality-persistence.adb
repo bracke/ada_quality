@@ -1,4 +1,5 @@
 with Ada.Calendar.Formatting;
+with Ada.Containers.Ordered_Sets;
 with Ada.Strings.Fixed;
 with Ada.Strings.UTF_Encoding.Wide_Wide_Strings;
 with Ada_Quality.Indicators;
@@ -86,6 +87,68 @@ package body Ada_Quality.Persistence is
       end loop;
       return True;
    end Project_Tag_Is_Valid;
+
+   package Tag_Sets is new Ada.Containers.Ordered_Sets
+     (Element_Type => Ada.Strings.Unbounded.Unbounded_String,
+      "<" => Ada.Strings.Unbounded."<",
+      "=" => Ada.Strings.Unbounded."=");
+
+   function To_Tag_Set (Tags : String) return Tag_Sets.Set is
+      Result : Tag_Sets.Set;
+      Start  : Natural := (if Tags'Length = 0 then 0 else Tags'First);
+   begin
+      while Start /= 0 and then Start <= Tags'Last loop
+         declare
+            Stop : Natural := Ada.Strings.Fixed.Index
+              (Tags, ",", From => Start);
+         begin
+            if Stop = 0 then
+               Stop := Tags'Last + 1;
+            end if;
+            Result.Include
+              (To_Unbounded_String (Tags (Start .. Stop - 1)));
+            Start := Stop + 1;
+         end;
+      end loop;
+      return Result;
+   end To_Tag_Set;
+
+   function Tag_List (Tags : Tag_Sets.Set) return String is
+      Result : Unbounded_String;
+   begin
+      for Tag of Tags loop
+         if Length (Result) > 0 then
+            Append (Result, ",");
+         end if;
+         Append (Result, Tag);
+      end loop;
+      return To_String (Result);
+   end Tag_List;
+
+   function Project_Tags_Contain (Tags, Name : String) return Boolean is
+     (To_Tag_Set (Tags).Contains (To_Unbounded_String (Name)));
+
+   function Update_Project_Tags
+     (Tags, Name : String; Add : Boolean) return String
+   is
+      Values : Tag_Sets.Set := To_Tag_Set (Tags);
+   begin
+      if Add then
+         Values.Include (To_Unbounded_String (Name));
+      else
+         Values.Exclude (To_Unbounded_String (Name));
+      end if;
+      return Tag_List (Values);
+   end Update_Project_Tags;
+
+   function Merge_Project_Tags (Left, Right : String) return String is
+      Values : Tag_Sets.Set := To_Tag_Set (Left);
+   begin
+      for Tag of To_Tag_Set (Right) loop
+         Values.Include (Tag);
+      end loop;
+      return Tag_List (Values);
+   end Merge_Project_Tags;
 
    function Project_Payload (Path, Tags : String) return String is
      ("path=" & Escape (Path) & LF & "tags=" & Tags);

@@ -25,6 +25,8 @@ workspace lock; the release manifest itself contains no local path pins.
 
 GitHub Actions recreates the sibling-crate layout and runs the validation build, AUnit suite, complete coverage gate,
 and release checker on pushes to `main` and on pull requests. See [`docs/continuous-integration.md`](docs/continuous-integration.md).
+Version tags also validate and package the checkout, emit SHA-256 checksums and an SPDX SBOM, record artifact
+provenance, and publish the release assets.
 
 ## Quick start
 
@@ -58,14 +60,18 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 ./bin/ada-quality policy profiles
 ./bin/ada-quality policy effective --project 1 --profile ci --explain
 ./bin/ada-quality policy diff default ci
+./bin/ada-quality policy impact default ci --tag ci --json
 ./bin/ada-quality database stats
 ./bin/ada-quality database archive history.export --before 2026-01-01T00:00:00Z --keep 10
 ./bin/ada-quality database archive --dry-run --before 2026-01-01T00:00:00Z --keep 10 --json
-./bin/ada-quality database merge other-quality.export --dry-run --json
+./bin/ada-quality database merge team-a.export team-b.db --dry-run --json
 ./bin/ada-quality database keygen signing.key signing.pub
 ./bin/ada-quality database export evidence.export --sign-key signing.key
 ./bin/ada-quality database verify evidence.export --public-key signing.pub
-./bin/ada-quality waiver audit --project 1 --json
+./bin/ada-quality database trust add signing.pub
+./bin/ada-quality database inspect evidence.export --json
+./bin/ada-quality database verify evidence.export --trust-store .ada-quality-trust
+./bin/ada-quality waiver audit --all --max-invalid 0 --max-expiring 2 --json
 ./bin/ada-quality report --format json
 ./bin/ada-quality report --format html --output quality-report.html
 ```
@@ -73,11 +79,13 @@ and release checker on pushes to `main` and on pull requests. See [`docs/continu
 The default database is `.ada-quality.db`; `ADA_QUALITY_DATABASE` or `--database` selects another path. The default
 central policy is `quality-policy.toml`; `ADA_QUALITY_POLICY` or `--policy` selects another file.
 
-Read commands accept `--output FILE`; collection JSON includes total counts and a `next_cursor` accepted by
-`--cursor`. Project tags select checks, history, findings, regressions, trends, status, and reports. Administrative
-JSON is available for doctor, waiver inventory, retention previews, and merge plans/results. Waiver inventory marks
-active, unused, expired, malformed, and within-30-day expiry. Database merge is preflighted and committed atomically;
-policy explanation and diff commands expose the source and change of each effective value.
+Read commands accept `--output FILE`; collection JSON includes a stable snapshot and an opaque `next_cursor` accepted
+by `--cursor`. Current cursors bind their command and filter set, detect mutable project-state changes, and fail
+explicitly instead of silently shifting pages. `--error-format json` makes failures machine-readable. Project tags select checks, history, findings,
+regressions, trends, status, and reports. Administrative JSON covers policy, project, database, doctor, waiver,
+retention, trust, and merge operations. Waiver inventory marks
+active, unused, expired, malformed, and within-30-day expiry. Multi-source database merge is preflighted as one plan
+and committed atomically; policy explanation, diff, and impact expose effective changes and affected indicators.
 
 See [`docs/CLI.md`](docs/CLI.md), [`docs/ASSESSMENT.md`](docs/ASSESSMENT.md), and
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for operational details. Development and disclosure guidance is in

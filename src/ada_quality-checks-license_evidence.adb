@@ -1,5 +1,5 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=any_known_evidence owner=aq expires=2099-12-31 justification=license-evidence-boundary
+--  AQ-WAIVER: SRC-03 target=license_evidence owner=aq expires=2027-11-21 justification=license-evidence-boundary
    function License_Evidence
      (Root, Manifest_Text : String) return Metadata_Evidence_Status
    is
@@ -51,7 +51,8 @@ separate (Ada_Quality.Checks)
       Parse_SPDX (To_String (Declared.Value), Valid, Supported, Licenses, Exceptions);
       if not Valid or else not Supported then return Metadata_Unsupported; end if;
       declare
-         Content : constant String := Project_Tools.Files.Read_Raw_File (License_Path);
+         Content : constant String :=
+           Ada_Quality.Bounded_Files.Read (License_Path, Maximum_File_Bytes);
          Declaration : constant String := Lower (To_String (Declared.Value));
          First_End : constant Natural := Ada.Strings.Fixed.Index (Content, [ASCII.LF]);
          First_Line : constant String := Lower (Ada.Strings.Fixed.Trim

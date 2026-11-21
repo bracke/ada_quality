@@ -10,6 +10,7 @@ with Interfaces;
 with Interfaces.C;
 with System;
 with Ada.Unchecked_Conversion;
+with Ada_Quality.POSIX;
 
 package body Ada_Quality.Execution is
    use Ada.Strings.Unbounded;
@@ -20,10 +21,6 @@ package body Ada_Quality.Execution is
    use type Interfaces.Unsigned_64;
    use type Ada.Real_Time.Time;
    use type Ada.Real_Time.Time_Span;
-
-   function C_Kill
-     (Pid : Interfaces.C.int; Signal : Interfaces.C.int) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "kill";
 
    protected Run_Gate is
       entry Acquire;
@@ -191,7 +188,8 @@ package body Ada_Quality.Execution is
          if Pid <= GNAT.Expect.Null_Pid then
             raise GNAT.Expect.Invalid_Process;
          end if;
-         Status := C_Kill (-Interfaces.C.int (Pid), Interfaces.C.int (Signal));
+         Status := Ada_Quality.POSIX.Signal_Process
+           (-Interfaces.C.int (Pid), Interfaces.C.int (Signal));
          if Status /= 0 and then Fallback_To_Child then
             GNAT.Expect.Send_Signal (Descriptor, Signal);
          end if;

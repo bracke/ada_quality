@@ -1,5 +1,4 @@
 separate (Ada_Quality.Checks)
---  AQ-WAIVER: SRC-03 target=canonical owner=core expires=2099-12-31 justification=lexical-helpers-share-one-source-pass
 procedure Scan_Source
   (Root            : String;
    Files           : Text_Vectors.Vector;
@@ -8,6 +7,141 @@ procedure Scan_Source
    Result          : out Source_Analysis)
 is
    Total_Bytes : Ada.Directories.File_Size := 0;
+
+   type Complexity_Frame is record
+      Name           : Ada.Strings.Unbounded.Unbounded_String;
+      Value          : Natural := 1;
+      Expression_End : Natural := 0;
+   end record;
+   package Complexity_Frame_Vectors is new Ada.Containers.Vectors
+     (Index_Type => Positive, Element_Type => Complexity_Frame);
+
+   procedure Measure_Complexity
+     (Source : String;
+      Maximum : out Natural;
+      Maximum_Subprogram : out Ada.Strings.Unbounded.Unbounded_String)
+   is
+      use Project_Tools.Ada_Source.Tokens;
+      Toks   : constant Token_List := Tokens_Of (Source);
+      Stack  : Complexity_Frame_Vectors.Vector;
+      Active : Complexity_Frame :=
+        (Name => To_Unbounded_String ("file-elaboration"), others => <>);
+
+      function Text_At (Index : Positive) return String is
+        (To_String (Toks (Index).Text));
+
+      procedure Record_Active is
+      begin
+         if Active.Value > Maximum then
+            Maximum := Active.Value;
+            Maximum_Subprogram := Active.Name;
+         end if;
+      end Record_Active;
+
+      procedure Leave_Subprogram is
+      begin
+         Record_Active;
+         if not Stack.Is_Empty then
+            Active := Stack.Last_Element;
+            Stack.Delete_Last;
+         else
+            Active :=
+              (Name => To_Unbounded_String ("file-elaboration"), others => <>);
+         end if;
+      end Leave_Subprogram;
+
+      function Body_Start (From : Positive) return Natural is
+         Parentheses : Natural := 0;
+      begin
+         for Index in From .. Toks.Last_Index loop
+            if Is_Symbol (Toks (Index), "(") then
+               Parentheses := Parentheses + 1;
+            elsif Is_Symbol (Toks (Index), ")") and then Parentheses > 0 then
+               Parentheses := Parentheses - 1;
+            elsif Parentheses = 0 and then Is_Symbol (Toks (Index), ";") then
+               return 0;
+            elsif Parentheses = 0 and then Is_Word (Toks (Index), "is") then
+               return Index;
+            end if;
+         end loop;
+         return 0;
+      end Body_Start;
+
+      function Expression_End (From : Positive) return Natural is
+         Parentheses : Natural := 0;
+      begin
+         for Index in From .. Toks.Last_Index loop
+            if Is_Symbol (Toks (Index), "(") then
+               Parentheses := Parentheses + 1;
+            elsif Is_Symbol (Toks (Index), ")") and then Parentheses > 0 then
+               Parentheses := Parentheses - 1;
+            elsif Parentheses = 0 and then Is_Symbol (Toks (Index), ";") then
+               return Index;
+            end if;
+         end loop;
+         return Toks.Last_Index;
+      end Expression_End;
+
+      Index : Positive := (if Toks.Is_Empty then 1 else Toks.First_Index);
+   begin
+      Maximum := 1;
+      Maximum_Subprogram := Active.Name;
+      if Toks.Is_Empty then
+         return;
+      end if;
+      while Index <= Toks.Last_Index loop
+         declare
+            Word : constant String := Text_At (Index);
+            Previous : constant String :=
+              (if Index = Toks.First_Index then "" else Text_At (Index - 1));
+            Following : constant String :=
+              (if Index = Toks.Last_Index then "" else Text_At (Index + 1));
+         begin
+            if Word in "procedure" | "function" and then Previous not in "end" | "access" and then
+              Index < Toks.Last_Index
+            then
+               declare
+                  Start : constant Natural := Body_Start (Index + 1);
+               begin
+                  if Start > 0 and then Start < Toks.Last_Index and then
+                    Text_At (Start + 1) not in "separate" | "renames" | "abstract" | "null" | "new"
+                  then
+                     Stack.Append (Active);
+                     Active :=
+                       (Name => Toks (Index + 1).Text, Value => 1,
+                        Expression_End =>
+                          (if Is_Symbol (Toks (Start + 1), "(")
+                           then Expression_End (Start + 1) else 0));
+                  end if;
+               end;
+            elsif Word = "end" and then Index < Toks.Last_Index and then
+              Following = To_String (Active.Name)
+            then
+               Leave_Subprogram;
+            elsif Word = "if" and then Previous not in "end" | "elsif" then
+               Active.Value := Active.Value + 1;
+            elsif Word in "elsif" | "when" then
+               Active.Value := Active.Value + 1;
+            elsif Word in "case" | "loop" and then Previous /= "end" then
+               Active.Value := Active.Value + 1;
+            elsif (Word = "and" and then Following = "then") or else
+              (Word = "or" and then Following = "else")
+            then
+               Active.Value := Active.Value + 1;
+            end if;
+            if Active.Expression_End = Index then
+               Leave_Subprogram;
+            end if;
+         end;
+         Index := Index + 1;
+      end loop;
+      Record_Active;
+      while not Stack.Is_Empty loop
+         Active := Stack.Last_Element;
+         Stack.Delete_Last;
+         Record_Active;
+      end loop;
+   end Measure_Complexity;
 begin
    Result := (Findings => <>, others => 0);
    if Files.Length > Ada.Containers.Count_Type (Maximum_Project_Files) then
@@ -51,14 +185,12 @@ begin
          Rel_Path   : constant String := "/" & Relative (Root, Path);
          Is_Test    : constant Boolean :=
            Contains (Rel_Path, "/tests/") or else Contains (Rel_Path, "/test/");
-         Data       : constant String := Project_Tools.Files.Read_Raw_File (Path);
+         Data       : constant String := Ada_Quality.Bounded_Files.Read (Path, Maximum_File_Bytes);
          Start      : Positive := 1;
          File_Lines : Natural := 0;
-         Complexity : Natural := 1;
          File_Max_Complexity : Natural := 1;
-         Current_Subprogram : Ada.Strings.Unbounded.Unbounded_String :=
+         File_Max_Subprogram : Ada.Strings.Unbounded.Unbounded_String :=
            To_Unbounded_String ("file-elaboration");
-         File_Max_Subprogram : Ada.Strings.Unbounded.Unbounded_String := Current_Subprogram;
          Has_Docs   : Boolean := False;
          Pending_Doc : Boolean := False;
          Unit_Name_Checked : Boolean := False;
@@ -94,14 +226,7 @@ begin
                Line => Line, Fingerprint => Key));
          end Note;
 
-         procedure Record_Complexity is
-         begin
-            if Complexity > File_Max_Complexity then
-               File_Max_Complexity := Complexity;
-               File_Max_Subprogram := Current_Subprogram;
-            end if;
-         end Record_Complexity;
-
+         --  AQ-WAIVER: SRC-03 target=scan_line owner=core expires=2027-11-21 justification=ada-aware-source-rule-pass
          procedure Scan_Line (Line : String) is
             function Code_Only return String is
                Result    : String := Line;
@@ -151,8 +276,6 @@ begin
             end Tokens;
 
             Words : constant Text_Vectors.Vector := Tokens;
-            Decisions : Natural := 0;
-
             function Canonical (Value : String) return String is
                Result : String (1 .. Value'Length);
                Last   : Natural := 0;
@@ -234,33 +357,6 @@ begin
                      end if;
                   end;
                end if;
-               for J in Words.First_Index .. Words.Last_Index loop
-                  declare
-                     Word : constant String := To_String (Words (J));
-                     Previous : constant String :=
-                       (if J = Words.First_Index then "" else To_String (Words (J - 1)));
-                     Following : constant String :=
-                       (if J = Words.Last_Index then "" else To_String (Words (J + 1)));
-                  begin
-                     if Word in "procedure" | "function" and then Previous /= "end" then
-                        Record_Complexity;
-                        Complexity := 1;
-                        if Following'Length > 0 then
-                           Current_Subprogram := To_Unbounded_String (Following);
-                        end if;
-                     elsif Word = "if" and then Previous not in "end" | "elsif" then
-                        Decisions := Decisions + 1;
-                     elsif Word in "elsif" | "when" then
-                        Decisions := Decisions + 1;
-                     elsif Word in "case" | "loop" and then Previous /= "end" then
-                        Decisions := Decisions + 1;
-                     elsif (Word = "and" and then Following = "then") or else
-                       (Word = "or" and then Following = "else")
-                     then
-                        Decisions := Decisions + 1;
-                     end if;
-                  end;
-               end loop;
             end if;
             if Line'Length > 120 then
                Result.Long_Lines := Result.Long_Lines + 1;
@@ -273,10 +369,6 @@ begin
                Result.Hygiene_Errors := Result.Hygiene_Errors + 1;
                Note (SRC_04, "source-hygiene", "tab or trailing whitespace", File_Lines,
                  Context => Line);
-            end if;
-            if Decisions > 0 then
-               Complexity := Complexity + Decisions;
-               Record_Complexity;
             end if;
             if Contains (Clean, "register_routine") or else Contains (Clean, ".add_test") then
                Result.Test_Registrations := Result.Test_Registrations + 1;
@@ -357,7 +449,7 @@ begin
             end if;
             end;
          end if;
-         Record_Complexity;
+         Measure_Complexity (Data, File_Max_Complexity, File_Max_Subprogram);
          Result.Maximum_Complexity := Natural'Max (Result.Maximum_Complexity, File_Max_Complexity);
          if File_Max_Complexity > Policy.Maximum_Complexity then
             declare

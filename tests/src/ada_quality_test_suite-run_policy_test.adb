@@ -1,5 +1,4 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_policy_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
 procedure Run_Policy_Test is
 begin
 declare
@@ -102,6 +101,32 @@ begin
    Ada.Text_IO.Close (File);
    Loaded := Ada_Quality.Policy.Load (Path);
    Assert (not Loaded.Success, "unsafe policy resource limits are rejected");
+   Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+   Ada.Text_IO.Put_Line (File, "coverage_minimum_basis_points = 10001");
+   Ada.Text_IO.Close (File);
+   Loaded := Ada_Quality.Policy.Load (Path);
+   Assert (not Loaded.Success, "coverage requirements above 100 percent are rejected");
+   Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+   Ada.Text_IO.Put_Line (File, "require_clean_worktree = maybe");
+   Ada.Text_IO.Close (File);
+   Loaded := Ada_Quality.Policy.Load (Path);
+   Assert (not Loaded.Success, "non-TOML policy booleans are rejected");
+   Ada.Text_IO.Create (File, Ada.Text_IO.Out_File, Path);
+   Ada.Text_IO.Put_Line (File, "maximum_complexity = ""12");
+   Ada.Text_IO.Close (File);
+   Loaded := Ada_Quality.Policy.Load (Path);
+   Assert (not Loaded.Success, "unterminated policy strings are rejected");
+   declare
+      Left  : constant Ada_Quality.Policy.Quality_Policy := Ada_Quality.Policy.Default;
+      Right : Ada_Quality.Policy.Quality_Policy := Left;
+   begin
+      Right.Require_Clean_Worktree := not Left.Require_Clean_Worktree;
+      Assert
+        (Ada.Strings.Fixed.Index
+           (Ada_Quality.Policy.Diff (Left, Right), "require_clean_worktree") > 0 and then
+         Ada_Quality.Policy.Profile_Path ("quality-policy", "ci") = "quality-policy.ci",
+         "boolean differences and extensionless profile paths are deterministic");
+   end;
    Ada.Directories.Delete_File (Path);
 end;
 end Run_Policy_Test;

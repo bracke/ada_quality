@@ -1,5 +1,5 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_integrity_test owner=core expires=2099-12-31 justification=one-component-fixture-matrix
+--  AQ-WAIVER: SRC-03 target=run_integrity_test owner=core expires=2027-11-21 justification=one-component-fixture-matrix
 procedure Run_Integrity_Test is
 begin
 declare
@@ -50,14 +50,14 @@ begin
      "opening a missing database without creation fails closed");
    Raised := False;
    begin
-      Ada_Quality.Storage.Check (Missing_Store);
+      Ada_Quality.Storage.Integrity.Check (Missing_Store);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "integrity checking a closed database is rejected");
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Schema_Version (Missing_Store);
+      Run_Id := Ada_Quality.Storage.Integrity.Schema_Version (Missing_Store);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
@@ -73,14 +73,15 @@ begin
    Assert (Ada_Quality.Storage.Is_Open (Store), "created database reports open");
    Raised := False;
    begin
-      Pid := Ada_Quality.Storage.Project (Store, 999).Id;
+      Pid := Ada_Quality.Storage.Registry.Project (Store, 999).Id;
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "loading a missing project fails without leaking a read transaction");
    Raised := False;
    begin
-      Pid := Ada_Quality.Storage.Add_Project (Store, Fixture_Root & "/missing_project_root");
+      Pid := Ada_Quality.Storage.Registry.Add_Project
+        (Store, Fixture_Root & "/missing_project_root");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
@@ -99,7 +100,7 @@ begin
    end;
    Raised := False;
    begin
-      Pid := Ada_Quality.Storage.Add_Project (Store, Link_Root);
+      Pid := Ada_Quality.Storage.Registry.Add_Project (Store, Link_Root);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
@@ -117,7 +118,7 @@ begin
    Project_Tools.Files.Write_Text_File (Bad_Root & "/alire.toml", "name = ""broken""" & ASCII.LF);
    Raised := False;
    begin
-      Pid := Ada_Quality.Storage.Add_Project (Store, Bad_Root);
+      Pid := Ada_Quality.Storage.Registry.Add_Project (Store, Bad_Root);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
@@ -129,18 +130,21 @@ begin
      (Unicode_Root & "/alire.toml", "name = ""unicode_project""" & ASCII.LF &
       "version = ""0.1.0""" & ASCII.LF);
    declare
-      Unicode_Id : constant Positive := Ada_Quality.Storage.Add_Project (Store, Unicode_Root);
+      Unicode_Id : constant Positive :=
+        Ada_Quality.Storage.Registry.Add_Project (Store, Unicode_Root);
    begin
-      Assert (To_String (Ada_Quality.Storage.Project (Store, Unicode_Id).Path) = Unicode_Root,
+      Assert (To_String
+        (Ada_Quality.Storage.Registry.Project (Store, Unicode_Id).Path) = Unicode_Root,
         "canonical project paths round-trip valid UTF-8");
-      Ada_Quality.Storage.Remove_Project (Store, Unicode_Id);
+      Ada_Quality.Storage.Registry.Remove_Project (Store, Unicode_Id);
    end;
    Project_Tools.Files.Delete_Tree (Unicode_Root);
-   Pid := Ada_Quality.Storage.Add_Project (Store, Root);
+   Pid := Ada_Quality.Storage.Registry.Add_Project (Store, Root);
    Raised := False;
    begin
       declare
-         Duplicate_Id : constant Positive := Ada_Quality.Storage.Add_Project (Store, Root);
+         Duplicate_Id : constant Positive :=
+           Ada_Quality.Storage.Registry.Add_Project (Store, Root);
          pragma Unreferenced (Duplicate_Id);
       begin
          null;
@@ -151,39 +155,45 @@ begin
    Assert (Raised, "duplicate active project registration is rejected");
    Raised := False;
    begin
-      Ada_Quality.Storage.Set_Enabled (Store, 999, True);
+      Ada_Quality.Storage.Registry.Set_Enabled (Store, 999, True);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "updating a missing project is rejected");
-   Ada_Quality.Storage.Set_Enabled (Store, Pid, False);
+   Ada_Quality.Storage.Registry.Set_Enabled (Store, Pid, False);
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "disabled", "policy");
+      Run_Id := Ada_Quality.Storage.Assessments.Start
+        (Store, Pid, "disabled", "policy");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "disabled projects cannot start assessments");
-   Ada_Quality.Storage.Set_Enabled (Store, Pid, True);
+   Ada_Quality.Storage.Registry.Set_Enabled (Store, Pid, True);
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "", "policy");
+      Run_Id := Ada_Quality.Storage.Assessments.Start
+        (Store, Pid, "", "policy");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
-   Assert (Raised and then Ada_Quality.Storage.History (Store, Pid).Is_Empty,
+   Assert (Raised and then
+     Ada_Quality.Storage.Assessments.History (Store, Pid).Is_Empty,
      "assessment start rejects identities that its integrity decoder cannot read");
    Ada_Quality.Storage.Testing.Inject_Next_Fault
      (Store, Ada_Quality.Storage.Testing.Assessment_Start);
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "faulted-source", "policy");
+      Run_Id := Ada_Quality.Storage.Assessments.Start
+        (Store, Pid, "faulted-source", "policy");
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
-   Assert (Raised and then Ada_Quality.Storage.History (Store, Pid).Is_Empty,
+   Assert (Raised and then
+     Ada_Quality.Storage.Assessments.History (Store, Pid).Is_Empty,
      "an assessment-start commit fault rolls back both run and event");
-   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source", "policy");
+   Run_Id := Ada_Quality.Storage.Assessments.Start
+     (Store, Pid, "source", "policy");
    Value.Id := Run_Id;
    Value.Project_Id := Pid;
    Value.Status := Assessment_Completed;
@@ -200,7 +210,7 @@ begin
    Value.Status := Assessment_Running;
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+      Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
@@ -212,7 +222,7 @@ begin
       Value.Results.Delete_Last;
       Raised := False;
       begin
-         Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+         Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
       exception
          when Ada_Quality.Storage.Storage_Error => Raised := True;
       end;
@@ -225,7 +235,7 @@ begin
       Value.Results.Replace_Element (Value.Results.Last_Index, Value.Results.First_Element);
       Raised := False;
       begin
-         Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+         Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
       exception
          when Ada_Quality.Storage.Storage_Error => Raised := True;
       end;
@@ -240,7 +250,7 @@ begin
       Value.Results.Replace_Element (Value.Results.First_Index, Bad);
       Raised := False;
       begin
-         Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+         Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
       exception
          when Ada_Quality.Storage.Storage_Error => Raised := True;
       end;
@@ -248,69 +258,80 @@ begin
       Value.Results.Replace_Element (Value.Results.First_Index, Saved);
    end;
    begin
-      Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+      Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
    exception
       when Ada_Quality.Storage.Storage_Error | Ada.Strings.UTF_Encoding.Encoding_Error =>
          Raised := True;
    end;
    Assert (Raised, "invalid encoded evidence injects a publication failure");
-   Assert (To_String (Ada_Quality.Storage.History (Store).Last_Element.Status) = "running",
+   Assert (To_String
+     (Ada_Quality.Storage.Assessments.History
+        (Store).Last_Element.Status) = "running",
      "failed publication rolls back the assessment state");
-   Assert (Ada_Quality.Storage.Results (Store, Run_Id).Length = 0,
+   Assert (Ada_Quality.Storage.Assessments.Results (Store, Run_Id).Length = 0,
      "failed publication leaves no partial results");
-   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 1,
+   Assert (Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 1,
      "failed publication leaves only the committed start event");
    Value.Source_Fingerprint := To_Unbounded_String ("source");
    Ada_Quality.Storage.Testing.Inject_Next_Fault
      (Store, Ada_Quality.Storage.Testing.Assessment_Publication);
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+      Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
-   Assert (Raised and then Ada_Quality.Storage.Results (Store, Run_Id).Is_Empty and then
-     To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "running",
+   Assert (Raised and then
+     Ada_Quality.Storage.Assessments.Results (Store, Run_Id).Is_Empty and then
+     To_String (Ada_Quality.Storage.Assessments.History
+       (Store, Pid).Last_Element.Status) = "running",
      "a publication commit fault preserves the running record without partial evidence");
-   Assert (Ada_Quality.Storage.Publish (Store, Value) = Run_Id,
+   Assert (Ada_Quality.Storage.Assessments.Publish (Store, Value) = Run_Id,
      "a valid publication succeeds after rollback");
    Raised := False;
    begin
-      Run_Id := Ada_Quality.Storage.Publish (Store, Value);
+      Run_Id := Ada_Quality.Storage.Assessments.Publish (Store, Value);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
    Assert (Raised, "terminal assessments are immutable");
-   Assert (Ada_Quality.Storage.Results (Store, Run_Id).Length = 33,
+   Assert (Ada_Quality.Storage.Assessments.Results
+     (Store, Run_Id).Length = 33,
      "immutable assessment retains its complete result set");
    Value.Id := 0;
    Value.Status := Assessment_Interrupted;
    declare
-      Imported_Id : constant Positive := Ada_Quality.Storage.Publish (Store, Value);
+      Imported_Id : constant Positive :=
+        Ada_Quality.Storage.Assessments.Publish (Store, Value);
       pragma Unreferenced (Imported_Id);
    begin
       null;
    end;
-   Assert (To_String (Ada_Quality.Storage.History (Store).Last_Element.Status) = "interrupted",
+   Assert (To_String (Ada_Quality.Storage.Assessments.History
+     (Store).Last_Element.Status) = "interrupted",
      "imported interrupted assessments retain terminal status");
-   Run_Id := Ada_Quality.Storage.Start_Assessment (Store, Pid, "source-2", "policy");
+   Run_Id := Ada_Quality.Storage.Assessments.Start
+     (Store, Pid, "source-2", "policy");
    Ada_Quality.Storage.Testing.Inject_Next_Fault
      (Store, Ada_Quality.Storage.Testing.Assessment_Recovery);
    Raised := False;
    begin
-      Ada_Quality.Storage.Recover (Store, Count);
+      Ada_Quality.Storage.Assessments.Recover (Store, Count);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;
-   Assert (Raised and then Ada_Quality.Storage.Events (Store, Run_Id).Length = 1 and then
-     To_String (Ada_Quality.Storage.History (Store, Pid).Last_Element.Status) = "running",
+   Assert (Raised and then
+     Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 1 and then
+     To_String (Ada_Quality.Storage.Assessments.History
+       (Store, Pid).Last_Element.Status) = "running",
      "a recovery commit fault rolls back state and recovery event together");
-   Ada_Quality.Storage.Recover (Store, Count);
+   Ada_Quality.Storage.Assessments.Recover (Store, Count);
    Assert (Count = 1, "recovery handles the abandoned running assessment");
-   Assert (Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+   Assert (Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 2,
      "recovery atomically records an event");
-   Ada_Quality.Storage.Recover (Store, Count);
-   Assert (Count = 0 and then Ada_Quality.Storage.Events (Store, Run_Id).Length = 2,
+   Ada_Quality.Storage.Assessments.Recover (Store, Count);
+   Assert (Count = 0 and then
+     Ada_Quality.Storage.Assessments.Events (Store, Run_Id).Length = 2,
      "recovery is idempotent");
    Ada_Quality.Storage.Testing.Set_Schema_Version (Store, 1);
    Ada_Quality.Storage.Close (Store);
@@ -325,12 +346,12 @@ begin
    Assert (Raised and then not Ada_Quality.Storage.Is_Open (Store),
      "a migration commit fault leaves the database closed at its prior version");
    Ada_Quality.Storage.Open (Store, Path, Create_If_Missing => False);
-   Assert (Ada_Quality.Storage.Schema_Version (Store) = 5,
+   Assert (Ada_Quality.Storage.Integrity.Schema_Version (Store) = 5,
      "opening a version-1 database runs the explicit migration to version 5");
    Ada_Quality.Storage.Testing.Set_Schema_Version (Store, 99);
    Raised := False;
    begin
-      Ada_Quality.Storage.Check (Store);
+      Ada_Quality.Storage.Integrity.Check (Store);
    exception
       when Ada_Quality.Storage.Storage_Error => Raised := True;
    end;

@@ -3,6 +3,7 @@ with Ada.Strings.Fixed;
 with GNAT.OS_Lib;
 with Interfaces.C;
 with Project_Tools.Files;
+with Ada_Quality.POSIX;
 
 package body Ada_Quality.Temporary_Directories is
    use Ada.Strings.Unbounded;
@@ -24,11 +25,6 @@ package body Ada_Quality.Temporary_Directories is
          Value := Current;
       end Next;
    end Suffixes;
-
-   function C_Mkdir
-     (Name : Interfaces.C.char_array;
-      Mode : Interfaces.C.unsigned) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "mkdir";
 
    function Trimmed (Value : Integer) return String is
      (Ada.Strings.Fixed.Trim (Integer'Image (Value), Ada.Strings.Both));
@@ -75,7 +71,8 @@ package body Ada_Quality.Temporary_Directories is
          begin
             --  mkdir applies the private mode as part of the atomic creation operation;
             --  there is no interval in which another user can enter the directory.
-            Status := C_Mkdir (Interfaces.C.To_C (Candidate), Interfaces.C.unsigned (8#700#));
+            Status := Ada_Quality.POSIX.Make_Directory
+              (Interfaces.C.To_C (Candidate), Interfaces.C.unsigned (8#700#));
             if Status = 0 then
                Item.Directory := To_Unbounded_String (Candidate);
                Item.Active := True;

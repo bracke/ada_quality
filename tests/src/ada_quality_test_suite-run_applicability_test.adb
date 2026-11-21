@@ -1,5 +1,4 @@
 separate (Ada_Quality_Test_Suite)
---  AQ-WAIVER: SRC-03 target=run_applicability_test owner=aq expires=2099-12-31 justification=fixture-matrix
 procedure Run_Applicability_Test is
 begin
 declare

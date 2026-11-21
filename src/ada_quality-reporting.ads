@@ -5,6 +5,7 @@ with Ada.Finalization;
 with Ada.Strings.Unbounded;
 with Ada_Quality.History;
 with Ada_Quality.History_Data;
+with Ada_Quality.Resource_Limits;
 with Ada_Quality.Types;
 
 --  Read-only, snapshot-consistent, strongly typed view of persisted assessments for reporting consumers.
@@ -39,8 +40,9 @@ package Ada_Quality.Reporting is
       Max_Findings : Positive := 2_000_000;
       Max_Executions : Positive := 2_000_000;
       Max_Events     : Positive := 2_000_000;
-      Max_Total_Rows : Positive := 2_500_000;
-      Max_Text_Bytes : Positive := 268_435_456;
+      Max_Total_Rows : Positive := Ada_Quality.Resource_Limits.Maximum_Database_Rows;
+      Max_Text_Bytes : Positive :=
+        Ada_Quality.Resource_Limits.Maximum_Database_Text_Bytes;
    end record;
    --  Upper bounds on the rows a session loads.
    --  @field Max_Projects Maximum project registry rows.
@@ -123,8 +125,10 @@ package Ada_Quality.Reporting is
    type Assessment_Alias is record
       Name   : UString;
       Run_Id : Positive;
+      Event_Id : Positive := 1;
    end record;
    --  Globally unique human-readable name assigned to a completed assessment.
+   --  Event_Id is the append-only boundary used by stable alias pagination.
 
    package Alias_Vectors is new Ada.Containers.Vectors
      (Index_Type => Positive, Element_Type => Assessment_Alias);
@@ -139,8 +143,9 @@ package Ada_Quality.Reporting is
       Events       : Natural := 0;
       Total_Rows   : Natural := 0;
       Text_Bytes   : Long_Long_Integer := 0;
-      Row_Limit    : Positive := 2_500_000;
-      Text_Limit   : Positive := 268_435_456;
+      Row_Limit    : Positive := Ada_Quality.Resource_Limits.Maximum_Database_Rows;
+      Text_Limit   : Positive :=
+        Ada_Quality.Resource_Limits.Maximum_Database_Text_Bytes;
    end record;
    --  Persisted row and text consumption measured while loading the validated snapshot.
 
@@ -239,6 +244,19 @@ package Ada_Quality.Reporting is
    --  @param Project_Id Project filter; zero selects every project.
    --  @return Runs in every lifecycle state.
 
+   procedure Visit_Projects
+     (Item            : Session;
+      Include_Removed : Boolean := False;
+      Process         : not null access procedure (Project : Project_Record));
+   --  Visit projects without constructing a returned vector copy.
+
+   procedure Visit_Runs
+     (Item       : Session;
+      Project_Id : Natural := 0;
+      Descending : Boolean := False;
+      Process    : not null access procedure (Run : Run_Record));
+   --  Visit all or one project's runs without constructing a returned vector copy.
+
    function Read_Assessment (Item : Session; Run_Id : Positive) return Assessment_Record;
    --  Return a fully decoded completed assessment.
    --  @param Item Open session.
@@ -261,6 +279,12 @@ package Ada_Quality.Reporting is
 
    function Aliases (Item : Session; Run_Id : Natural := 0) return Alias_Vectors.Vector;
    --  Return aliases in assessment/event order, optionally restricted to one assessment.
+
+   procedure Visit_Aliases
+     (Item    : Session;
+      Run_Id  : Natural := 0;
+      Process : not null access procedure (Value : Assessment_Alias));
+   --  Visit matching aliases without constructing a returned vector copy.
 
    function Resolve_Assessment (Item : Session; Reference : String) return Positive;
    --  Resolve a positive numeric identity or canonical assessment alias.
@@ -436,8 +460,10 @@ private
       Stats      : Snapshot_Statistics;
       All_Projects : Project_Vectors.Vector;
       All_Runs   : Run_Vectors.Vector;
+      Project_Index : Run_Index_Maps.Map;
       Run_Index  : Run_Index_Maps.Map;
       Payloads   : Ada_Quality.History_Data.History_Vectors.Vector;
+      Project_Runs : Project_History_Maps.Map;
       Project_Histories : Project_History_Maps.Map;
       Details    : Detail_Maps.Map;
    end record;

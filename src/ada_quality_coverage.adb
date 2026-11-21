@@ -14,11 +14,15 @@ with Project_Tools.Files;
 with Project_Tools.Gcov;
 with Project_Tools.Processes;
 with Ada_Quality.Checks;
+with Ada_Quality.Bounded_Files;
 with Ada_Quality.Coverage;
+with Ada_Quality.Artifact_Signing;
+with Ada_Quality.POSIX;
 with Ada_Quality.Temporary_Directories;
+with Ada_Quality.Resource_Limits;
 with Ada_Quality.Types;
 
---  AQ-WAIVER: SRC-03 target=include_source owner=aq expires=2099-12-31 justification=coverage-boundary
+--  AQ-WAIVER: SRC-03 target=ada_quality_coverage owner=aq expires=2027-11-21 justification=coverage-driver
 procedure Ada_Quality_Coverage is
    --  Isolated coverage entry point with concurrency locking and deterministic stability checks.
    use Ada.Strings.Unbounded;
@@ -49,21 +53,6 @@ procedure Ada_Quality_Coverage is
 
    function Lock_Path return String;
 
-   function C_Open
-     (Path : Interfaces.C.char_array; Flags : Interfaces.C.int;
-      Mode : Interfaces.C.unsigned) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "open";
-
-   function C_Flock (FD, Operation : Interfaces.C.int) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "flock";
-
-   function C_Close (FD : Interfaces.C.int) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "close";
-
-   function C_Rename
-     (Old_Path, New_Path : Interfaces.C.char_array) return Interfaces.C.int
-   with Import, Convention => C, External_Name => "rename";
-
    type Coverage_Lock is new Ada.Finalization.Limited_Controlled with record
       Descriptor : Interfaces.C.int := -1;
    end record;
@@ -73,22 +62,9 @@ procedure Ada_Quality_Coverage is
    procedure Acquire (Item : in out Coverage_Lock; Success : out Boolean) is
       Descriptor : Interfaces.C.int;
    begin
-      Descriptor := C_Open
-        --  O_CLOEXEC prevents assessment subprocesses from retaining the
-        --  advisory lock if the coverage driver is killed.
-        (Interfaces.C.To_C (Lock_Path),
-         --  O_RDWR + O_CREAT + O_NOFOLLOW + O_CLOEXEC.
-         Interfaces.C.int (2 + 64 + 131_072 + 524_288),
-         Interfaces.C.unsigned (8#600#));
+      Descriptor := Ada_Quality.POSIX.Try_Lock_File (Interfaces.C.To_C (Lock_Path));
       if Descriptor < 0 then
          Success := False;
-      elsif C_Flock (Descriptor, Interfaces.C.int (2 + 4)) /= 0 then
-         declare
-            Ignored : constant Interfaces.C.int := C_Close (Descriptor);
-            pragma Unreferenced (Ignored);
-         begin
-            Success := False;
-         end;
       else
          Item.Descriptor := Descriptor;
          Success := True;
@@ -99,7 +75,7 @@ procedure Ada_Quality_Coverage is
    begin
       if Item.Descriptor >= 0 then
          declare
-            Ignored : constant Interfaces.C.int := C_Close (Item.Descriptor);
+            Ignored : constant Interfaces.C.int := Ada_Quality.POSIX.Close_Raw (Item.Descriptor);
             pragma Unreferenced (Ignored);
          begin
             null;
@@ -133,7 +109,9 @@ procedure Ada_Quality_Coverage is
 
       procedure Replace (Source, Target : String) is
       begin
-         if C_Rename (Interfaces.C.To_C (Source), Interfaces.C.To_C (Target)) /= 0 then
+         if Ada_Quality.POSIX.Rename
+           (Interfaces.C.To_C (Source), Interfaces.C.To_C (Target)) /= 0
+         then
             raise Program_Error with "could not atomically publish coverage artifact: " & Target;
          end if;
       end Replace;
@@ -463,13 +441,22 @@ begin
             "source_fingerprint=" & Source_Fingerprint & ASCII.LF &
             "toolchain_fingerprint=" & To_String (Toolchain_Fingerprint) & ASCII.LF &
             To_String (File_Details));
+         if Ada_Quality.Checks.Source_Fingerprint (Root) /= Source_Fingerprint then
+            Fail ("project source changed during coverage collection");
+            return;
+         elsif not Ada_Quality.Types.Coverage_Passes (Covered, Total) then
+            Ada.Text_IO.Put
+              (Ada.Text_IO.Standard_Error, To_String (File_Details));
+            Fail
+              ("coverage " & Trim (Natural'Image (Covered)) & "/" &
+               Trim (Natural'Image (Total)) & " (" &
+               Project_Tools.Gcov.Percent_Image (Summary) & ") is below 90%");
+            return;
+         end if;
          Publish_Artifacts (To_String (Artifact_Text));
          Ada.Text_IO.Put_Line
            ("coverage " & Trim (Natural'Image (Covered)) & "/" & Trim (Natural'Image (Total)) & " (" &
             Project_Tools.Gcov.Percent_Image (Summary) & ")");
-         if not Ada_Quality.Types.Coverage_Passes (Covered, Total) then
-            Ada.Command_Line.Set_Exit_Status (Ada.Command_Line.Failure);
-         end if;
       end;
    end;
 end Ada_Quality_Coverage;
